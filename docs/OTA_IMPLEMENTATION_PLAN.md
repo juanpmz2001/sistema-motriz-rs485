@@ -1020,27 +1020,6 @@ Recommendation:
 - Best balance for development if the module has 8 MB.
 - Leaves room for logs, crash dumps, and future local storage.
 
-### 6.5 If Real Flash Is 16 MB
-
-Recommended approach:
-
-- Keep OTA slots at least `0x400000` each.
-- Use larger storage/coredump area.
-- Do not make OTA slots excessively small just because current firmware is small.
-
-Example:
-
-```csv
-# Name,     Type, SubType, Offset,   Size,     Flags
-nvs,        data, nvs,     0x9000,   0x6000,
-otadata,    data, ota,     0xf000,   0x2000,
-phy_init,   data, phy,     0x11000,  0x1000,
-coredump,   data, coredump,0x12000,  0x10000,
-ota_0,      app,  ota_0,   0x20000,  0x400000,
-ota_1,      app,  ota_1,   0x420000, 0x400000,
-storage,    data, fat,     0x820000, 0x7E0000,
-```
-
 ## 7. Local API Endpoints
 
 Base URL for development, using the detected LAN IP:
@@ -1559,7 +1538,7 @@ Scope:
 - Update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB`.
 - Configure custom partition table.
 - Keep 2MB/4MB/8MB tables only as references for other boards.
-- Enable rollback config only when ready for rollback iteration, or prepare but not depend on it yet.
+- Do not enable rollback in this iteration. Rollback belongs to Iteration 9 after the basic OTA partition boot path is proven.
 
 Files likely touched:
 
