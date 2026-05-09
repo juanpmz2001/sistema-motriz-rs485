@@ -29,8 +29,44 @@ Returns firmware identity and boot context without printing secrets.
 Example:
 
 ```text
-DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:1 IDF:v5.4.1 PARTITION:factory
+DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:1 IDF:v5.4.1 PARTITION:ota_0
 ```
+
+```text
+CONFIG_STATUS
+CONFIG_CLEAR
+```
+
+`CONFIG_STATUS` prints the persistent Wi-Fi and OTA configuration currently loaded from NVS. It never prints the Wi-Fi password value; it only reports `WIFI_PASSWORD:<set>` or `WIFI_PASSWORD:<empty>`.
+
+`CONFIG_CLEAR` erases the config namespace and restores runtime defaults.
+
+Default values:
+
+- `WIFI_SSID:<empty>`
+- `WIFI_PASSWORD:<empty>`
+- `OTA_HOST:192.168.10.10`
+- `OTA_PORT:8080`
+- `OTA_MANIFEST:/api/firmware/latest`
+- `OTA_AUTO_CHECK:0`
+- `OTA_AUTO_UPDATE:0`
+
+```text
+WIFI_SET ssid password
+WIFI_CLEAR
+```
+
+Stores or clears Wi-Fi credentials in NVS. `WIFI_SET` responds with a redacted password state and never echoes the password.
+
+```text
+OTA_SET_SERVER host port
+OTA_SET_MANIFEST path
+OTA_CONFIG
+OTA_AUTO_CHECK ON|OFF
+OTA_AUTO_UPDATE OFF
+```
+
+Stores local OTA server config in NVS. `OTA_AUTO_UPDATE ON` is intentionally blocked until manual OTA, rollback, and serial recovery are validated.
 
 ```text
 TRACE ON
@@ -48,6 +84,8 @@ Trace lines include:
 - `TRACE RS485_DECODE ...`: decoded register/value/error view.
 
 CRC remains `init=0xFFFF`, `poly=0xA001`, transmitted as high byte then low byte.
+
+For `WIFI_SET`, trace output redacts the password.
 
 ```text
 POLL_ONCE

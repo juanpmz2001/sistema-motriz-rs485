@@ -477,6 +477,136 @@ Current partition mode: single-app large
 Required future state: OTA table sized for 16MB, with CONFIG_ESPTOOLPY_FLASHSIZE updated to 16MB
 ```
 
+### 3.7 Iteration 2 Execution Results
+
+Iteration 2 was executed and approved on 2026-05-09.
+
+Stable commit:
+
+```text
+cd512fc Migrate firmware to 16MB OTA partitions
+```
+
+Hardware and build configuration:
+
+```text
+Physical flash: 16MB
+CONFIG_ESPTOOLPY_FLASHSIZE: 16MB
+Partition table: partitions_ota_16mb.csv
+Rollback: disabled
+```
+
+Boot validation:
+
+```text
+SPI Flash Size : 16MB
+ota_0 OTA app 00030000 00600000
+ota_1 OTA app 00630000 00600000
+No factory image, trying OTA 0
+Loaded app from partition at offset 0x30000
+App version: cd512fc
+```
+
+Runtime validation:
+
+```text
+VERSION reports PARTITION:ota_0
+Serial gateway: OK
+PING: OK
+GET_MOTOR 2: OK
+GET_SVD48_CONFIG 0x02 M1: OK
+STOP 2: OK
+12 seconds monitor idle: no task_wdt
+```
+
+Memory result:
+
+```text
+Total image size: 261852 bytes
+Flash Code: 138362 bytes
+Flash Data: 49772 bytes
+DIRAM: 59507 / 341760 bytes, 17.41%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Important risk: IRAM remains almost fully allocated at `16383 / 16384` bytes. Every subsequent iteration must run `idf.py size` and explicitly report IRAM.
+
+### 3.8 Iteration 3 Execution Results
+
+Iteration 3 was executed on 2026-05-09.
+
+Implementation summary:
+
+```text
+Added component: components/config_manager
+Persistent namespace: bot_config
+NVS initialized during app boot before robot subsystems
+Wi-Fi connection: not implemented
+OTA client/update: not implemented
+Rollback: still disabled
+Partition table: unchanged from Iteration 2
+```
+
+Stored defaults:
+
+```text
+wifi_ssid: <empty>
+wifi_password: <empty>
+ota_server_host: 192.168.10.10
+ota_server_port: 8080
+ota_manifest_path: /api/firmware/latest
+ota_auto_check_enabled: false
+ota_auto_update_enabled: false
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0x46ba0 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x5b9460 bytes, 95%
+Total image size: 289584 bytes
+Flash Code: 159354 bytes
+Flash Data: 54388 bytes
+DIRAM: 61687 / 341760 bytes, 18.05%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Flash and boot validation:
+
+```text
+Flashed on /dev/ttyACM0
+SPI Flash Size: 16MB
+Loaded app from partition at offset 0x30000
+VERSION reports PARTITION:ota_0
+```
+
+Serial validation:
+
+```text
+VERSION: OK
+PING: OK
+CONFIG_STATUS defaults: OK
+OTA_CONFIG defaults: OK
+OTA_AUTO_UPDATE ON: blocked with ERR AUTO_UPDATE_DISABLED_UNTIL_MANUAL_OTA_VALIDATED
+WIFI_SET: persisted SSID/password and printed PASSWORD:<set>, never the password value
+TRACE + WIFI_SET: password redacted as <redacted>
+OTA_SET_SERVER: OK
+OTA_SET_MANIFEST: OK
+OTA_AUTO_CHECK ON: OK
+OTA_AUTO_UPDATE OFF: OK
+Reboot persistence: OK
+WIFI_CLEAR: cleared only Wi-Fi credentials
+CONFIG_CLEAR: restored all defaults
+GET_MOTOR 2: OK, controller online
+STOP 2: OK
+12 seconds monitor idle: no task_wdt
+```
+
+Important risk: IRAM is still at `16383 / 16384` bytes. The next iteration must continue reporting IRAM explicitly before flashing.
+
 ## 4. Technical Decisions
 
 ### 4.1 OTA Pull Instead of Push
@@ -1621,11 +1751,13 @@ Files likely touched:
 
 Stored values:
 
-- `ssid`
-- `password`
-- `server_host`
-- `server_port`
-- `manifest_path`
+- `wifi_ssid`, default empty
+- `wifi_password`, default empty; never printed in logs or serial responses
+- `ota_server_host`, default `192.168.10.10`
+- `ota_server_port`, default `8080`
+- `ota_manifest_path`, default `/api/firmware/latest`
+- `ota_auto_check_enabled`, default `false`
+- `ota_auto_update_enabled`, default `false`
 
 Subtasks:
 
@@ -1633,6 +1765,7 @@ Subtasks:
 - Add typed getters/setters.
 - Add default config.
 - Add serial commands to inspect and set config with password redaction.
+- Block `OTA_AUTO_UPDATE ON` until manual OTA, rollback and recovery are validated.
 
 Commands:
 
@@ -1650,17 +1783,20 @@ Acceptance criteria:
 
 Mandatory tests:
 
+- `CONFIG_STATUS`
 - `OTA_CONFIG`
 - `OTA_SET_SERVER 192.168.10.10 8080`
 - `OTA_SET_MANIFEST /api/firmware/latest`
 - `WIFI_SET <ssid> <password>`
 - reboot
+- `CONFIG_STATUS`
 - `OTA_CONFIG`
-- `WIFI_STATUS`
+- `WIFI_CLEAR`
+- `CONFIG_CLEAR`
 
 Risks:
 
-- NVS partition too small on 2 MB layout.
+- NVS namespace can fill or become incompatible if the schema changes without a clear migration/reset path.
 - Accidental secret logging.
 
 Rollback/recovery:
@@ -2356,16 +2492,19 @@ Optional but useful:
 
 ## 16. Recommended Next Decision
 
-Implement first:
+Current completed baseline:
 
-1. Restore toolchain and run the remaining Iteration 0 measurements.
-2. Add version/build metadata and `VERSION`.
-3. Detect real flash size and choose partition table.
-4. Migrate partitions.
+1. Iteration 0 restored the ESP-IDF toolchain, measured the board and documented the original firmware state.
+2. Iteration 1 added firmware version metadata and the `VERSION` serial command.
+3. Iteration 2 migrated the board to `partitions_ota_16mb.csv`, updated `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB`, and confirmed boot from `ota_0`.
 
-Leave for second phase:
+Implement next:
 
-- NVS config.
+1. Add NVS-backed configuration management and serial diagnostics.
+2. Keep Wi-Fi, OTA client, rollback and automatic OTA disabled until their dedicated iterations.
+
+Leave for later phases:
+
 - Wi-Fi station.
 - Backend API.
 - Manifest check.
@@ -2381,8 +2520,8 @@ Do not implement yet:
 
 Main risks before writing code:
 
-- Physical flash is `16MB`, but `CONFIG_ESPTOOLPY_FLASHSIZE` is still `2MB`; Iteration 2 must correct this before OTA partition migration.
+- Physical flash and configured flash are now both `16MB`; future iterations must not regress `CONFIG_ESPTOOLPY_FLASHSIZE`, the selected CSV, or slot sizing.
 - IRAM is currently `16383 / 16384` bytes and must be monitored with `idf.py size` in every iteration.
 - Wrong USB port could cause failed diagnostics.
-- Partition migration is the highest-risk first firmware change.
+- Partition migration is already complete, but any future partition edit remains high risk and requires full build, partition-table and boot validation.
 - OTA must be blocked unless robot safety state is known.

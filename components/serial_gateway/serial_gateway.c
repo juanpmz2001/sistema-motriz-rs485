@@ -29,6 +29,7 @@ static const char *TAG = "serial_gateway";
 #define SVD48_PY6514_WHEEL_TEETH 5
 #define SVD48_CHANNEL_ALL (-1)
 #define GATEWAY_RX_IDLE_TICKS 1
+#define GATEWAY_RX_DRAIN_MAX 256
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
@@ -172,6 +173,22 @@ static bool parse_float_arg(const char *text, float *value)
     return true;
 }
 
+static bool parse_on_off_arg(const char *text, bool *enabled)
+{
+    if (!text || !enabled) {
+        return false;
+    }
+    if (strcasecmp(text, "ON") == 0) {
+        *enabled = true;
+        return true;
+    }
+    if (strcasecmp(text, "OFF") == 0) {
+        *enabled = false;
+        return true;
+    }
+    return false;
+}
+
 static void print_motor_full(serial_gateway_handle_t handle, uint8_t motor)
 {
     svd48_motor_telemetry_t t;
@@ -239,6 +256,209 @@ static void handle_version(serial_gateway_handle_t handle)
                  (unsigned long)handle->config.fw_build_number,
                  esp_get_idf_version(),
                  safe_text(partition_label, "UNKNOWN"));
+}
+
+static esp_err_t get_config_snapshot(serial_gateway_handle_t handle, config_manager_snapshot_t *snapshot)
+{
+    if (!handle->config.config_manager) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return config_manager_get_snapshot(handle->config.config_manager, snapshot);
+}
+
+static void handle_config_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE CONFIG_STATUS\n");
+        return;
+    }
+
+    config_manager_snapshot_t snapshot;
+    esp_err_t err = get_config_snapshot(handle, &snapshot);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR CONFIG_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA CONFIG WIFI_SSID:%s WIFI_PASSWORD:%s OTA_HOST:%s OTA_PORT:%u OTA_MANIFEST:%s OTA_AUTO_CHECK:%u OTA_AUTO_UPDATE:%u\n",
+                 snapshot.wifi_ssid[0] ? snapshot.wifi_ssid : "<empty>",
+                 snapshot.wifi_password_set ? "<set>" : "<empty>",
+                 snapshot.ota_server_host,
+                 snapshot.ota_server_port,
+                 snapshot.ota_manifest_path,
+                 snapshot.ota_auto_check_enabled ? 1 : 0,
+                 snapshot.ota_auto_update_enabled ? 1 : 0);
+}
+
+static void handle_config_clear(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE CONFIG_CLEAR\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_clear(handle->config.config_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK CONFIG_CLEAR\n");
+    } else {
+        print_locked(handle, "ERR CONFIG_CLEAR_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_wifi_set(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc != 3) {
+        print_locked(handle, "ERR USAGE WIFI_SET ssid password\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_wifi(handle->config.config_manager, argv[1], argv[2]);
+    if (err == ESP_OK) {
+        print_locked(handle,
+                     "OK WIFI_SET SSID:%s PASSWORD:%s\n",
+                     argv[1],
+                     argv[2][0] ? "<set>" : "<empty>");
+    } else {
+        print_locked(handle, "ERR WIFI_SET_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_wifi_clear(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE WIFI_CLEAR\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_clear_wifi(handle->config.config_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK WIFI_CLEAR\n");
+    } else {
+        print_locked(handle, "ERR WIFI_CLEAR_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_set_server(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    uint16_t port = 0;
+    if (argc != 3 || !parse_u16_any_arg(argv[2], &port) || port == 0) {
+        print_locked(handle, "ERR USAGE OTA_SET_SERVER host port\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_ota_server(handle->config.config_manager, argv[1], port);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_SET_SERVER HOST:%s PORT:%u\n", argv[1], port);
+    } else {
+        print_locked(handle, "ERR OTA_SET_SERVER_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_set_manifest(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc != 2) {
+        print_locked(handle, "ERR USAGE OTA_SET_MANIFEST path\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_ota_manifest_path(handle->config.config_manager, argv[1]);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_SET_MANIFEST PATH:%s\n", argv[1]);
+    } else {
+        print_locked(handle, "ERR OTA_SET_MANIFEST_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_config(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_CONFIG\n");
+        return;
+    }
+
+    config_manager_snapshot_t snapshot;
+    esp_err_t err = get_config_snapshot(handle, &snapshot);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR OTA_CONFIG_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_CONFIG HOST:%s PORT:%u MANIFEST:%s AUTO_CHECK:%u AUTO_UPDATE:%u\n",
+                 snapshot.ota_server_host,
+                 snapshot.ota_server_port,
+                 snapshot.ota_manifest_path,
+                 snapshot.ota_auto_check_enabled ? 1 : 0,
+                 snapshot.ota_auto_update_enabled ? 1 : 0);
+}
+
+static void handle_ota_auto_check(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    bool enabled = false;
+    if (argc != 2 || !parse_on_off_arg(argv[1], &enabled)) {
+        print_locked(handle, "ERR USAGE OTA_AUTO_CHECK ON|OFF\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_ota_auto_check(handle->config.config_manager, enabled);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_AUTO_CHECK %s\n", enabled ? "ON" : "OFF");
+    } else {
+        print_locked(handle, "ERR OTA_AUTO_CHECK_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_auto_update(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    bool enabled = false;
+    if (argc != 2 || !parse_on_off_arg(argv[1], &enabled)) {
+        print_locked(handle, "ERR USAGE OTA_AUTO_UPDATE OFF\n");
+        return;
+    }
+    if (enabled) {
+        print_locked(handle, "ERR AUTO_UPDATE_DISABLED_UNTIL_MANUAL_OTA_VALIDATED\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_ota_auto_update(handle->config.config_manager, false);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_AUTO_UPDATE OFF\n");
+    } else {
+        print_locked(handle, "ERR OTA_AUTO_UPDATE_FAILED 0x%x\n", err);
+    }
 }
 
 static void handle_read_reg(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -452,7 +672,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET ssid password,WIFI_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -571,6 +791,25 @@ static void handle_clear_fault(serial_gateway_handle_t handle, int argc, char *a
     }
 }
 
+static void print_pc_rx_trace(serial_gateway_handle_t handle, const char *original)
+{
+    char copy[GATEWAY_LINE_MAX];
+    snprintf(copy, sizeof(copy), "%s", original);
+
+    char *argv[GATEWAY_ARG_MAX];
+    int argc = split_args(copy, argv, GATEWAY_ARG_MAX);
+    if (argc > 0 && strcasecmp(argv[0], "WIFI_SET") == 0) {
+        if (argc >= 2) {
+            print_locked(handle, "TRACE PC_RX ASCII:\"WIFI_SET %s <redacted>\"\n", argv[1]);
+        } else {
+            print_locked(handle, "TRACE PC_RX ASCII:\"WIFI_SET <redacted>\"\n");
+        }
+        return;
+    }
+
+    print_locked(handle, "TRACE PC_RX ASCII:\"%s\"\n", original);
+}
+
 static void handle_command(serial_gateway_handle_t handle, char *line)
 {
     char original[GATEWAY_LINE_MAX];
@@ -583,7 +822,7 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
     }
 
     if (robot_control_get_trace_enabled(handle->config.robot)) {
-        print_locked(handle, "TRACE PC_RX ASCII:\"%s\"\n", original);
+        print_pc_rx_trace(handle, original);
     }
 
     if (strcasecmp(argv[0], "PING") == 0) {
@@ -594,6 +833,24 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
             return;
         }
         handle_version(handle);
+    } else if (strcasecmp(argv[0], "CONFIG_STATUS") == 0) {
+        handle_config_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "CONFIG_CLEAR") == 0) {
+        handle_config_clear(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_SET") == 0) {
+        handle_wifi_set(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_CLEAR") == 0) {
+        handle_wifi_clear(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_SET_SERVER") == 0) {
+        handle_ota_set_server(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_SET_MANIFEST") == 0) {
+        handle_ota_set_manifest(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_CONFIG") == 0) {
+        handle_ota_config(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_AUTO_CHECK") == 0) {
+        handle_ota_auto_check(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_AUTO_UPDATE") == 0) {
+        handle_ota_auto_update(handle, argc, argv);
     } else if (strcasecmp(argv[0], "HELP") == 0) {
         print_help(handle);
     } else if (strcasecmp(argv[0], "TRACE") == 0) {
@@ -741,37 +998,44 @@ static void gateway_rx_task(void *arg)
     print_prompt(handle);
 
     while (handle->running) {
-        char ch = '\0';
-        ssize_t bytes_read = read(STDIN_FILENO, &ch, 1);
-        if (bytes_read <= 0) {
-            if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                vTaskDelay(pdMS_TO_TICKS(20));
+        bool had_input = false;
+
+        for (int drained = 0; drained < GATEWAY_RX_DRAIN_MAX; drained++) {
+            char ch = '\0';
+            ssize_t bytes_read = read(STDIN_FILENO, &ch, 1);
+            if (bytes_read <= 0) {
+                if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
+                break;
+            }
+
+            had_input = true;
+            if (ch == '\r' || ch == '\n') {
+                if (line_len == 0) {
+                    continue;
+                }
+                line[line_len] = '\0';
+                char *clean = trim(line);
+                handle_command(handle, clean);
+                print_prompt(handle);
+                line_len = 0;
                 continue;
             }
+
+            if (line_len >= sizeof(line) - 1) {
+                line_len = 0;
+                print_locked(handle, "ERR LINE_TOO_LONG\n");
+                print_prompt(handle);
+                continue;
+            }
+
+            line[line_len++] = ch;
+        }
+
+        if (!had_input) {
             vTaskDelay(GATEWAY_RX_IDLE_TICKS);
-            continue;
         }
-
-        if (ch == '\r' || ch == '\n') {
-            if (line_len == 0) {
-                continue;
-            }
-            line[line_len] = '\0';
-            char *clean = trim(line);
-            handle_command(handle, clean);
-            print_prompt(handle);
-            line_len = 0;
-            continue;
-        }
-
-        if (line_len >= sizeof(line) - 1) {
-            line_len = 0;
-            print_locked(handle, "ERR LINE_TOO_LONG\n");
-            print_prompt(handle);
-            continue;
-        }
-
-        line[line_len++] = ch;
     }
 
     vTaskDelete(NULL);

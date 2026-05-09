@@ -3,6 +3,8 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "app_version.h"
+#include "config_manager.h"
+#include "nvs_flash.h"
 #include "robot_control.h"
 #include "serial_gateway.h"
 #include "svd48.h"
@@ -24,6 +26,18 @@ static const char *TAG = "main";
 static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
 static serial_gateway_handle_t gateway = NULL;
+static config_manager_handle_t config_manager = NULL;
+
+static esp_err_t init_nvs(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS needs erase before first use, err=0x%x", err);
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    return err;
+}
 
 void app_main(void)
 {
@@ -35,6 +49,18 @@ void app_main(void)
              FW_VERSION,
              FW_BUILD_NUMBER);
     ESP_LOGI(TAG, "Read docs/skills/SVD48B50A_SKILL.md before changing RS485 behavior");
+
+    esp_err_t err = init_nvs();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize NVS, err=0x%x", err);
+        return;
+    }
+
+    err = config_manager_init(&config_manager);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize config manager, err=0x%x", err);
+        return;
+    }
 
     svd48_config_t svd48_config = {
         .uart_port = RS485_UART_PORT,
@@ -53,6 +79,7 @@ void app_main(void)
     svd48 = svd48_init(&svd48_config);
     if (!svd48) {
         ESP_LOGE(TAG, "Failed to initialize SVD48 bus");
+        config_manager_deinit(config_manager);
         return;
     }
 
@@ -75,6 +102,7 @@ void app_main(void)
     if (!robot) {
         ESP_LOGE(TAG, "Failed to initialize robot control");
         svd48_deinit(svd48);
+        config_manager_deinit(config_manager);
         return;
     }
 
@@ -82,11 +110,13 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to start SVD48 telemetry polling");
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        config_manager_deinit(config_manager);
         return;
     }
 
     serial_gateway_config_t gateway_config = {
         .robot = robot,
+        .config_manager = config_manager,
         .fw_project = FW_PROJECT,
         .fw_target = FW_TARGET,
         .fw_version = FW_VERSION,
@@ -100,6 +130,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize serial gateway");
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        config_manager_deinit(config_manager);
         return;
     }
 
@@ -108,6 +139,7 @@ void app_main(void)
         serial_gateway_deinit(gateway);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        config_manager_deinit(config_manager);
         return;
     }
 
