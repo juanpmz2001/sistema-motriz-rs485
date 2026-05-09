@@ -81,14 +81,14 @@ git_revision: v5.4.1
 idf_path: /tmp/esp-idf-v5.4.1
 ```
 
-Important limitation found during this audit:
+Important limitation found during the first audit:
 
 ```text
 /tmp/esp-idf-v5.4.1/export.sh: No such file or directory
 python3 -m esptool: No module named esptool
 ```
 
-The previous build artifacts show ESP-IDF v5.4.1, but the current shell no longer has the temporary IDF installation or `esptool` module available. Before implementing or flashing OTA work, the toolchain must be restored or installed in a persistent location.
+The previous build artifacts show ESP-IDF v5.4.1, but the shell initially no longer had the temporary IDF installation or `esptool` module available. Iteration 0 restored a persistent ESP-IDF v5.4.1 installation at `/home/jp/esp/esp-idf-v5.4.1`.
 
 Current partition config from `sdkconfig`:
 
@@ -117,6 +117,8 @@ Current flash settings from `build/flasher_args.json`:
   "flash_freq": "80m"
 }
 ```
+
+Iteration 0 `flash_id` detected physical flash size `16MB`. This means the current firmware configuration still artificially limits flashing/partition generation to `2MB`. Do not change it until the OTA partition migration iteration is explicitly approved, but the next partition design should target `16MB` and update `CONFIG_ESPTOOLPY_FLASHSIZE` accordingly.
 
 Current binary sizes from build artifacts:
 
@@ -176,11 +178,17 @@ Current serial gateway is the only external command interface. This is valuable 
 
 Configured flash size is `2MB`.
 
-Real physical flash size is not yet verified in this audit because:
+Real physical flash size detected during Iteration 0 is `16MB`:
 
-- `idf.py` was unavailable in the current shell.
-- `python3 -m esptool` was unavailable.
-- Only `/dev/ttyACM0` was detected, but `flash_id` could not be executed without `esptool`.
+```text
+Manufacturer: c8
+Device: 4018
+Detected flash size: 16MB
+Flash type set in eFuse: quad (4 data lines)
+Flash voltage set by eFuse to 3.3V
+```
+
+This is a configuration mismatch, not a hardware limitation. The firmware should remain unchanged during Iteration 0, but Iteration 2 must update `CONFIG_ESPTOOLPY_FLASHSIZE` and choose a `16MB` OTA partition table.
 
 Detected serial device:
 
@@ -189,7 +197,7 @@ Detected serial device:
 /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 -> ../../ttyACM0
 ```
 
-This may be the ESP32-S3 currently connected. The user mentioned it may be on another USB port, so every flash/test iteration should first re-scan `/dev/ttyACM*`, `/dev/ttyUSB*`, and `/dev/serial/by-id`.
+This is the ESP32-S3 currently connected for Iteration 0. The user mentioned it may move to another USB port, so every flash/test iteration should first re-scan `/dev/ttyACM*`, `/dev/ttyUSB*`, and `/dev/serial/by-id`.
 
 ### 2.4 Firmware Size and Memory Risks
 
@@ -323,8 +331,8 @@ Relevant results:
 Interpretation:
 
 - The previous build was created with ESP-IDF v5.4.1.
-- The current shell cannot rebuild or run `flash_id` until ESP-IDF/esptool is restored.
-- This is a blocker for implementation and must be fixed in Iteration 0.
+- The shell initially could not rebuild or run `flash_id` until ESP-IDF/esptool was restored.
+- Iteration 0 fixed this by installing ESP-IDF v5.4.1 under `/home/jp/esp/esp-idf-v5.4.1`.
 
 ### 3.4 USB Port Detection
 
@@ -342,10 +350,7 @@ Relevant results:
 /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 -> ../../ttyACM0
 ```
 
-Pending:
-
-- Verify whether this is the ESP32-S3 or another USB bridge.
-- Run `esptool.py -p /dev/ttyACM0 flash_id` after restoring esptool.
+Iteration 0 verified this is the ESP32-S3 and detected physical flash size `16MB`.
 
 ### 3.5 Web Repo Audit Commands
 
@@ -366,6 +371,107 @@ Relevant results:
 navigator.serial usage exists in src/app.js
 no backend API exists
 no firmware manifest exists
+```
+
+### 3.6 Iteration 0 Execution Results
+
+Iteration 0 was executed after the plan corrections requested on 2026-05-09.
+
+Protection baseline:
+
+```text
+git init
+git commit -m "Baseline before OTA implementation"
+baseline commit: 1b6612b
+```
+
+No functional firmware source or partition changes were made after this baseline. The only tracked changes after the baseline are documentation updates to this plan.
+
+Toolchain restore:
+
+```text
+ESP-IDF path: /home/jp/esp/esp-idf-v5.4.1
+idf.py --version: ESP-IDF v5.4.1
+esptool: esptool.py v4.11.0
+Python env: /home/jp/.espressif/python_env/idf5.4_py3.12_env
+```
+
+Serial port detection:
+
+```text
+/dev/ttyACM0
+/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 -> ../../ttyACM0
+```
+
+Note: Chrome had `/dev/ttyACM0` open through Web Serial. The port was released before running `flash_id`.
+
+`flash_id` result:
+
+```text
+Chip is ESP32-S3 (QFN56) (revision v0.2)
+Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
+Crystal is 40MHz
+Manufacturer: c8
+Device: 4018
+Detected flash size: 16MB
+Flash type set in eFuse: quad (4 data lines)
+Flash voltage set by eFuse to 3.3V
+```
+
+Build command:
+
+```bash
+. /home/jp/esp/esp-idf-v5.4.1/export.sh
+idf.py -B build_iter0_audit build
+```
+
+Result:
+
+```text
+Build successful.
+sistema-motriz-rs485.bin binary size 0x3fe00 bytes.
+Smallest app partition is 0x177000 bytes.
+0x137200 bytes (83%) free.
+```
+
+Artifact sizes from the audit build:
+
+| Artifact | Size |
+|---|---:|
+| `build_iter0_audit/sistema-motriz-rs485.bin` | `261632` bytes |
+| `build_iter0_audit/bootloader/bootloader.bin` | `21024` bytes |
+| `build_iter0_audit/partition_table/partition-table.bin` | `3072` bytes |
+
+`idf.py size` result:
+
+```text
+Total image size: 261508 bytes (.bin may be padded larger)
+Flash Code: 138242 bytes
+Flash Data: 49548 bytes
+DIRAM used: 59507 bytes / 341760 bytes, 17.41%
+IRAM used: 16383 bytes / 16384 bytes, 99.99%
+RTC FAST used: 52 bytes / 8192 bytes, 0.63%
+```
+
+Important risk from `idf.py size`: IRAM is almost fully allocated in the current config. Future Wi-Fi/OTA additions may not use IRAM heavily, but every iteration should keep checking IRAM and not only flash size.
+
+`idf.py partition-table` result:
+
+```text
+# ESP-IDF Partition Table
+# Name, Type, SubType, Offset, Size, Flags
+nvs,data,nvs,0x9000,24K,
+phy_init,data,phy,0xf000,4K,
+factory,app,factory,0x10000,1500K,
+```
+
+Current mismatch to resolve in Iteration 2:
+
+```text
+Physical flash: 16MB
+Configured flash: 2MB
+Current partition mode: single-app large
+Required future state: OTA table sized for 16MB, with CONFIG_ESPTOOLPY_FLASHSIZE updated to 16MB
 ```
 
 ## 4. Technical Decisions
