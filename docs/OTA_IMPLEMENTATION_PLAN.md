@@ -1,0 +1,2258 @@
+# OTA Implementation Plan
+
+Date: 2026-05-09  
+Firmware repo: `/mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485`  
+Web/backend repo: `/home/jp/Documents/botfarms/web_controll_esp_svd48`
+
+## 1. Executive Summary
+
+The goal is to add a local pull-based OTA update system to the ESP32-S3 robot firmware. The ESP32-S3 will connect to a local Wi-Fi network, periodically query a firmware manifest served by a local backend running on the development computer, decide whether a newer build exists, download the `.bin`, verify `size` and `sha256`, write it to an inactive OTA partition, switch boot partition, stop the robot safely, reboot, and validate the new application using ESP-IDF rollback support.
+
+The proposed architecture is:
+
+- ESP32-S3 firmware keeps the existing RS485 robot control stack.
+- New firmware components are added incrementally:
+  - `config_manager`: persistent NVS settings.
+  - `wifi_manager`: Wi-Fi station first, SoftAP provisioning later.
+  - `ota_manager`: manifest pull, download, verification, OTA write, rollback validation.
+- Existing `serial_gateway` remains available for all diagnostics and manual control.
+- Local backend in `web_controll_esp_svd48` serves static UI, firmware binaries, health checks, and JSON manifests.
+- Initial development uses HTTP on the LAN. The design must keep a clean path to HTTPS and signed firmware later.
+
+First implementation recommendation:
+
+1. Restore/confirm the ESP-IDF toolchain and measure real flash size with `flash_id`.
+2. Add firmware version/build diagnostics.
+3. Migrate to OTA partitions only after proving that the final OTA slot size is safe.
+4. Add NVS and Wi-Fi after partition migration.
+5. Add manifest check before any OTA write.
+6. Add real OTA only as a manual serial command first.
+7. Add automatic low-priority manifest checks last. Keep automatic OTA writes disabled until manual `OTA_UPDATE`, rollback, and serial recovery are proven end to end.
+
+Do not implement SoftAP provisioning, HTTPS, firmware signing, secure boot, flash encryption, or automatic OTA writes in the first code iteration. Those are important, but they should come after the base OTA path is measurable and recoverable.
+
+## 2. Real Repository Diagnosis
+
+### 2.1 Files Inspected
+
+Firmware:
+
+- `CMakeLists.txt`
+- `sdkconfig`
+- `sdkconfig.defaults`
+- `main/main.c`
+- `main/CMakeLists.txt`
+- `components/svd48/CMakeLists.txt`
+- `components/svd48/svd48.c`
+- `components/robot_control/CMakeLists.txt`
+- `components/robot_control/robot_control.c`
+- `components/serial_gateway/CMakeLists.txt`
+- `components/serial_gateway/serial_gateway.c`
+- `build/project_description.json`
+- `build/flasher_args.json`
+- `build/partition_table/partition-table.bin`
+- `build/sistema-motriz-rs485.bin`
+- `docs/API.md`
+- `docs/skills/SVD48B50A_SKILL.md`
+
+Web/backend:
+
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/package.json`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/README.md`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/index.html`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/src/app.js`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/src/styles.css`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/src/theme.css`
+- `/home/jp/Documents/botfarms/web_controll_esp_svd48/docs/esp-trace-contract.md`
+
+### 2.2 Firmware Configuration Detected
+
+Target detected from `sdkconfig` and `build/project_description.json`:
+
+```text
+CONFIG_IDF_TARGET="esp32s3"
+target: esp32s3
+```
+
+ESP-IDF version detected from build artifact:
+
+```text
+git_revision: v5.4.1
+idf_path: /tmp/esp-idf-v5.4.1
+```
+
+Important limitation found during this audit:
+
+```text
+/tmp/esp-idf-v5.4.1/export.sh: No such file or directory
+python3 -m esptool: No module named esptool
+```
+
+The previous build artifacts show ESP-IDF v5.4.1, but the current shell no longer has the temporary IDF installation or `esptool` module available. Before implementing or flashing OTA work, the toolchain must be restored or installed in a persistent location.
+
+Current partition config from `sdkconfig`:
+
+```text
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
+# CONFIG_APP_ROLLBACK_ENABLE is not set
+# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set
+```
+
+Current partition table decoded from `build/partition_table/partition-table.bin`:
+
+| Name | Type | Subtype | Offset | Size |
+|---|---|---|---:|---:|
+| `nvs` | data | nvs | `0x9000` | `0x6000` |
+| `phy_init` | data | phy | `0xf000` | `0x1000` |
+| `factory` | app | factory | `0x10000` | `0x177000` |
+
+Current flash settings from `build/flasher_args.json`:
+
+```json
+{
+  "flash_mode": "dio",
+  "flash_size": "2MB",
+  "flash_freq": "80m"
+}
+```
+
+Current binary sizes from build artifacts:
+
+| Artifact | Size |
+|---|---:|
+| `build/sistema-motriz-rs485.bin` | `261632` bytes |
+| `build/bootloader/bootloader.bin` | `21024` bytes |
+| `build/partition_table/partition-table.bin` | `3072` bytes |
+
+Current app partition margin:
+
+```text
+factory partition: 0x177000 = 1536000 bytes
+current app: 261632 bytes
+current margin in factory partition: 1274368 bytes
+```
+
+Active project components from root `CMakeLists.txt`:
+
+```cmake
+set(COMPONENTS main svd48 robot_control serial_gateway)
+```
+
+This means these local components are present but not active in the current build:
+
+- `bluetooth_controller`
+- `motor_controller`
+- `ppm_decoder`
+
+Relevant current runtime flow from `main/main.c`:
+
+1. Log startup.
+2. Configure SVD48 UART2 RS485 bus.
+3. Initialize `svd48`.
+4. Initialize `robot_control`.
+5. Start SVD48 telemetry polling.
+6. Initialize and start `serial_gateway`.
+7. Stay alive in a low-frequency main loop.
+
+Current RS485 settings:
+
+```text
+UART2
+TX pin 17
+RX pin 16
+baud 115200
+drive IDs {1, 2}
+response_timeout_ms 100
+retries 2
+telemetry_period_ms 30
+stale_timeout_ms 1000
+```
+
+Current serial gateway is the only external command interface. This is valuable and should remain available through all OTA work.
+
+### 2.3 Flash Size Status
+
+Configured flash size is `2MB`.
+
+Real physical flash size is not yet verified in this audit because:
+
+- `idf.py` was unavailable in the current shell.
+- `python3 -m esptool` was unavailable.
+- Only `/dev/ttyACM0` was detected, but `flash_id` could not be executed without `esptool`.
+
+Detected serial device:
+
+```text
+/dev/ttyACM0
+/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 -> ../../ttyACM0
+```
+
+This may be the ESP32-S3 currently connected. The user mentioned it may be on another USB port, so every flash/test iteration should first re-scan `/dev/ttyACM*`, `/dev/ttyUSB*`, and `/dev/serial/by-id`.
+
+### 2.4 Firmware Size and Memory Risks
+
+Current firmware is small enough for OTA even on 2 MB flash, but OTA growth risk is real.
+
+If flash remains configured as 2 MB, two OTA slots of about `0xF0000` each are feasible:
+
+```text
+2 MB OTA slot candidate: 0xF0000 = 983040 bytes
+current app: 261632 bytes
+current app uses: 26.6% of one 2 MB OTA slot
+current margin: 721408 bytes
+```
+
+That margin is acceptable for the current firmware, but adding Wi-Fi, TCP/IP, HTTP client, JSON parsing, mbedTLS/SHA256, NVS, OTA logic and diagnostics can push the binary closer to 700-900 KB. A 2 MB OTA layout may work, but it is tight and leaves limited room for future features.
+
+Risks:
+
+- Wi-Fi and HTTP dependencies increase both flash and RAM usage.
+- TLS later will add a larger flash/RAM cost than HTTP.
+- JSON parsing should be constrained and defensive.
+- OTA task must not allocate large buffers permanently.
+- OTA task must not run at a priority that competes with RS485 or robot control.
+- A failed endpoint or slow Wi-Fi must not block telemetry polling or serial commands.
+
+### 2.5 Web Repo Diagnosis
+
+Current web repo is static.
+
+Evidence:
+
+```json
+{
+  "scripts": {
+    "dev": "python3 -m http.server 5173"
+  }
+}
+```
+
+The UI currently uses Web Serial from the browser. It has no backend API, no firmware directory, no manifest generation script, and no binary serving endpoint.
+
+Detected current LAN IP on this computer:
+
+```text
+wlo1: 192.168.10.10/24
+```
+
+For ESP32 access, the backend must listen on `0.0.0.0`, and manifest URLs must use `http://192.168.10.10:<port>/...` or another hostname resolvable by the ESP32. They must not use `localhost`, because `localhost` from the ESP32 means the ESP32 itself.
+
+No active listener on `5173` or `8080` was confirmed by the audit command. This can change, so verify before starting a backend.
+
+### 2.6 Backend Recommendation
+
+Recommended backend for this repo: Node.js + Express.
+
+Why:
+
+- The web repo already has `package.json` and `"type": "module"`.
+- The frontend is JavaScript.
+- Express can serve static UI and API endpoints in one process.
+- Manifest generation can be a Node script using built-in `crypto`.
+- No Python virtualenv is needed for normal use.
+
+Alternative: Python/FastAPI.
+
+FastAPI is good if the local tooling is Python-oriented, but it adds a Python dependency stack and a separate mental model from the frontend. For this project, Express is the lower-friction choice.
+
+Recommended server behavior:
+
+- Listen on `0.0.0.0:8080` by default.
+- Serve the existing static UI.
+- Serve firmware binaries from `firmware/`.
+- Generate or load `firmware/manifest.json`.
+- Refuse to generate `localhost` URLs unless explicitly overridden for browser-only testing.
+
+## 3. Evidence: Commands Executed and Results
+
+### 3.1 Firmware Audit Commands
+
+```bash
+pwd
+rg --files -g '!*build*'
+ls -la
+ls -la components main docs
+rg -n "CONFIG_IDF_TARGET|CONFIG_ESPTOOLPY_FLASHSIZE|CONFIG_PARTITION_TABLE|CONFIG_APP_ROLLBACK|CONFIG_BOOTLOADER_APP_ROLLBACK|CONFIG_ESP_HTTPS_OTA|CONFIG_NVS|CONFIG_ESP_WIFI|CONFIG_HTTP|PROJECT_VER|version|build_number" sdkconfig sdkconfig.defaults CMakeLists.txt main components -g '!build'
+find build -maxdepth 3 \( -name '*.bin' -o -name 'partition-table.bin' -o -name 'project_description.json' -o -name 'flasher_args.json' \) -printf '%p %s bytes\n'
+```
+
+Relevant results:
+
+```text
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+# CONFIG_APP_ROLLBACK_ENABLE is not set
+# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set
+build/sistema-motriz-rs485.bin 261632 bytes
+```
+
+### 3.2 Partition Table Decode
+
+The binary partition table was decoded locally using a small Python parser for the ESP-IDF partition entry format.
+
+Result:
+
+```text
+name,type,subtype,offset,size,flags
+nvs,data,nvs,0x9000,0x6000,0
+phy_init,data,phy,0xf000,0x1000,0
+factory,app,factory,0x10000,0x177000,0
+```
+
+### 3.3 Toolchain Availability Check
+
+Commands:
+
+```bash
+. /tmp/esp-idf-v5.4.1/export.sh
+idf.py --version
+python3 -m esptool --help
+```
+
+Relevant results:
+
+```text
+/tmp/esp-idf-v5.4.1/export.sh: No such file or directory
+/usr/bin/python3: No module named esptool
+```
+
+Interpretation:
+
+- The previous build was created with ESP-IDF v5.4.1.
+- The current shell cannot rebuild or run `flash_id` until ESP-IDF/esptool is restored.
+- This is a blocker for implementation and must be fixed in Iteration 0.
+
+### 3.4 USB Port Detection
+
+Commands:
+
+```bash
+ls -la /dev/ttyACM* /dev/ttyUSB*
+ls -l /dev/serial/by-id /dev/serial/by-path
+```
+
+Relevant results:
+
+```text
+/dev/ttyACM0
+/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 -> ../../ttyACM0
+```
+
+Pending:
+
+- Verify whether this is the ESP32-S3 or another USB bridge.
+- Run `esptool.py -p /dev/ttyACM0 flash_id` after restoring esptool.
+
+### 3.5 Web Repo Audit Commands
+
+Commands:
+
+```bash
+cd /home/jp/Documents/botfarms/web_controll_esp_svd48
+ls -la
+rg --files
+cat package.json
+rg -n "serial|navigator\.serial|fetch|http|localhost|5173|Web Serial|manifest|firmware|server" .
+```
+
+Relevant results:
+
+```text
+"dev": "python3 -m http.server 5173"
+navigator.serial usage exists in src/app.js
+no backend API exists
+no firmware manifest exists
+```
+
+## 4. Technical Decisions
+
+### 4.1 OTA Pull Instead of Push
+
+Alternatives:
+
+- Push firmware from PC to ESP32.
+- Pull firmware from ESP32 from a local server.
+
+Decision:
+
+- Use pull OTA.
+
+Reason:
+
+- The ESP32 can own update timing and refuse updates when the robot is moving.
+- The local server can be a simple static/API server.
+- The ESP32 can retry with backoff without user intervention.
+- This maps cleanly to future cloud or HTTPS endpoints.
+
+Trade-offs:
+
+- Requires Wi-Fi configuration on the ESP32.
+- Requires the ESP32 to parse a manifest and download reliably.
+- Requires local server to bind to LAN and firewall to allow inbound access.
+
+Validation:
+
+- `OTA_CHECK` must detect versions without writing flash.
+- `OTA_UPDATE` must refuse unsafe robot state.
+- Pull task must be disabled until manual update is reliable.
+
+### 4.2 HTTP Local First, HTTPS Later
+
+Alternatives:
+
+- Start with HTTPS and certificates.
+- Start with HTTP on isolated LAN.
+
+Decision:
+
+- Start with HTTP local for development.
+
+Reason:
+
+- Faster bring-up and easier packet/debug inspection.
+- Avoids TLS certificate provisioning during early firmware work.
+- Hash verification still catches corruption and accidental wrong binaries.
+
+Trade-offs:
+
+- HTTP does not authenticate the server.
+- SHA256 in a manifest served over HTTP does not prevent malicious manifest replacement.
+
+Future hardening:
+
+- HTTPS with pinned certificate or CA bundle.
+- Signed firmware manifest.
+- Signed firmware image.
+- Secure boot and flash encryption after OTA flow is stable.
+
+Validation:
+
+- Every manifest must include `sha256` and `size`.
+- ESP32 must reject missing hash, wrong hash, wrong size, malformed URL, and downgrade attempts.
+
+### 4.3 JSON Manifest
+
+Alternatives:
+
+- Raw text file.
+- JSON manifest.
+- Binary manifest.
+
+Decision:
+
+- Use JSON manifest.
+
+Reason:
+
+- Easy to generate from backend.
+- Easy to inspect with `curl`.
+- Flexible enough to add metadata later.
+
+Trade-offs:
+
+- Requires JSON parser on ESP32.
+- Must enforce small maximum response size.
+
+Validation:
+
+- `OTA_CHECK` must reject invalid JSON.
+- Manifest fetch must cap max bytes, for example 4096 or 8192 bytes.
+
+### 4.4 Include `size` and `sha256`
+
+Alternatives:
+
+- Trust HTTP content length only.
+- Trust ESP-IDF image validation only.
+- Verify explicit manifest metadata.
+
+Decision:
+
+- Verify both `size` and `sha256` before switching boot partition.
+
+Reason:
+
+- Size catches truncation and wrong file class quickly.
+- SHA256 catches corruption or wrong binary.
+- ESP-IDF image validation remains an additional safety layer.
+
+Trade-offs:
+
+- Must hash while streaming or after writing.
+- Adds minor CPU time during OTA, but acceptable in a low-priority update path.
+
+Validation:
+
+- Wrong `sha256` test must leave current firmware unchanged.
+- Wrong `size` test must leave current firmware unchanged.
+
+### 4.5 Partition Strategy
+
+Alternatives:
+
+- Keep single app partition.
+- Use built-in two OTA table.
+- Use custom OTA partition table.
+
+Decision:
+
+- Use custom OTA partition table after real flash size is measured.
+
+Reason:
+
+- Current project uses `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE`.
+- OTA requires at least `ota_0`, `ota_1`, and `otadata`.
+- Custom table allows explicit slot size and room for NVS/coredump.
+
+Trade-offs:
+
+- Partition migration requires full flash and can erase current NVS.
+- If slot too small, future builds fail or OTA becomes impossible.
+- 2 MB flash is viable but tight.
+
+Validation:
+
+- Run `idf.py partition-table`.
+- Decode partition table.
+- Run `idf.py size`.
+- Confirm app size is below slot size with safety margin.
+
+### 4.6 NVS Configuration
+
+Alternatives:
+
+- Hardcode Wi-Fi/server settings.
+- Use compile-time Kconfig.
+- Store runtime config in NVS.
+
+Decision:
+
+- Store runtime config in NVS.
+
+Reason:
+
+- No Wi-Fi secrets in source code.
+- Configuration survives reboot.
+- Serial gateway and SoftAP provisioning can update settings.
+
+Trade-offs:
+
+- Password is stored on flash unless NVS encryption is enabled later.
+- Must avoid printing secrets in logs.
+
+Validation:
+
+- Set config over serial.
+- Reboot.
+- Read config with password redacted.
+- Confirm no secrets appear in logs or Git.
+
+### 4.7 Wi-Fi Station First, SoftAP Later
+
+Alternatives:
+
+- Implement station and SoftAP together.
+- Implement station first with serial config.
+- Implement SoftAP first.
+
+Decision:
+
+- Implement station first with serial configuration. Add SoftAP provisioning later.
+
+Reason:
+
+- Station mode is required for OTA.
+- Serial config is simpler and already available.
+- SoftAP adds HTTP server/provisioning complexity and should not block OTA base path.
+
+Trade-offs:
+
+- First bring-up requires serial access.
+- Nontechnical provisioning comes later.
+
+Validation:
+
+- Wi-Fi connects with valid NVS credentials.
+- Wi-Fi fails cleanly with invalid credentials.
+- Robot remains controllable when Wi-Fi fails.
+
+### 4.8 OTA Task Priority
+
+Alternatives:
+
+- Run OTA in main task.
+- Run OTA in high-priority task.
+- Run OTA in low-priority task.
+
+Decision:
+
+- Run OTA in a dedicated low-priority FreeRTOS task.
+
+Reason:
+
+- OTA is non-real-time maintenance work.
+- RS485, robot control and serial gateway must stay responsive.
+
+Trade-offs:
+
+- OTA may take longer.
+- Must coordinate shared robot state safely.
+
+Validation:
+
+- Telemetry and serial commands continue while endpoint is down.
+- OTA task uses backoff and does not spin.
+- No UART/RS485 contention is introduced.
+
+### 4.9 Conditions to Allow or Block OTA
+
+OTA must be blocked unless all required safety conditions are true.
+
+Minimum conditions:
+
+- Wi-Fi connected.
+- Manifest is valid.
+- Candidate build is newer and supported.
+- Robot is not moving.
+- No motor command is currently active.
+- No critical RS485 command is in progress.
+- `robot_control_stop_all()` can be executed before reboot.
+- Telemetry says RPM is zero or below a threshold, if telemetry is reliable.
+
+For current bench setup, because only controller `0x02/M1` may be connected, the safety check must be configurable and should not assume all four motors are online.
+
+Validation:
+
+- Try `OTA_UPDATE` while a motor command is active; it must refuse.
+- Try `OTA_UPDATE` while stopped; it may proceed.
+
+### 4.10 Rollback and Self-Test
+
+Alternatives:
+
+- No rollback.
+- Mark app valid immediately on boot.
+- Mark app valid after self-test.
+
+Decision:
+
+- Enable ESP-IDF rollback and mark app valid only after self-test.
+- Detect `ESP_OTA_IMG_PENDING_VERIFY` early during boot, but do not mark the new app valid until the critical subsystems have initialized successfully.
+
+Self-test should include:
+
+- NVS initializes.
+- `config_manager` initializes.
+- Firmware version metadata is readable.
+- `svd48` initializes.
+- `robot_control` initializes.
+- `serial_gateway` starts.
+- `wifi_manager` initializes without blocking robot startup.
+- `ota_manager` initializes.
+
+Do not require remote server availability in the first self-test, because an offline PC or router should not cause false rollback. A later optional policy can require successful Wi-Fi association if the update specifically claims to modify Wi-Fi/OTA.
+
+Validation:
+
+- Firmware that marks valid stays active.
+- Firmware that intentionally does not mark valid rolls back after reboot.
+- Recovery procedure is documented.
+
+### 4.11 Backend Local
+
+Alternatives:
+
+- Keep Python static server and add separate API.
+- Replace with Node/Express backend.
+- Use FastAPI.
+
+Decision:
+
+- Add Node/Express backend to the web repo.
+
+Reason:
+
+- Single local server can serve static UI and OTA API.
+- Existing frontend project already uses JavaScript.
+- Manifest generation is simple with Node `crypto`.
+
+Trade-offs:
+
+- Adds npm dependencies.
+- Must document firewall and LAN IP behavior.
+
+Validation:
+
+- `curl http://127.0.0.1:8080/api/health` works.
+- `curl http://192.168.10.10:8080/api/health` works from another device or same LAN.
+- Manifest uses LAN IP, not localhost.
+- SHA256 matches binary.
+
+## 5. Proposed File Structure
+
+### 5.1 Firmware Repo
+
+```text
+sistema-motriz-rs485/
+  partitions_ota_2mb.csv
+  partitions_ota_4mb.csv
+  partitions_ota_8mb.csv
+  sdkconfig.defaults
+  main/
+    main.c
+    app_version.h
+  components/
+    config_manager/
+      CMakeLists.txt
+      include/config_manager.h
+      config_manager.c
+    wifi_manager/
+      CMakeLists.txt
+      include/wifi_manager.h
+      wifi_manager.c
+    ota_manager/
+      CMakeLists.txt
+      include/ota_manager.h
+      ota_manager.c
+    serial_gateway/
+      serial_gateway.c
+      include/serial_gateway.h
+  docs/
+    OTA_IMPLEMENTATION_PLAN.md
+    OTA_OPERATION.md
+```
+
+### 5.2 Web/Backend Repo
+
+```text
+web_controll_esp_svd48/
+  package.json
+  server.js
+  firmware/
+    .gitkeep
+    manifest.json
+    sistema-motriz-rs485-v1.0.3.bin
+  scripts/
+    build_firmware_manifest.js
+    copy_firmware_release.js
+  docs/
+    ota-backend.md
+  index.html
+  src/
+  assets/
+```
+
+Firmware binaries and generated manifests should generally not be committed unless explicitly wanted. Recommended `.gitignore` additions:
+
+```gitignore
+firmware/*.bin
+firmware/manifest.json
+.env
+.env.local
+```
+
+## 6. Partition Table Proposals
+
+### 6.1 Mandatory First Step
+
+Detect physical flash before choosing the table. Do not choose or flash an OTA partition table until `flash_id` confirms physical flash size:
+
+```bash
+idf.py set-target esp32s3
+idf.py build
+python -m esptool --chip esp32s3 -p /dev/ttyACM0 flash_id
+```
+
+If `/dev/ttyACM0` is wrong, use:
+
+```bash
+ls -l /dev/serial/by-id
+ls -la /dev/ttyACM* /dev/ttyUSB*
+```
+
+If physical flash is larger than the current `CONFIG_ESPTOOLPY_FLASHSIZE="2MB"`, update `CONFIG_ESPTOOLPY_FLASHSIZE` to the detected size before selecting the partition table and rebuilding. The configured flash size, the partition table, and the physical flash size must agree.
+
+Slot margin criterion for this phase:
+
+- The final OTA-enabled binary must use no more than 70-75% of a single OTA slot.
+- If the build exceeds 75% of the selected slot, stop and either reduce scope, choose a larger flash layout, or postpone heavier features such as HTTPS/SoftAP.
+
+### 6.2 If Real Flash Is 2 MB
+
+2 MB is viable but tight.
+
+Candidate `partitions_ota_2mb.csv`:
+
+```csv
+# Name,   Type, SubType, Offset,   Size,    Flags
+nvs,      data, nvs,     0x9000,   0x4000,
+otadata,  data, ota,     0xd000,   0x2000,
+phy_init, data, phy,     0xf000,   0x1000,
+ota_0,    app,  ota_0,   0x10000,  0xF0000,
+ota_1,    app,  ota_1,   0x100000, 0xF0000,
+```
+
+Slot size:
+
+```text
+0xF0000 = 983040 bytes
+current app: 261632 bytes
+current margin: 721408 bytes
+75% slot limit: 737280 bytes
+70% slot limit: 688128 bytes
+```
+
+Risks:
+
+- Wi-Fi + HTTP + JSON + OTA may fit, but future HTTPS and richer diagnostics may pressure the slot.
+- NVS is reduced from `0x6000` to `0x4000`.
+- There is little room for coredump or local filesystem.
+
+Recommendation if flash is truly 2 MB:
+
+- Implement minimal OTA first.
+- Track binary size on every iteration.
+- Stop before real OTA if the final binary exceeds the 70-75% slot limit.
+- Keep SoftAP/HTTPS for later only if size allows.
+
+### 6.3 If Real Flash Is 4 MB
+
+Recommended `partitions_ota_4mb.csv`:
+
+```csv
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xf000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+coredump,   data, coredump,0x12000,  0x10000,
+ota_0,      app,  ota_0,   0x20000,  0x1E0000,
+ota_1,      app,  ota_1,   0x200000, 0x1E0000,
+```
+
+Slot size:
+
+```text
+0x1E0000 = 1966080 bytes
+current app uses: 13.3%
+75% slot limit: 1474560 bytes
+```
+
+Recommendation:
+
+- Prefer this over 2 MB if physical flash is at least 4 MB.
+- Provides much better margin for HTTPS later.
+
+### 6.4 If Real Flash Is 8 MB
+
+Recommended `partitions_ota_8mb.csv`:
+
+```csv
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xf000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+coredump,   data, coredump,0x12000,  0x10000,
+ota_0,      app,  ota_0,   0x20000,  0x300000,
+ota_1,      app,  ota_1,   0x320000, 0x300000,
+storage,    data, fat,     0x620000, 0x1E0000,
+```
+
+Slot size:
+
+```text
+0x300000 = 3145728 bytes
+current app uses: 8.3%
+```
+
+Recommendation:
+
+- Best balance for development if the module has 8 MB.
+- Leaves room for logs, crash dumps, and future local storage.
+
+### 6.5 If Real Flash Is 16 MB
+
+Recommended approach:
+
+- Keep OTA slots at least `0x400000` each.
+- Use larger storage/coredump area.
+- Do not make OTA slots excessively small just because current firmware is small.
+
+Example:
+
+```csv
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xf000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+coredump,   data, coredump,0x12000,  0x10000,
+ota_0,      app,  ota_0,   0x20000,  0x400000,
+ota_1,      app,  ota_1,   0x420000, 0x400000,
+storage,    data, fat,     0x820000, 0x7E0000,
+```
+
+## 7. Local API Endpoints
+
+Base URL for development, using the detected LAN IP:
+
+```text
+http://192.168.10.10:8080
+```
+
+Do not use `localhost` in any URL stored on the ESP32.
+
+### 7.1 `GET /api/health`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "service": "botfarms-ota-server",
+  "time": "2026-05-09T19:00:00.000Z"
+}
+```
+
+### 7.2 `GET /api/firmware/latest`
+
+Response:
+
+```json
+{
+  "project": "sistema-motriz-rs485",
+  "target": "esp32s3",
+  "version": "1.0.3",
+  "build_number": 3,
+  "url": "http://192.168.10.10:8080/firmware/sistema-motriz-rs485-v1.0.3.bin",
+  "filename": "sistema-motriz-rs485-v1.0.3.bin",
+  "size": 123456,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "min_supported_build": 1,
+  "notes": "Local development OTA build"
+}
+```
+
+### 7.3 `GET /firmware/:filename`
+
+Behavior:
+
+- Serves binary firmware files from `firmware/`.
+- Must reject path traversal.
+- Should set `Content-Type: application/octet-stream`.
+- Should set `Content-Length`.
+
+### 7.4 Optional `POST /api/devices/checkin`
+
+Request:
+
+```json
+{
+  "device_id": "tono-esp32s3-001",
+  "project": "sistema-motriz-rs485",
+  "version": "1.0.2",
+  "build_number": 2,
+  "target": "esp32s3",
+  "ip": "192.168.10.42",
+  "uptime_ms": 123456,
+  "ota_state": "valid",
+  "robot_safe": true
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true
+}
+```
+
+## 8. Manifest JSON Contract
+
+Exact required format:
+
+```json
+{
+  "project": "sistema-motriz-rs485",
+  "target": "esp32s3",
+  "version": "1.0.3",
+  "build_number": 3,
+  "url": "http://<LAN_IP>:8080/firmware/sistema-motriz-rs485-v1.0.3.bin",
+  "filename": "sistema-motriz-rs485-v1.0.3.bin",
+  "size": 123456,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "min_supported_build": 1,
+  "notes": "..."
+}
+```
+
+ESP32 validation rules:
+
+- `project` must equal `sistema-motriz-rs485`.
+- `target` must equal `esp32s3`.
+- `remote.build_number` must be greater than `CURRENT_BUILD_NUMBER` for update.
+- `CURRENT_BUILD_NUMBER` must be greater than or equal to `remote.min_supported_build`.
+- It is not sufficient to check `remote.build_number >= remote.min_supported_build`; the compatibility gate applies to the currently running firmware.
+- `url` must be HTTP initially, HTTPS later.
+- `url` must not contain `localhost`.
+- `size` must be positive and less than inactive OTA partition size.
+- `sha256` must be exactly 64 lowercase/uppercase hex chars.
+- Manifest body should be limited to a small size, for example 8192 bytes.
+
+## 9. ESP32 Pseudocode
+
+```c
+void app_main(void)
+{
+    init_logging();
+    print_version();
+
+    nvs_flash_init();
+    bool pending_verify = ota_manager_detect_pending_verify_early();
+
+    config_manager_init();
+    svd48_init();
+    robot_control_init();
+    svd48_start_polling();
+    serial_gateway_start();
+
+    wifi_manager_init(config_manager_get_wifi_config());
+    ota_manager_init(config_manager_get_ota_config(), robot_control_handle);
+
+    if (pending_verify) {
+        bool ok = nvs_ok() &&
+                  config_manager_ok() &&
+                  svd48_ok() &&
+                  robot_control_ok() &&
+                  serial_gateway_ok() &&
+                  wifi_manager_initialized() &&
+                  ota_manager_ok();
+        if (!ok) {
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+        // Do not require the OTA server or local PC to be online here.
+        esp_ota_mark_app_valid_cancel_rollback();
+    }
+
+    wifi_manager_start_station();
+
+    if (!wifi_manager_connected_after_retries()) {
+        // Early iterations: stay offline and keep robot/serial working.
+        // Later iteration: start SoftAP provisioning.
+        wifi_manager_maybe_start_softap_provisioning();
+    }
+
+    ota_manager_init(config_manager_get_ota_config(), robot_control_handle);
+    ota_manager_start_low_priority_task();
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+```
+
+OTA task:
+
+```c
+void ota_task(void *arg)
+{
+    uint32_t delay_ms = INITIAL_CHECK_INTERVAL_MS;
+
+    while (true) {
+        if (!wifi_manager_is_connected()) {
+            sleep_with_backoff();
+            continue;
+        }
+
+        if (!ota_policy_auto_check_enabled()) {
+            sleep_normal_interval();
+            continue;
+        }
+
+        result = ota_manager_check_manifest();
+        if (result == UPDATE_AVAILABLE) {
+            if (robot_control_is_safe_for_ota()) {
+                // Automatic update should remain disabled until manual OTA is proven.
+                if (ota_policy_auto_update_enabled()) {
+                    ota_manager_perform_update();
+                }
+            }
+        }
+
+        sleep_with_backoff_or_normal_interval();
+    }
+}
+```
+
+Manual OTA update:
+
+```c
+esp_err_t ota_manager_update_now(void)
+{
+    if (!wifi_manager_is_connected()) return ESP_ERR_INVALID_STATE;
+    if (!robot_control_is_safe_for_ota()) return ESP_ERR_INVALID_STATE;
+
+    manifest = fetch_manifest();
+    validate_manifest_shape(manifest);
+    compare_build_number(manifest.build_number, CURRENT_BUILD_NUMBER);
+    ensure_inactive_partition_large_enough(manifest.size);
+
+    partition = esp_ota_get_next_update_partition(NULL);
+    esp_ota_begin(partition, manifest.size, &handle);
+
+    while (download_chunk(&chunk)) {
+        sha256_update(chunk);
+        bytes_written += chunk.len;
+        esp_ota_write(handle, chunk.data, chunk.len);
+    }
+
+    if (bytes_written != manifest.size) abort_without_switch();
+    if (sha256_final != manifest.sha256) abort_without_switch();
+    esp_ota_end(handle);
+
+    robot_control_stop_all();
+    wait_until_robot_safe_or_timeout();
+
+    esp_ota_set_boot_partition(partition);
+    esp_restart();
+}
+```
+
+## 10. Proposed Serial Commands
+
+Version and system:
+
+```text
+VERSION
+PARTITIONS
+REBOOT
+SYSTEM_STATUS
+```
+
+Wi-Fi:
+
+```text
+WIFI_STATUS
+WIFI_SET <ssid> <password>
+WIFI_CLEAR
+WIFI_CONNECT
+WIFI_DISCONNECT
+```
+
+Security rule:
+
+- `WIFI_SET` may accept password input, but logs must redact it.
+- `WIFI_STATUS` must never print the password.
+
+OTA server config:
+
+```text
+OTA_SET_SERVER <host> <port>
+OTA_SET_MANIFEST <path>
+OTA_CONFIG
+OTA_CLEAR_CONFIG
+```
+
+OTA status/update:
+
+```text
+OTA_STATUS
+OTA_CHECK
+OTA_UPDATE
+OTA_ABORT
+OTA_CONFIRM
+```
+
+Notes:
+
+- `OTA_UPDATE` should be manual-only until Iteration 10.
+- `OTA_CONFIRM` may be useful for lab testing rollback, but production should mark valid automatically only after self-test.
+
+## 11. Exact Terminal Commands
+
+### 11.1 Restore ESP-IDF Environment
+
+Example if ESP-IDF v5.4.1 is installed persistently:
+
+```bash
+export IDF_TARGET=esp32s3
+. ~/esp/esp-idf-v5.4.1/export.sh
+idf.py --version
+```
+
+If no IDF is installed, install or clone ESP-IDF v5.4.1 first.
+
+### 11.2 Firmware Build/Size/Partition
+
+```bash
+cd /mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485
+idf.py set-target esp32s3
+idf.py build
+idf.py size
+idf.py partition-table
+```
+
+### 11.3 Flash Detection
+
+```bash
+ls -l /dev/serial/by-id
+ls -la /dev/ttyACM* /dev/ttyUSB*
+python -m esptool --chip esp32s3 -p /dev/ttyACM0 flash_id
+```
+
+### 11.4 Flash and Monitor
+
+```bash
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+### 11.5 Start Local Backend
+
+Recommended future command:
+
+```bash
+cd /home/jp/Documents/botfarms/web_controll_esp_svd48
+npm install
+HOST=0.0.0.0 PORT=8080 PUBLIC_HOST=192.168.10.10 npm run dev
+```
+
+### 11.6 Generate Manifest
+
+Proposed:
+
+```bash
+cd /home/jp/Documents/botfarms/web_controll_esp_svd48
+node scripts/copy_firmware_release.js \
+  --bin /mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485/build/sistema-motriz-rs485.bin \
+  --version 1.0.3 \
+  --build-number 3 \
+  --public-base-url http://192.168.10.10:8080
+```
+
+### 11.7 Test Endpoints
+
+```bash
+curl -s http://127.0.0.1:8080/api/health | jq
+curl -s http://192.168.10.10:8080/api/health | jq
+curl -s http://192.168.10.10:8080/api/firmware/latest | jq
+curl -O http://192.168.10.10:8080/firmware/sistema-motriz-rs485-v1.0.3.bin
+sha256sum firmware/sistema-motriz-rs485-v1.0.3.bin
+```
+
+### 11.8 Serial Diagnostics
+
+```bash
+python3 -m serial.tools.miniterm /dev/ttyACM0 115200
+```
+
+Commands to send:
+
+```text
+VERSION
+PARTITIONS
+WIFI_STATUS
+OTA_CONFIG
+OTA_CHECK
+OTA_STATUS
+```
+
+## 12. Implementation Iterations
+
+### Iteration 0: Initial Audit and Measurements
+
+Objective:
+
+- Verify the real starting point before any functional code changes.
+- Create a verifiable baseline before any functional code or partition changes.
+
+Scope:
+
+- Target, IDF version, binary size, flash size, current partitions, current build, current web repo, and baseline/backup protection.
+
+Files likely touched:
+
+- `docs/OTA_IMPLEMENTATION_PLAN.md`.
+- `.git/` if a Git baseline can be initialized.
+- Or an external backup directory/archive if Git initialization is not viable.
+
+Subtasks:
+
+- Verify whether this directory is a valid Git repository.
+- If Git can be initialized safely, run `git init`, stage the current project state, and create a baseline commit before functional changes.
+- If Git initialization is not viable, create a complete copy/archive of the project outside the working tree and verify it.
+- Do not modify partitions or functional firmware code without a verifiable Git baseline or backup.
+- Restore ESP-IDF v5.4.1.
+- Run `idf.py build`.
+- Run `idf.py size`.
+- Run `idf.py partition-table`.
+- Run `flash_id`.
+- Confirm serial port.
+- Confirm web repo static state.
+
+Commands:
+
+```bash
+git rev-parse --show-toplevel
+git init
+git add .
+git commit -m "Baseline before OTA implementation"
+
+# If Git baseline is not viable:
+rsync -a --delete /path/to/sistema-motriz-rs485/ /path/to/backup/sistema-motriz-rs485-baseline/
+
+idf.py set-target esp32s3
+idf.py build
+idf.py size
+idf.py partition-table
+python -m esptool --chip esp32s3 -p /dev/ttyACM0 flash_id
+```
+
+Acceptance criteria:
+
+- A baseline commit exists, or a full backup copy/archive exists and was verified.
+- Build succeeds.
+- Binary size documented.
+- Flash size documented.
+- Partition table documented.
+- Risks documented.
+
+Mandatory tests:
+
+- Existing serial gateway still responds after a normal flash.
+- `PING` works.
+- No functional code changed.
+- No partition or source-code changes are made before baseline/backup protection exists.
+
+Risks:
+
+- Toolchain missing.
+- Wrong USB port.
+- Flash size configured differently from real hardware.
+- Baseline Git repository accidentally includes build artifacts if `.gitignore` is incomplete.
+
+Rollback/recovery:
+
+- Use the baseline commit or verified backup to recover the starting point.
+- No functional code changes except documentation during this iteration.
+- If build environment is broken, restore IDF before proceeding.
+
+Expected end state:
+
+- Approval-quality measurements exist.
+
+### Iteration 1: Firmware Versioning and Basic Diagnostics
+
+Objective:
+
+- Add explicit firmware version/build metadata and basic serial diagnostics.
+
+Scope:
+
+- No OTA yet.
+- Add `VERSION`.
+- Add minimal `SYSTEM_STATUS` or `PARTITIONS` only if low risk.
+
+Files likely touched:
+
+- `main/app_version.h`
+- `main/main.c`
+- `components/serial_gateway/serial_gateway.c`
+- `components/serial_gateway/include/serial_gateway.h`
+- `docs/API.md`
+
+Subtasks:
+
+- Define `FW_PROJECT`, `FW_VERSION`, `FW_BUILD_NUMBER`, `FW_TARGET`.
+- Print version at boot.
+- Implement `VERSION` command.
+- Optionally expose running partition label.
+
+Commands:
+
+```bash
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- `VERSION` prints project, target, version, build number, IDF version and app partition.
+- No secrets printed.
+- Existing robot commands still work.
+
+Mandatory tests:
+
+- `PING`
+- `VERSION`
+- `GET_MOTOR 2` or the relevant current bench motor.
+
+Risks:
+
+- Minimal; mostly string metadata.
+
+Rollback/recovery:
+
+- Revert version command patch if it breaks build.
+
+Expected end state:
+
+- Firmware can identify itself over serial and logs.
+
+### Iteration 2: Safe Migration to OTA Partitions
+
+Objective:
+
+- Replace single-app layout with OTA-capable layout.
+
+Scope:
+
+- Add partition CSV based on real flash size.
+- Configure custom partition table.
+- Enable rollback config only when ready for rollback iteration, or prepare but not depend on it yet.
+
+Files likely touched:
+
+- `partitions_ota_2mb.csv` or `partitions_ota_4mb.csv` or `partitions_ota_8mb.csv`
+- `sdkconfig.defaults`
+- `sdkconfig`
+- `docs/OTA_IMPLEMENTATION_PLAN.md`
+
+Subtasks:
+
+- Choose table based on `flash_id`.
+- Build.
+- Confirm binary fits slots.
+- Flash full image.
+- Confirm firmware boots exactly like before.
+
+Commands:
+
+```bash
+idf.py menuconfig
+idf.py build
+idf.py partition-table
+idf.py size
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Partition table shows `ota_0`, `ota_1`, `otadata`.
+- App binary fits slot with margin.
+- Firmware boots.
+- Serial gateway works.
+- RS485 control still works.
+
+Mandatory tests:
+
+- `PING`
+- `VERSION`
+- `GET_SVD48_CONFIG 0x02 M1`
+- `STOP 2` or current safe stop command for bench setup.
+
+Risks:
+
+- Full flash may erase NVS.
+- Wrong partition table can prevent boot.
+- 2 MB flash gives tight OTA slots.
+
+Rollback/recovery:
+
+- Keep previous build artifacts.
+- Reflash previous single-app firmware if OTA table fails.
+- Use serial bootloader mode if app does not boot.
+
+Expected end state:
+
+- Same robot behavior, but OTA partition layout exists.
+
+### Iteration 3: Config Manager with NVS
+
+Objective:
+
+- Add persistent runtime configuration.
+
+Scope:
+
+- Store Wi-Fi and OTA server config.
+- No Wi-Fi connection required yet.
+
+Files likely touched:
+
+- `components/config_manager/CMakeLists.txt`
+- `components/config_manager/include/config_manager.h`
+- `components/config_manager/config_manager.c`
+- `components/serial_gateway/serial_gateway.c`
+- `main/main.c`
+- `docs/API.md`
+
+Stored values:
+
+- `ssid`
+- `password`
+- `server_host`
+- `server_port`
+- `manifest_path`
+
+Subtasks:
+
+- Initialize NVS.
+- Add typed getters/setters.
+- Add default config.
+- Add serial commands to inspect and set config with password redaction.
+
+Commands:
+
+```bash
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Config can be set.
+- Config persists after reboot.
+- Password is never printed in cleartext.
+- Clearing config works.
+
+Mandatory tests:
+
+- `OTA_CONFIG`
+- `OTA_SET_SERVER 192.168.10.10 8080`
+- `OTA_SET_MANIFEST /api/firmware/latest`
+- `WIFI_SET <ssid> <password>`
+- reboot
+- `OTA_CONFIG`
+- `WIFI_STATUS`
+
+Risks:
+
+- NVS partition too small on 2 MB layout.
+- Accidental secret logging.
+
+Rollback/recovery:
+
+- Add `CONFIG_CLEAR` or `NVS_CLEAR` command.
+- Full erase if NVS schema is corrupted during development.
+
+Expected end state:
+
+- Runtime config is persistent and safe to inspect.
+
+### Iteration 4: Wi-Fi Station Manager
+
+Objective:
+
+- Connect ESP32-S3 as Wi-Fi station using NVS config.
+
+Scope:
+
+- Station mode only.
+- SoftAP later.
+- Robot must work if Wi-Fi fails.
+
+Files likely touched:
+
+- `components/wifi_manager/CMakeLists.txt`
+- `components/wifi_manager/include/wifi_manager.h`
+- `components/wifi_manager/wifi_manager.c`
+- `components/config_manager/*`
+- `components/serial_gateway/serial_gateway.c`
+- `main/main.c`
+- `sdkconfig.defaults`
+
+Subtasks:
+
+- Add `esp_netif`, `esp_event`, `esp_wifi`, `nvs_flash`.
+- Implement connect/retry/backoff.
+- Add state snapshot.
+- Add `WIFI_STATUS`, `WIFI_CONNECT`, `WIFI_DISCONNECT`.
+
+Commands:
+
+```bash
+idf.py build
+idf.py size
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Valid credentials connect.
+- Invalid credentials fail cleanly.
+- Firmware boots with no credentials.
+- RS485 telemetry continues when Wi-Fi is down.
+
+Mandatory tests:
+
+- no Wi-Fi config
+- wrong password
+- correct password
+- endpoint unavailable
+
+Risks:
+
+- Wi-Fi task memory usage.
+- Blocking connect path.
+- Serial logs exposing credentials.
+
+Rollback/recovery:
+
+- Disable Wi-Fi autoconnect via serial config.
+- Reflash previous firmware if boot loop occurs.
+
+Expected end state:
+
+- ESP32 has optional Wi-Fi station connectivity.
+
+### Iteration 5: Local OTA Backend
+
+Objective:
+
+- Add local API server to web repo.
+
+Scope:
+
+- Serve static UI and OTA endpoints.
+- Generate manifest.
+
+Files likely touched in web repo:
+
+- `package.json`
+- `server.js`
+- `scripts/build_firmware_manifest.js`
+- `scripts/copy_firmware_release.js`
+- `firmware/.gitkeep`
+- `.gitignore`
+- `docs/ota-backend.md`
+
+Subtasks:
+
+- Add Express.
+- Serve `index.html` and assets.
+- Add `/api/health`.
+- Add `/api/firmware/latest`.
+- Add `/firmware/:filename`.
+- Add manifest generation script.
+
+Commands:
+
+```bash
+cd /home/jp/Documents/botfarms/web_controll_esp_svd48
+npm install
+HOST=0.0.0.0 PORT=8080 PUBLIC_HOST=192.168.10.10 npm run dev
+curl -s http://127.0.0.1:8080/api/health
+curl -s http://192.168.10.10:8080/api/firmware/latest
+```
+
+Acceptance criteria:
+
+- Server listens on `0.0.0.0`.
+- Manifest URL uses LAN IP.
+- Firmware file downloads.
+- SHA256 matches file.
+
+Mandatory tests:
+
+- Health endpoint.
+- Manifest endpoint.
+- Binary download.
+- Path traversal rejection.
+- Missing binary response.
+
+Risks:
+
+- Firewall blocks port.
+- Wrong LAN IP in manifest.
+- Generated manifest not synced with binary.
+
+Rollback/recovery:
+
+- Keep existing static server script as `dev:static`.
+
+Expected end state:
+
+- PC can serve OTA artifacts locally.
+
+### Iteration 6: OTA Client Without Firmware Write
+
+Objective:
+
+- ESP32 fetches and parses manifest but does not write OTA.
+
+Scope:
+
+- Add HTTP client and JSON parser.
+- Compare build numbers.
+- Add `OTA_CHECK`.
+
+Files likely touched:
+
+- `components/ota_manager/CMakeLists.txt`
+- `components/ota_manager/include/ota_manager.h`
+- `components/ota_manager/ota_manager.c`
+- `components/serial_gateway/serial_gateway.c`
+- `main/main.c`
+- `sdkconfig.defaults`
+
+Subtasks:
+
+- Build manifest URL from NVS config.
+- Fetch manifest with timeout.
+- Limit manifest size.
+- Parse JSON.
+- Validate required fields.
+- Compare version/build.
+
+Commands:
+
+```bash
+idf.py build
+idf.py size
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- `OTA_CHECK` reports up-to-date.
+- `OTA_CHECK` reports update available.
+- Endpoint down does not affect robot.
+- Invalid JSON is rejected.
+
+Mandatory tests:
+
+- version equal
+- version greater
+- invalid JSON
+- missing URL
+- wrong target
+- endpoint unreachable
+
+Risks:
+
+- HTTP calls blocking too long.
+- Heap fragmentation from JSON parsing.
+
+Rollback/recovery:
+
+- Disable OTA manager start with a config flag.
+
+Expected end state:
+
+- ESP32 can reason about available updates without writing flash.
+
+### Iteration 7: Download and Verify in Inactive OTA Slot Without Boot Switch
+
+Objective:
+
+- Download candidate binary, optionally write it to the inactive OTA partition, and verify size/hash without changing the active firmware.
+
+Scope:
+
+- Stream file over HTTP.
+- Calculate SHA256.
+- It may write to the inactive OTA partition using `esp_ota_begin` / `esp_ota_write` / `esp_ota_end` to test the real write path.
+- It must not call `esp_ota_set_boot_partition`.
+- It must not reboot.
+- The active firmware must remain unchanged.
+
+Files likely touched:
+
+- `components/ota_manager/ota_manager.c`
+- `components/ota_manager/include/ota_manager.h`
+
+Subtasks:
+
+- Validate inactive partition size.
+- Stream download in chunks.
+- Track bytes.
+- Compute SHA256.
+- Abort on mismatch.
+
+Commands:
+
+```bash
+idf.py build
+idf.py size
+```
+
+Acceptance criteria:
+
+- Correct binary verifies.
+- Wrong SHA fails.
+- Wrong size fails.
+- Missing binary fails.
+- No reboot.
+- No boot partition switch.
+- Running firmware and `VERSION` remain unchanged after the test.
+
+Mandatory tests:
+
+- good binary
+- bad hash
+- bad size
+- 404 binary
+- interrupted server
+
+Risks:
+
+- Wear on inactive OTA partition if repeated often.
+- Chunk buffer too large.
+
+Rollback/recovery:
+
+- Since no boot switch, current firmware remains active.
+- If the inactive OTA slot contains a test image, the next real OTA write can overwrite it.
+
+Expected end state:
+
+- Download pipeline is proven before boot changes.
+
+### Iteration 8: Manual Real OTA
+
+Objective:
+
+- Implement actual OTA update by manual serial command.
+
+Scope:
+
+- `OTA_UPDATE` only.
+- No automatic updates yet.
+
+Files likely touched:
+
+- `components/ota_manager/*`
+- `components/robot_control/include/robot_control.h`
+- `components/robot_control/robot_control.c`
+- `components/serial_gateway/serial_gateway.c`
+
+Subtasks:
+
+- Add `robot_control_is_safe_for_ota()`.
+- Add `robot_control_prepare_for_ota()` that performs STOP ALL and waits.
+- Write OTA partition.
+- Validate size/hash.
+- End OTA.
+- Set boot partition.
+- Reboot.
+
+Commands:
+
+```bash
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Manual update works.
+- New `VERSION` appears after reboot.
+- Unsafe robot state blocks update.
+- Hash/size errors do not switch boot partition.
+
+Mandatory tests:
+
+- OTA success.
+- version unchanged if failed.
+- robot moving blocks OTA.
+- endpoint down fails safely.
+
+Risks:
+
+- Boot into bad firmware if rollback is not ready.
+- Power loss during OTA.
+
+Rollback/recovery:
+
+- Keep serial flashing recovery path.
+- Do not enable automatic OTA writes yet.
+- Enable rollback before field use.
+
+Expected end state:
+
+- Manual OTA works in controlled lab conditions.
+
+### Iteration 9: Rollback and Post-Boot Validation
+
+Objective:
+
+- Enable ESP-IDF rollback and mark app valid only after self-test.
+
+Scope:
+
+- Boot-state handling.
+- Self-test.
+- rollback simulation.
+
+Files likely touched:
+
+- `sdkconfig.defaults`
+- `components/ota_manager/*`
+- `main/main.c`
+- `docs/OTA_OPERATION.md`
+
+Subtasks:
+
+- Enable rollback Kconfig.
+- Detect `ESP_OTA_IMG_PENDING_VERIFY`.
+- Run self-test.
+- Mark valid or invalid.
+- Add test flag to intentionally skip confirmation.
+
+Commands:
+
+```bash
+idf.py menuconfig
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Valid app confirms.
+- Invalid app rolls back.
+- Rollback behavior documented.
+
+Mandatory tests:
+
+- normal OTA confirms
+- forced no-confirm rollback
+- power cycle before confirmation
+
+Risks:
+
+- Self-test too strict causing false rollback.
+- Self-test too weak allowing broken OTA.
+
+Rollback/recovery:
+
+- Serial reflash.
+- Bootloader rollback should return to previous app.
+
+Expected end state:
+
+- Device is protected against broken OTA app.
+
+### Iteration 10: Automatic Pull OTA Check Task
+
+Objective:
+
+- Periodically check for updates from a low-priority task. Automatic OTA writes remain disabled unless explicitly approved after manual OTA, rollback, and serial recovery are proven.
+
+Scope:
+
+- Low-priority FreeRTOS task.
+- Backoff/retry.
+- Safety gates.
+- Auto-check may be enabled.
+- Auto-update/write/reboot remains disabled by default.
+
+Files likely touched:
+
+- `components/ota_manager/*`
+- `components/config_manager/*`
+- `components/serial_gateway/serial_gateway.c`
+
+Subtasks:
+
+- Add `ota_task`.
+- Add config for check interval.
+- Add backoff.
+- Add auto-check and auto-update flags.
+- Keep auto-update disabled until `OTA_UPDATE` manual, rollback, and serial reflash recovery have all passed.
+
+Commands:
+
+```bash
+idf.py build
+idf.py size
+```
+
+Acceptance criteria:
+
+- Periodic checks happen.
+- Endpoint failures do not affect robot.
+- No update/write/reboot happens automatically in this iteration unless a later explicit approval enables it.
+- Telemetry remains responsive.
+
+Mandatory tests:
+
+- endpoint down for 10 minutes
+- update available while robot stopped reports availability only
+- update available while robot moving reports availability but refuses update
+- repeated failed downloads
+
+Risks:
+
+- Network task competes with robot tasks.
+- Automatic writes accidentally enabled too early.
+
+Rollback/recovery:
+
+- Serial command to disable auto OTA.
+- NVS clear command.
+
+Expected end state:
+
+- Safe automatic OTA checks exist. Automatic OTA writes remain disabled by default.
+
+### Iteration 11: SoftAP Provisioning Fallback
+
+Objective:
+
+- Provide Wi-Fi/server configuration without serial.
+
+Scope:
+
+- SoftAP if no config or repeated station failure.
+- Minimal provisioning HTTP page/API.
+
+Files likely touched:
+
+- `components/wifi_manager/*`
+- `components/config_manager/*`
+- optional `components/provisioning_server/*`
+
+Subtasks:
+
+- Start SoftAP with secure default password or generated password.
+- Serve config endpoint/page.
+- Save config to NVS.
+- Reconnect station or reboot.
+
+Commands:
+
+```bash
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+Acceptance criteria:
+
+- Opens SoftAP when no Wi-Fi.
+- Configures SSID/password/server.
+- Saves config.
+- Connects afterward.
+- SoftAP is not open without password.
+
+Mandatory tests:
+
+- no config
+- wrong config
+- successful provisioning
+- reboot persistence
+
+Risks:
+
+- Security of provisioning AP.
+- More flash/RAM usage.
+- HTTP server complexity on ESP32.
+
+Rollback/recovery:
+
+- Serial config still works.
+- Disable SoftAP flag.
+
+Expected end state:
+
+- Robot can be provisioned without source changes or serial-only workflow.
+
+### Iteration 12: Final Documentation and Hardening
+
+Objective:
+
+- Make the OTA system maintainable and auditable.
+
+Scope:
+
+- Documentation, operation, recovery, future security.
+
+Files likely touched:
+
+- `README.md`
+- `docs/API.md`
+- `docs/OTA_OPERATION.md`
+- `docs/OTA_IMPLEMENTATION_PLAN.md`
+- web repo `README.md`
+- web repo `docs/ota-backend.md`
+
+Subtasks:
+
+- Document commands.
+- Document endpoints.
+- Document manifest.
+- Document recovery.
+- Document security limitations.
+- Document future HTTPS/signature plan.
+
+Acceptance criteria:
+
+- Another engineer can reproduce OTA setup.
+- All serial commands are documented.
+- All endpoints are documented.
+- Failure recovery is clear.
+
+Mandatory tests:
+
+- Follow docs from clean checkout.
+- Build firmware.
+- Start backend.
+- Run OTA check.
+- Run OTA update.
+
+Risks:
+
+- Docs drift from code.
+
+Rollback/recovery:
+
+- N/A.
+
+Expected end state:
+
+- OTA implementation is operationally usable.
+
+## 13. Concrete Test Plan
+
+### 13.1 Firmware/Network Tests
+
+| Test | Expected Result |
+|---|---|
+| No Wi-Fi config | Firmware boots, robot works, Wi-Fi status says unconfigured |
+| Correct Wi-Fi config | ESP32 connects and reports IP |
+| Wrong Wi-Fi password | Connect fails with backoff, robot still works |
+| Endpoint down | `OTA_CHECK` fails cleanly, no reboot |
+| Manifest invalid JSON | Rejected, no reboot |
+| Manifest missing required field | Rejected, no reboot |
+| Manifest wrong project | Rejected, no reboot |
+| Manifest wrong target | Rejected, no reboot |
+| Manifest same build | Reports up-to-date |
+| Manifest lower build | Rejects downgrade |
+| Manifest higher build | Reports update available |
+| Binary missing | Rejected, no boot switch |
+| SHA256 incorrect | Rejected, no boot switch |
+| Size incorrect | Rejected, no boot switch |
+| OTA success | Reboots into new version |
+| New app not confirmed | Rolls back |
+| Power loss during download | Existing firmware remains bootable |
+| Robot moving | OTA refused |
+| STOP ALL fails | OTA refused |
+
+### 13.2 Backend Tests
+
+| Test | Expected Result |
+|---|---|
+| `GET /api/health` | 200 JSON `{ ok: true }` |
+| `GET /api/firmware/latest` | 200 valid manifest |
+| `GET /firmware/<bin>` | 200 binary with content length |
+| Path traversal | 400 or 404 |
+| Missing binary | 404 |
+| Manifest URL generation | Uses LAN IP, not localhost |
+| SHA generation | Matches `sha256sum` |
+
+### 13.3 Robot Safety Tests
+
+| Test | Expected Result |
+|---|---|
+| `OTA_UPDATE` after `STOP ALL` | Allowed if other checks pass |
+| `OTA_UPDATE` during nonzero `MOVE_VEL` | Refused |
+| `OTA_UPDATE` while speed target nonzero | Refused |
+| `OTA_UPDATE` with stale telemetry | Conservative refusal unless explicitly overridden for bench |
+| `OTA_UPDATE` after safe stop timeout | Refused |
+
+## 14. Additional Data Needed From User
+
+Required before implementation:
+
+- Confirm actual ESP32 serial port, or allow automatic detection from `/dev/serial/by-id`.
+- Restore/install ESP-IDF v5.4.1 and esptool in a persistent path.
+- Confirm whether `/dev/ttyACM0` is the ESP32-S3.
+- Provide Wi-Fi SSID/password for test via environment variable or local ignored file, not in Git.
+- Confirm LAN IP to expose the server. Current detected IP is `192.168.10.10`.
+- Confirm whether the server runs from Linux, WSL, Windows, or macOS.
+- Confirm firewall allows inbound TCP on chosen port, recommended `8080`.
+- Confirm whether Node/Express is acceptable for backend implementation.
+- Confirm whether the current bench should continue assuming only controller `0x02/M1` is connected.
+- Confirm whether automatic OTA writes should remain disabled until manual `OTA_UPDATE`, rollback, and serial recovery are proven.
+
+Optional but useful:
+
+- Preferred firmware version scheme.
+- Device ID naming convention for Toño.
+- Whether NVS encryption, secure boot, or flash encryption is planned later.
+- Whether OTA should require operator confirmation from serial/web UI.
+
+## 15. Approval Checklist
+
+### 15.1 Before Modifying Firmware Code
+
+- [ ] Git baseline commit exists, or a full verified backup exists outside the working tree.
+- [ ] ESP-IDF v5.4.1 available in current shell.
+- [ ] `idf.py --version` works.
+- [ ] `idf.py build` works from clean state.
+- [ ] `idf.py size` output captured.
+- [ ] `flash_id` confirms real flash size.
+- [ ] `CONFIG_ESPTOOLPY_FLASHSIZE` matches physical flash if physical flash is larger than 2 MB.
+- [ ] Correct serial port identified.
+- [ ] Partition table decision approved.
+- [ ] Backend choice approved.
+- [ ] Wi-Fi credential handling approved.
+
+### 15.2 Before Flashing Partition Migration
+
+- [ ] Previous firmware binary saved.
+- [ ] Current serial recovery method verified.
+- [ ] OTA partition table decoded and inspected.
+- [ ] App binary fits slot with margin.
+- [ ] App binary uses no more than 70-75% of the selected OTA slot.
+- [ ] User accepts that NVS may be erased or invalidated.
+- [ ] Robot is physically safe and stopped.
+
+### 15.3 Before Testing Real OTA
+
+- [ ] Manual `VERSION` works.
+- [ ] Wi-Fi station works.
+- [ ] Backend health endpoint works on LAN IP.
+- [ ] Manifest uses LAN IP, not localhost.
+- [ ] SHA256 verified with local tool.
+- [ ] `OTA_CHECK` works without writing flash.
+- [ ] Robot safety gate works.
+- [ ] Rollback plan exists.
+- [ ] Serial reflash recovery path verified.
+- [ ] Automatic OTA writes are disabled.
+
+## 16. Recommended Next Decision
+
+Implement first:
+
+1. Restore toolchain and run the remaining Iteration 0 measurements.
+2. Add version/build metadata and `VERSION`.
+3. Detect real flash size and choose partition table.
+4. Migrate partitions.
+
+Leave for second phase:
+
+- NVS config.
+- Wi-Fi station.
+- Backend API.
+- Manifest check.
+
+Do not implement yet:
+
+- Automatic OTA writes/reboots.
+- SoftAP provisioning.
+- HTTPS.
+- Firmware signing.
+- Secure boot.
+- Flash encryption.
+
+Main risks before writing code:
+
+- Real flash may be only 2 MB, making future OTA slots tight.
+- Current IDF/esptool environment is missing.
+- Wrong USB port could cause failed diagnostics.
+- Partition migration is the highest-risk first firmware change.
+- OTA must be blocked unless robot safety state is known.
