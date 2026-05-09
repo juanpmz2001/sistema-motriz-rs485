@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "app_version.h"
 #include "robot_control.h"
 #include "serial_gateway.h"
 #include "svd48.h"
@@ -27,6 +28,12 @@ static serial_gateway_handle_t gateway = NULL;
 void app_main(void)
 {
     ESP_LOGI(TAG, "SVD48 robot framework starting");
+    ESP_LOGI(TAG,
+             "Firmware project:%s target:%s version:%s build:%d",
+             FW_PROJECT,
+             FW_TARGET,
+             FW_VERSION,
+             FW_BUILD_NUMBER);
     ESP_LOGI(TAG, "Read docs/skills/SVD48B50A_SKILL.md before changing RS485 behavior");
 
     svd48_config_t svd48_config = {
@@ -80,6 +87,10 @@ void app_main(void)
 
     serial_gateway_config_t gateway_config = {
         .robot = robot,
+        .fw_project = FW_PROJECT,
+        .fw_target = FW_TARGET,
+        .fw_version = FW_VERSION,
+        .fw_build_number = FW_BUILD_NUMBER,
         .default_stream_period_ms = 200,
         .print_prompt = false,
     };

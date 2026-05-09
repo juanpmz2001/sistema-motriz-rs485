@@ -14,6 +14,10 @@ typedef struct serial_gateway_t *serial_gateway_handle_t;
 
 typedef struct {
     robot_control_handle_t robot;
+    const char *fw_project;
+    const char *fw_target;
+    const char *fw_version;
+    uint32_t fw_build_number;
     uint32_t default_stream_period_ms;
     bool print_prompt;
 } serial_gateway_config_t;

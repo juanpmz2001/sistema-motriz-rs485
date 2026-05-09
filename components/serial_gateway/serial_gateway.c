@@ -1,13 +1,18 @@
 #include "serial_gateway.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <strings.h>
+#include <unistd.h>
+#include "esp_ota_ops.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -23,6 +28,7 @@ static const char *TAG = "serial_gateway";
 #define SVD48_PY6514_MOTOR_TEETH 1
 #define SVD48_PY6514_WHEEL_TEETH 5
 #define SVD48_CHANNEL_ALL (-1)
+#define GATEWAY_RX_IDLE_TICKS 1
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
@@ -213,6 +219,26 @@ static const char *sensor_type_name(uint16_t sensor_type)
 static const char *channel_name(uint8_t channel)
 {
     return channel == 0 ? "M1" : "M2";
+}
+
+static const char *safe_text(const char *value, const char *fallback)
+{
+    return (value && value[0] != '\0') ? value : fallback;
+}
+
+static void handle_version(serial_gateway_handle_t handle)
+{
+    const esp_partition_t *partition = esp_ota_get_running_partition();
+    const char *partition_label = partition ? partition->label : "UNKNOWN";
+
+    print_locked(handle,
+                 "DATA VERSION PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu IDF:%s PARTITION:%s\n",
+                 safe_text(handle->config.fw_project, "UNKNOWN"),
+                 safe_text(handle->config.fw_target, "UNKNOWN"),
+                 safe_text(handle->config.fw_version, "UNKNOWN"),
+                 (unsigned long)handle->config.fw_build_number,
+                 esp_get_idf_version(),
+                 safe_text(partition_label, "UNKNOWN"));
 }
 
 static void handle_read_reg(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -426,7 +452,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,HELP,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -562,6 +588,12 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
 
     if (strcasecmp(argv[0], "PING") == 0) {
         print_locked(handle, "OK PONG\n");
+    } else if (strcasecmp(argv[0], "VERSION") == 0) {
+        if (argc != 1) {
+            print_locked(handle, "ERR USAGE VERSION\n");
+            return;
+        }
+        handle_version(handle);
     } else if (strcasecmp(argv[0], "HELP") == 0) {
         print_help(handle);
     } else if (strcasecmp(argv[0], "TRACE") == 0) {
@@ -699,15 +731,24 @@ static void gateway_rx_task(void *arg)
 
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
+    int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (stdin_flags >= 0) {
+        (void)fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
+    }
 
     print_locked(handle, "OK READY SVD48_GATEWAY\n");
     print_help(handle);
     print_prompt(handle);
 
     while (handle->running) {
-        int ch = getchar();
-        if (ch == EOF) {
-            vTaskDelay(pdMS_TO_TICKS(2));
+        char ch = '\0';
+        ssize_t bytes_read = read(STDIN_FILENO, &ch, 1);
+        if (bytes_read <= 0) {
+            if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+            vTaskDelay(GATEWAY_RX_IDLE_TICKS);
             continue;
         }
 
@@ -730,7 +771,7 @@ static void gateway_rx_task(void *arg)
             continue;
         }
 
-        line[line_len++] = (char)ch;
+        line[line_len++] = ch;
     }
 
     vTaskDelete(NULL);

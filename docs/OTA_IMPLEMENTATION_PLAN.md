@@ -201,18 +201,20 @@ This is the ESP32-S3 currently connected for Iteration 0. The user mentioned it 
 
 ### 2.4 Firmware Size and Memory Risks
 
-Current firmware is small enough for OTA even on 2 MB flash, but OTA growth risk is real.
+Current firmware is small today, but OTA growth risk is real because Wi-Fi, HTTP, JSON, NVS, rollback and diagnostics will add flash and RAM pressure.
 
-If flash remains configured as 2 MB, two OTA slots of about `0xF0000` each are feasible:
+The physical module has `16MB` flash, but the project is still configured as `CONFIG_ESPTOOLPY_FLASHSIZE="2MB"`. The next partition iteration must correct that mismatch before selecting and flashing the OTA layout.
+
+With the current single-app layout:
 
 ```text
-2 MB OTA slot candidate: 0xF0000 = 983040 bytes
 current app: 261632 bytes
-current app uses: 26.6% of one 2 MB OTA slot
-current margin: 721408 bytes
+factory app slot: 0x177000 = 1536000 bytes
+current app uses: 17.0% of the current factory slot
+current margin: 1274368 bytes
 ```
 
-That margin is acceptable for the current firmware, but adding Wi-Fi, TCP/IP, HTTP client, JSON parsing, mbedTLS/SHA256, NVS, OTA logic and diagnostics can push the binary closer to 700-900 KB. A 2 MB OTA layout may work, but it is tight and leaves limited room for future features.
+That margin is acceptable for the current firmware, but adding Wi-Fi, TCP/IP, HTTP client, JSON parsing, mbedTLS/SHA256, NVS, OTA logic and diagnostics can push the binary closer to 700-900 KB. The OTA path for this board should use the detected 16MB flash, not a constrained 2MB layout.
 
 Risks:
 
@@ -222,6 +224,7 @@ Risks:
 - OTA task must not allocate large buffers permanently.
 - OTA task must not run at a priority that competes with RS485 or robot control.
 - A failed endpoint or slow Wi-Fi must not block telemetry polling or serial commands.
+- IRAM is currently `16383 / 16384` bytes. Every iteration must run `idf.py size` and explicitly check IRAM, not only flash size.
 
 ### 2.5 Web Repo Diagnosis
 
@@ -804,6 +807,7 @@ Validation:
 
 ```text
 sistema-motriz-rs485/
+  partitions_ota_16mb.csv
   partitions_ota_2mb.csv
   partitions_ota_4mb.csv
   partitions_ota_8mb.csv
@@ -865,7 +869,13 @@ firmware/manifest.json
 
 ### 6.1 Mandatory First Step
 
-Detect physical flash before choosing the table. Do not choose or flash an OTA partition table until `flash_id` confirms physical flash size:
+Iteration 0 already confirmed physical flash size is `16MB`. The main implementation path is therefore:
+
+- Add `partitions_ota_16mb.csv`.
+- Update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB` in the partition migration iteration.
+- Keep `2MB`, `4MB`, and `8MB` tables only as references for other boards, not as the path for this ESP32-S3.
+
+For future boards, still detect physical flash before choosing the table. Do not choose or flash an OTA partition table until `flash_id` confirms physical flash size:
 
 ```bash
 idf.py set-target esp32s3
@@ -880,14 +890,45 @@ ls -l /dev/serial/by-id
 ls -la /dev/ttyACM* /dev/ttyUSB*
 ```
 
-If physical flash is larger than the current `CONFIG_ESPTOOLPY_FLASHSIZE="2MB"`, update `CONFIG_ESPTOOLPY_FLASHSIZE` to the detected size before selecting the partition table and rebuilding. The configured flash size, the partition table, and the physical flash size must agree.
+Because this board is physically `16MB` while the current firmware config is `2MB`, Iteration 2 must update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB` before selecting the OTA table and rebuilding. The configured flash size, the partition table, and the physical flash size must agree.
 
 Slot margin criterion for this phase:
 
 - The final OTA-enabled binary must use no more than 70-75% of a single OTA slot.
 - If the build exceeds 75% of the selected slot, stop and either reduce scope, choose a larger flash layout, or postpone heavier features such as HTTPS/SoftAP.
 
-### 6.2 If Real Flash Is 2 MB
+### 6.2 Main Path: Detected 16 MB Flash
+
+Recommended `partitions_ota_16mb.csv`:
+
+```csv
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xf000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+coredump,   data, coredump,0x12000,  0x10000,
+ota_0,      app,  ota_0,   0x30000,  0x600000,
+ota_1,      app,  ota_1,   0x630000, 0x600000,
+storage,    data, fat,     0xc30000, 0x3d0000,
+```
+
+Slot size:
+
+```text
+0x600000 = 6291456 bytes
+current app: 261632 bytes
+current app uses about 4.2% of one slot
+75% slot limit: 4718592 bytes
+70% slot limit: 4404019 bytes
+```
+
+Recommendation:
+
+- Use this as the primary OTA partition table for this robot.
+- Keep the large slot margin while Wi-Fi, HTTP, JSON, OTA and future HTTPS/signature features are added.
+- Update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB` in the same iteration that introduces this table.
+
+### 6.3 Reference Only: 2 MB Flash
 
 2 MB is viable but tight.
 
@@ -925,7 +966,7 @@ Recommendation if flash is truly 2 MB:
 - Stop before real OTA if the final binary exceeds the 70-75% slot limit.
 - Keep SoftAP/HTTPS for later only if size allows.
 
-### 6.3 If Real Flash Is 4 MB
+### 6.4 Reference Only: 4 MB Flash
 
 Recommended `partitions_ota_4mb.csv`:
 
@@ -952,7 +993,7 @@ Recommendation:
 - Prefer this over 2 MB if physical flash is at least 4 MB.
 - Provides much better margin for HTTPS later.
 
-### 6.4 If Real Flash Is 8 MB
+### 6.5 Reference Only: 8 MB Flash
 
 Recommended `partitions_ota_8mb.csv`:
 
@@ -1151,7 +1192,6 @@ void app_main(void)
         wifi_manager_maybe_start_softap_provisioning();
     }
 
-    ota_manager_init(config_manager_get_ota_config(), robot_control_handle);
     ota_manager_start_low_priority_task();
 
     while (true) {
@@ -1515,20 +1555,25 @@ Objective:
 
 Scope:
 
-- Add partition CSV based on real flash size.
+- Add the primary `partitions_ota_16mb.csv` table because Iteration 0 confirmed physical flash is `16MB`.
+- Update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB`.
 - Configure custom partition table.
+- Keep 2MB/4MB/8MB tables only as references for other boards.
 - Enable rollback config only when ready for rollback iteration, or prepare but not depend on it yet.
 
 Files likely touched:
 
-- `partitions_ota_2mb.csv` or `partitions_ota_4mb.csv` or `partitions_ota_8mb.csv`
+- `partitions_ota_16mb.csv`
+- Optional reference files: `partitions_ota_2mb.csv`, `partitions_ota_4mb.csv`, `partitions_ota_8mb.csv`
 - `sdkconfig.defaults`
 - `sdkconfig`
 - `docs/OTA_IMPLEMENTATION_PLAN.md`
 
 Subtasks:
 
-- Choose table based on `flash_id`.
+- Use the already measured `16MB` flash result as the main path.
+- Create/select `partitions_ota_16mb.csv`.
+- Update `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB`.
 - Build.
 - Confirm binary fits slots.
 - Flash full image.
@@ -1563,7 +1608,7 @@ Risks:
 
 - Full flash may erase NVS.
 - Wrong partition table can prevent boot.
-- 2 MB flash gives tight OTA slots.
+- Config/partition mismatch can prevent boot if `CONFIG_ESPTOOLPY_FLASHSIZE`, partition CSV and physical flash do not agree.
 
 Rollback/recovery:
 
@@ -2357,8 +2402,8 @@ Do not implement yet:
 
 Main risks before writing code:
 
-- Real flash may be only 2 MB, making future OTA slots tight.
-- Current IDF/esptool environment is missing.
+- Physical flash is `16MB`, but `CONFIG_ESPTOOLPY_FLASHSIZE` is still `2MB`; Iteration 2 must correct this before OTA partition migration.
+- IRAM is currently `16383 / 16384` bytes and must be monitored with `idf.py size` in every iteration.
 - Wrong USB port could cause failed diagnostics.
 - Partition migration is the highest-risk first firmware change.
 - OTA must be blocked unless robot safety state is known.

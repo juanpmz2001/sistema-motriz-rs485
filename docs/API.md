@@ -21,6 +21,18 @@ PING
 Returns `OK PONG`.
 
 ```text
+VERSION
+```
+
+Returns firmware identity and boot context without printing secrets.
+
+Example:
+
+```text
+DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:1 IDF:v5.4.1 PARTITION:factory
+```
+
+```text
 TRACE ON
 TRACE OFF
 TRACE STATUS
