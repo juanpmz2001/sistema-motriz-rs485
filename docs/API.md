@@ -54,9 +54,25 @@ Default values:
 ```text
 WIFI_SET ssid password
 WIFI_CLEAR
+WIFI_STATUS
+WIFI_CONNECT
+WIFI_DISCONNECT
 ```
 
 Stores or clears Wi-Fi credentials in NVS. `WIFI_SET` responds with a redacted password state and never echoes the password.
+
+`WIFI_STATUS` reports station state without secrets:
+
+```text
+DATA WIFI STATUS:UNCONFIGURED SSID:<empty> IP:<none> RSSI:0 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0
+DATA WIFI STATUS:CONNECTED SSID:BotfarmsNet IP:192.168.10.42 RSSI:-58 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0
+```
+
+States are `UNCONFIGURED`, `DISCONNECTED`, `CONNECTING`, `CONNECTED`, and `FAILED`.
+
+`WIFI_CONNECT` starts an asynchronous station connection using credentials from NVS. It does not block robot control. If no SSID is configured it returns `ERR WIFI_NOT_CONFIGURED`.
+
+`WIFI_DISCONNECT` disconnects station mode without deleting saved credentials. Use `WIFI_CLEAR` to erase credentials.
 
 ```text
 OTA_SET_SERVER host port

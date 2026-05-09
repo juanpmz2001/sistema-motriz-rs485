@@ -19,6 +19,7 @@
 #define DEFAULT_OTA_HOST "192.168.10.10"
 #define DEFAULT_OTA_PORT 8080
 #define DEFAULT_OTA_MANIFEST "/api/firmware/latest"
+#define CONFIG_MANAGER_LOCK_TIMEOUT_MS 100
 
 struct config_manager_t {
     nvs_handle_t nvs;
@@ -73,6 +74,13 @@ static esp_err_t erase_key_if_present(nvs_handle_t nvs, const char *key)
     return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
 }
 
+static esp_err_t take_lock(config_manager_handle_t handle)
+{
+    return xSemaphoreTake(handle->lock, pdMS_TO_TICKS(CONFIG_MANAGER_LOCK_TIMEOUT_MS)) == pdTRUE
+               ? ESP_OK
+               : ESP_ERR_TIMEOUT;
+}
+
 esp_err_t config_manager_init(config_manager_handle_t *out_handle)
 {
     if (!out_handle) {
@@ -121,9 +129,12 @@ esp_err_t config_manager_get_snapshot(config_manager_handle_t handle, config_man
     }
 
     snapshot_defaults(snapshot);
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
 
-    esp_err_t err = read_string(handle->nvs, KEY_WIFI_SSID, snapshot->wifi_ssid, sizeof(snapshot->wifi_ssid));
+    err = read_string(handle->nvs, KEY_WIFI_SSID, snapshot->wifi_ssid, sizeof(snapshot->wifi_ssid));
     if (err == ESP_OK) {
         char password[CONFIG_MANAGER_WIFI_PASSWORD_MAX] = { 0 };
         err = read_string(handle->nvs, KEY_WIFI_PASSWORD, password, sizeof(password));
@@ -183,8 +194,11 @@ esp_err_t config_manager_get_wifi_password(config_manager_handle_t handle,
         *password_set = false;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = read_string(handle->nvs, KEY_WIFI_PASSWORD, password, password_size);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = read_string(handle->nvs, KEY_WIFI_PASSWORD, password, password_size);
     xSemaphoreGive(handle->lock);
 
     if (err == ESP_OK && password_set) {
@@ -201,8 +215,11 @@ esp_err_t config_manager_set_wifi(config_manager_handle_t handle, const char *ss
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_set_str(handle->nvs, KEY_WIFI_SSID, ssid);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(handle->nvs, KEY_WIFI_SSID, ssid);
     if (err == ESP_OK) {
         err = nvs_set_str(handle->nvs, KEY_WIFI_PASSWORD, password);
     }
@@ -219,8 +236,11 @@ esp_err_t config_manager_clear_wifi(config_manager_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = erase_key_if_present(handle->nvs, KEY_WIFI_SSID);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = erase_key_if_present(handle->nvs, KEY_WIFI_SSID);
     if (err == ESP_OK) {
         err = erase_key_if_present(handle->nvs, KEY_WIFI_PASSWORD);
     }
@@ -238,8 +258,11 @@ esp_err_t config_manager_set_ota_server(config_manager_handle_t handle, const ch
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_set_str(handle->nvs, KEY_OTA_HOST, host);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(handle->nvs, KEY_OTA_HOST, host);
     if (err == ESP_OK) {
         err = nvs_set_u16(handle->nvs, KEY_OTA_PORT, port);
     }
@@ -257,8 +280,11 @@ esp_err_t config_manager_set_ota_manifest_path(config_manager_handle_t handle, c
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_set_str(handle->nvs, KEY_OTA_MANIFEST, path);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(handle->nvs, KEY_OTA_MANIFEST, path);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }
@@ -272,8 +298,11 @@ esp_err_t config_manager_set_ota_auto_check(config_manager_handle_t handle, bool
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_set_u8(handle->nvs, KEY_AUTO_CHECK, enabled ? 1 : 0);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(handle->nvs, KEY_AUTO_CHECK, enabled ? 1 : 0);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }
@@ -287,8 +316,11 @@ esp_err_t config_manager_set_ota_auto_update(config_manager_handle_t handle, boo
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_set_u8(handle->nvs, KEY_AUTO_UPDATE, enabled ? 1 : 0);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(handle->nvs, KEY_AUTO_UPDATE, enabled ? 1 : 0);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }
@@ -302,8 +334,11 @@ esp_err_t config_manager_clear(config_manager_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    esp_err_t err = nvs_erase_all(handle->nvs);
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_erase_all(handle->nvs);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }

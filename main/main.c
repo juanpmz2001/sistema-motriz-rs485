@@ -8,6 +8,7 @@
 #include "robot_control.h"
 #include "serial_gateway.h"
 #include "svd48.h"
+#include "wifi_manager.h"
 
 static const char *TAG = "main";
 
@@ -27,6 +28,7 @@ static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
 static serial_gateway_handle_t gateway = NULL;
 static config_manager_handle_t config_manager = NULL;
+static wifi_manager_handle_t wifi_manager = NULL;
 
 static esp_err_t init_nvs(void)
 {
@@ -62,6 +64,12 @@ void app_main(void)
         return;
     }
 
+    err = wifi_manager_init(config_manager, &wifi_manager);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi manager unavailable, err=0x%x; robot startup continues", err);
+        wifi_manager = NULL;
+    }
+
     svd48_config_t svd48_config = {
         .uart_port = RS485_UART_PORT,
         .tx_pin = RS485_TX_PIN,
@@ -79,6 +87,7 @@ void app_main(void)
     svd48 = svd48_init(&svd48_config);
     if (!svd48) {
         ESP_LOGE(TAG, "Failed to initialize SVD48 bus");
+        wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
@@ -102,6 +111,7 @@ void app_main(void)
     if (!robot) {
         ESP_LOGE(TAG, "Failed to initialize robot control");
         svd48_deinit(svd48);
+        wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
@@ -110,6 +120,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to start SVD48 telemetry polling");
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
@@ -117,6 +128,7 @@ void app_main(void)
     serial_gateway_config_t gateway_config = {
         .robot = robot,
         .config_manager = config_manager,
+        .wifi_manager = wifi_manager,
         .fw_project = FW_PROJECT,
         .fw_target = FW_TARGET,
         .fw_version = FW_VERSION,
@@ -130,6 +142,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize serial gateway");
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
@@ -139,6 +152,7 @@ void app_main(void)
         serial_gateway_deinit(gateway);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
+        wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }

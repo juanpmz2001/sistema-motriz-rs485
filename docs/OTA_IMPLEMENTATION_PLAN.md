@@ -536,6 +536,12 @@ Important risk: IRAM remains almost fully allocated at `16383 / 16384` bytes. Ev
 
 Iteration 3 was executed on 2026-05-09.
 
+Stable commit:
+
+```text
+c626d3f Add NVS config manager diagnostics
+```
+
 Implementation summary:
 
 ```text
@@ -587,9 +593,11 @@ Serial validation:
 
 ```text
 VERSION: OK
+VERSION reports PARTITION:ota_0
 PING: OK
 CONFIG_STATUS defaults: OK
 OTA_CONFIG defaults: OK
+CONFIG_STATUS, OTA_CONFIG, WIFI_SET, WIFI_CLEAR, CONFIG_CLEAR and OTA flags: OK
 OTA_AUTO_UPDATE ON: blocked with ERR AUTO_UPDATE_DISABLED_UNTIL_MANUAL_OTA_VALIDATED
 WIFI_SET: persisted SSID/password and printed PASSWORD:<set>, never the password value
 TRACE + WIFI_SET: password redacted as <redacted>
@@ -606,6 +614,91 @@ STOP 2: OK
 ```
 
 Important risk: IRAM is still at `16383 / 16384` bytes. The next iteration must continue reporting IRAM explicitly before flashing.
+
+### 3.9 Iteration 4 Execution Results
+
+Iteration 4 was implemented on 2026-05-09.
+
+Implementation summary:
+
+```text
+Added component: components/wifi_manager
+Mode: Wi-Fi station only
+SoftAP/provisioning: not implemented
+OTA_CHECK/OTA_UPDATE/backend: not implemented
+Rollback: still disabled
+Partition table: unchanged from Iteration 2
+Auto-connect at boot: disabled
+Manual connect command: WIFI_CONNECT
+```
+
+Design validation:
+
+```text
+wifi_manager uses esp_netif, esp_event and esp_wifi
+Wi-Fi stack initializes without starting a connection
+Robot startup continues even if Wi-Fi manager init fails
+Connection is asynchronous from the serial command path
+Connection timeout: 15000 ms
+Retries: 3
+States: UNCONFIGURED, DISCONNECTED, CONNECTING, CONNECTED, FAILED
+Status reports SSID and IP only; password is never printed
+config_manager lock waits are finite instead of portMAX_DELAY
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0xcaf50 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x5350b0 bytes, 87%
+Total image size: 831188 bytes
+Flash Code: 582670 bytes
+Flash Data: 135456 bytes
+DIRAM: 112187 / 341760 bytes, 32.83%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Flash and boot validation:
+
+```text
+Flashed on /dev/ttyACM0
+SPI Flash Size: 16MB
+Loaded app from partition at offset 0x30000
+Wi-Fi station manager ready
+SVD48 bus ready after Wi-Fi manager init
+Serial gateway ready
+```
+
+Serial and hardware validation:
+
+```text
+VERSION: OK, PARTITION:ota_0
+PING: OK
+CONFIG_STATUS: OK
+OTA_CONFIG: OK
+WIFI_CLEAR + reboot: OK
+WIFI_STATUS without credentials: STATUS:UNCONFIGURED
+WIFI_CONNECT without credentials: ERR WIFI_NOT_CONFIGURED
+WIFI_SET with invalid password: password printed only as PASSWORD:<set>
+TRACE + WIFI_SET: password redacted as <redacted>
+WIFI_CONNECT with invalid password: OK WIFI_CONNECT STARTED, then STATUS:FAILED
+Invalid password retry result: RETRIES:3/3, IP:<none>
+WIFI_DISCONNECT: OK
+GET_MOTOR 2: OK, controller online
+STOP 2: OK
+12 seconds monitor idle: no task_wdt
+```
+
+Pending physical validation:
+
+```text
+Correct Wi-Fi credentials test is pending because no test SSID/password was provided to the agent.
+Once provided, run WIFI_SET <ssid> <password>, WIFI_CONNECT, WIFI_STATUS and confirm STATUS:CONNECTED with IP.
+```
+
+Important risk: IRAM remains at `16383 / 16384` bytes. Wi-Fi increased flash and DIRAM substantially, but did not increase the reported IRAM usage.
 
 ## 4. Technical Decisions
 
@@ -1828,14 +1921,18 @@ Files likely touched:
 - `components/config_manager/*`
 - `components/serial_gateway/serial_gateway.c`
 - `main/main.c`
-- `sdkconfig.defaults`
+- `components/serial_gateway/include/serial_gateway.h`
+- `docs/API.md`
+- `docs/OTA_IMPLEMENTATION_PLAN.md`
 
 Subtasks:
 
 - Add `esp_netif`, `esp_event`, `esp_wifi`, `nvs_flash`.
-- Implement connect/retry/backoff.
+- Implement manual station connect with finite retry/timeout.
 - Add state snapshot.
 - Add `WIFI_STATUS`, `WIFI_CONNECT`, `WIFI_DISCONNECT`.
+- Do not auto-connect at boot in this iteration.
+- Do not start SoftAP, OTA client, OTA task or rollback.
 
 Commands:
 
@@ -1857,7 +1954,9 @@ Mandatory tests:
 - no Wi-Fi config
 - wrong password
 - correct password
-- endpoint unavailable
+- `VERSION`, `PING`, `CONFIG_STATUS`, `OTA_CONFIG`
+- `GET_MOTOR 2`, `STOP 2`
+- 12 seconds monitor idle without `task_wdt`
 
 Risks:
 

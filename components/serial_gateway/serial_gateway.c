@@ -266,6 +266,28 @@ static esp_err_t get_config_snapshot(serial_gateway_handle_t handle, config_mana
     return config_manager_get_snapshot(handle->config.config_manager, snapshot);
 }
 
+static esp_err_t get_wifi_status(serial_gateway_handle_t handle, wifi_manager_status_t *status)
+{
+    if (!handle->config.wifi_manager) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return wifi_manager_get_status(handle->config.wifi_manager, status);
+}
+
+static void print_wifi_status(serial_gateway_handle_t handle, const wifi_manager_status_t *status)
+{
+    print_locked(handle,
+                 "DATA WIFI STATUS:%s SSID:%s IP:%s RSSI:%d RETRIES:%u/%u DISCONNECT_REASON:%u LAST_ERR:0x%x\n",
+                 wifi_manager_state_to_string(status->state),
+                 status->ssid[0] ? status->ssid : "<empty>",
+                 status->ip_addr[0] ? status->ip_addr : "<none>",
+                 status->rssi,
+                 status->retry_count,
+                 status->max_retries,
+                 status->disconnect_reason,
+                 status->last_error);
+}
+
 static void handle_config_status(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     (void)argv;
@@ -306,6 +328,9 @@ static void handle_config_clear(serial_gateway_handle_t handle, int argc, char *
 
     esp_err_t err = config_manager_clear(handle->config.config_manager);
     if (err == ESP_OK) {
+        if (handle->config.wifi_manager) {
+            (void)wifi_manager_disconnect(handle->config.wifi_manager);
+        }
         print_locked(handle, "OK CONFIG_CLEAR\n");
     } else {
         print_locked(handle, "ERR CONFIG_CLEAR_FAILED 0x%x\n", err);
@@ -325,6 +350,9 @@ static void handle_wifi_set(serial_gateway_handle_t handle, int argc, char *argv
 
     esp_err_t err = config_manager_set_wifi(handle->config.config_manager, argv[1], argv[2]);
     if (err == ESP_OK) {
+        if (handle->config.wifi_manager) {
+            (void)wifi_manager_disconnect(handle->config.wifi_manager);
+        }
         print_locked(handle,
                      "OK WIFI_SET SSID:%s PASSWORD:%s\n",
                      argv[1],
@@ -348,9 +376,87 @@ static void handle_wifi_clear(serial_gateway_handle_t handle, int argc, char *ar
 
     esp_err_t err = config_manager_clear_wifi(handle->config.config_manager);
     if (err == ESP_OK) {
+        if (handle->config.wifi_manager) {
+            (void)wifi_manager_disconnect(handle->config.wifi_manager);
+        }
         print_locked(handle, "OK WIFI_CLEAR\n");
     } else {
         print_locked(handle, "ERR WIFI_CLEAR_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_wifi_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE WIFI_STATUS\n");
+        return;
+    }
+
+    wifi_manager_status_t status;
+    esp_err_t err = get_wifi_status(handle, &status);
+    if (err == ESP_OK) {
+        print_wifi_status(handle, &status);
+    } else {
+        print_locked(handle, "ERR WIFI_STATUS_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_wifi_connect(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE WIFI_CONNECT\n");
+        return;
+    }
+    if (!handle->config.wifi_manager) {
+        print_locked(handle, "ERR WIFI_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = wifi_manager_connect(handle->config.wifi_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK WIFI_CONNECT STARTED\n");
+        return;
+    }
+    if (err == ESP_ERR_NOT_FOUND) {
+        print_locked(handle, "ERR WIFI_NOT_CONFIGURED\n");
+        return;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        wifi_manager_status_t status;
+        if (get_wifi_status(handle, &status) == ESP_OK) {
+            if (status.state == WIFI_MANAGER_STATE_CONNECTED) {
+                print_locked(handle, "OK WIFI_CONNECT ALREADY_CONNECTED\n");
+                return;
+            }
+            if (status.state == WIFI_MANAGER_STATE_CONNECTING) {
+                print_locked(handle, "OK WIFI_CONNECT ALREADY_CONNECTING\n");
+                return;
+            }
+        }
+    }
+
+    print_locked(handle, "ERR WIFI_CONNECT_FAILED 0x%x\n", err);
+}
+
+static void handle_wifi_disconnect(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE WIFI_DISCONNECT\n");
+        return;
+    }
+    if (!handle->config.wifi_manager) {
+        print_locked(handle, "ERR WIFI_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = wifi_manager_disconnect(handle->config.wifi_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK WIFI_DISCONNECT\n");
+    } else {
+        print_locked(handle, "ERR WIFI_DISCONNECT_FAILED 0x%x\n", err);
     }
 }
 
@@ -672,7 +778,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET ssid password,WIFI_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET ssid password,WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -841,6 +947,12 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_wifi_set(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WIFI_CLEAR") == 0) {
         handle_wifi_clear(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_STATUS") == 0) {
+        handle_wifi_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_CONNECT") == 0) {
+        handle_wifi_connect(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_DISCONNECT") == 0) {
+        handle_wifi_disconnect(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_SET_SERVER") == 0) {
         handle_ota_set_server(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_SET_MANIFEST") == 0) {

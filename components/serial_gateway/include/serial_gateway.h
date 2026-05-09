@@ -6,6 +6,7 @@
 #include "config_manager.h"
 #include "esp_err.h"
 #include "robot_control.h"
+#include "wifi_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +17,7 @@ typedef struct serial_gateway_t *serial_gateway_handle_t;
 typedef struct {
     robot_control_handle_t robot;
     config_manager_handle_t config_manager;
+    wifi_manager_handle_t wifi_manager;
     const char *fw_project;
     const char *fw_target;
     const char *fw_version;
