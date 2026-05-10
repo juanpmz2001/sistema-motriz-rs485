@@ -2764,7 +2764,7 @@ Phase 9.5-B is not approved for execution yet. It should be run as separate expe
 4. If needed, try disabling Wi-Fi RX IRAM optimization.
 5. Only if still critical, try disabling broader Wi-Fi IRAM optimization.
 
-Do not advance to Iteration 10 until the Phase 9.5-B results are reviewed. Initial success target is at least 4 KB reported IRAM recovered, ideally 8 KB or more, without breaking manual OTA, rollback, Wi-Fi, RS485 or serial recovery.
+Phase 9.5-B/9.5-C were reviewed. B4 was selected and consolidated by disabling `CONFIG_ESP_WIFI_RX_IRAM_OPT` while keeping `CONFIG_ESP_WIFI_IRAM_OPT` enabled. Iteration 10 may proceed only as normal non-ISR FreeRTOS/application code.
 
 ### Iteration 10: Automatic Pull OTA Check Task
 
@@ -2776,9 +2776,9 @@ Scope:
 
 - Low-priority FreeRTOS task.
 - Backoff/retry.
-- Safety gates.
-- Auto-check may be enabled.
-- Auto-update/write/reboot remains disabled by default.
+- Auto-check may be enabled through existing NVS config.
+- Auto-update/write/reboot remains disabled.
+- The task may run manifest validation only; it must not download firmware, write flash, switch partitions, call `OTA_UPDATE`, or reboot.
 
 Files likely touched:
 
@@ -2789,10 +2789,11 @@ Files likely touched:
 Subtasks:
 
 - Add `ota_task`.
-- Add config for check interval.
-- Add backoff.
-- Add auto-check and auto-update flags.
-- Keep auto-update disabled until `OTA_UPDATE` manual, rollback, and serial reflash recovery have all passed.
+- Use a conservative default interval, currently 10 minutes.
+- Run the first check soon after `OTA_AUTO_CHECK ON`.
+- Add backoff for endpoint/network failures.
+- Add `OTA_AUTO_STATUS`.
+- Keep `OTA_AUTO_UPDATE ON` blocked.
 
 Commands:
 
@@ -2805,20 +2806,25 @@ Acceptance criteria:
 
 - Periodic checks happen.
 - Endpoint failures do not affect robot.
-- No update/write/reboot happens automatically in this iteration unless a later explicit approval enables it.
+- No download/write/reboot happens automatically in this iteration.
 - Telemetry remains responsive.
 
 Mandatory tests:
 
-- endpoint down for 10 minutes
-- update available while robot stopped reports availability only
-- update available while robot moving reports availability but refuses update
-- repeated failed downloads
+- auto-check disabled: no automatic manifest request
+- auto-check enabled: manifest request happens automatically
+- endpoint up: reports `UP_TO_DATE` or `UPDATE_AVAILABLE`
+- endpoint down: records failure and backs off
+- Wi-Fi disconnected: skips without reconnecting aggressively
+- manual `OTA_DOWNLOAD_TEST` and `OTA_UPDATE` still work
+- rollback success, `NO_CONFIRM_ONCE`, and `SELF_TEST_FAIL_ONCE` still work
+- RS485 `GET_MOTOR 2` and `STOP 2` still work
+- 12 seconds idle without `task_wdt`
 
 Risks:
 
 - Network task competes with robot tasks.
-- Automatic writes accidentally enabled too early.
+- Automatic writes accidentally enabled too early. This iteration keeps `OTA_AUTO_UPDATE ON` rejected.
 
 Rollback/recovery:
 

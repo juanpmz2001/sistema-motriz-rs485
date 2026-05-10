@@ -139,6 +139,7 @@ void app_main(void)
 
     ota_manager_config_t ota_config = {
         .config_manager = config_manager,
+        .wifi_manager = wifi_manager,
         .current_project = FW_PROJECT,
         .current_target = FW_TARGET,
         .current_build_number = FW_BUILD_NUMBER,
@@ -250,6 +251,13 @@ void app_main(void)
 
     if (pending_verify) {
         confirm_pending_app_after_self_test();
+    }
+
+    if (ota_manager) {
+        err = ota_manager_start_auto_check_task(ota_manager);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Automatic OTA_CHECK task unavailable, err=0x%x", err);
+        }
     }
 
     ESP_LOGI(TAG, "Ready. Try: PING, GET_SPEED 0, GET_MOTOR 0, MOVE_VEL 1.0 0.0 0.5");

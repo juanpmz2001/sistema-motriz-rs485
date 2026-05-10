@@ -818,10 +818,52 @@ static void handle_ota_auto_check(serial_gateway_handle_t handle, int argc, char
 
     esp_err_t err = config_manager_set_ota_auto_check(handle->config.config_manager, enabled);
     if (err == ESP_OK) {
+        if (handle->config.ota_manager) {
+            (void)ota_manager_set_auto_check_runtime_enabled(handle->config.ota_manager, enabled);
+        }
         print_locked(handle, "OK OTA_AUTO_CHECK %s\n", enabled ? "ON" : "OFF");
     } else {
         print_locked(handle, "ERR OTA_AUTO_CHECK_FAILED 0x%x\n", err);
     }
+}
+
+static void handle_ota_auto_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_AUTO_STATUS\n");
+        return;
+    }
+    if (!handle->config.ota_manager) {
+        print_locked(handle, "ERR OTA_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    ota_manager_auto_status_t status;
+    esp_err_t err = ota_manager_get_auto_status(handle->config.ota_manager, &status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR OTA_AUTO_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_AUTO TASK:%u ENABLED:%u CHECKING:%u INTERVAL_MS:%lu BACKOFF_MS:%lu CHECKS:%lu FAILURES:%lu LAST_AGE_MS:%lu NEXT_MS:%lu LAST_STATUS:%s LAST_ERR:0x%x CURRENT_BUILD:%lu LAST_BUILD:%lu LAST_VERSION:%s DETAIL:%s URL:%s\n",
+                 status.task_running ? 1 : 0,
+                 status.enabled ? 1 : 0,
+                 status.checking ? 1 : 0,
+                 (unsigned long)status.interval_ms,
+                 (unsigned long)status.backoff_ms,
+                 (unsigned long)status.checks,
+                 (unsigned long)status.failures,
+                 (unsigned long)status.last_check_age_ms,
+                 (unsigned long)status.next_check_in_ms,
+                 ota_manager_check_status_to_string(status.last_status),
+                 status.last_error,
+                 (unsigned long)status.current_build_number,
+                 (unsigned long)status.last_build_number,
+                 status.last_version[0] ? status.last_version : "<none>",
+                 status.last_detail[0] ? status.last_detail : "<none>",
+                 status.last_url[0] ? status.last_url : "<none>");
 }
 
 static void handle_ota_auto_update(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -1059,7 +1101,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -1254,6 +1296,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_rollback_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_ROLLBACK_TEST") == 0) {
         handle_ota_rollback_test(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_AUTO_STATUS") == 0) {
+        handle_ota_auto_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_CHECK") == 0) {
         handle_ota_auto_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_UPDATE") == 0) {

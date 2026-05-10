@@ -6,6 +6,7 @@
 #include "config_manager.h"
 #include "esp_err.h"
 #include "esp_ota_ops.h"
+#include "wifi_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +35,7 @@ typedef enum {
 
 typedef struct {
     config_manager_handle_t config_manager;
+    wifi_manager_handle_t wifi_manager;
     const char *current_project;
     const char *current_target;
     uint32_t current_build_number;
@@ -72,12 +74,34 @@ typedef struct {
     char detail[OTA_MANAGER_DETAIL_MAX];
 } ota_manager_download_result_t;
 
+typedef struct {
+    bool task_running;
+    bool enabled;
+    bool checking;
+    uint32_t interval_ms;
+    uint32_t backoff_ms;
+    uint32_t checks;
+    uint32_t failures;
+    uint32_t last_check_age_ms;
+    uint32_t next_check_in_ms;
+    esp_err_t last_error;
+    ota_manager_check_status_t last_status;
+    uint32_t last_build_number;
+    uint32_t current_build_number;
+    char last_version[OTA_MANAGER_VERSION_MAX];
+    char last_detail[OTA_MANAGER_DETAIL_MAX];
+    char last_url[OTA_MANAGER_URL_MAX];
+} ota_manager_auto_status_t;
+
 esp_err_t ota_manager_init(const ota_manager_config_t *config, ota_manager_handle_t *out_handle);
 void ota_manager_deinit(ota_manager_handle_t handle);
 
 esp_err_t ota_manager_check(ota_manager_handle_t handle, ota_manager_check_result_t *result);
 esp_err_t ota_manager_download_to_inactive(ota_manager_handle_t handle, ota_manager_download_result_t *result);
 esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result);
+esp_err_t ota_manager_start_auto_check_task(ota_manager_handle_t handle);
+esp_err_t ota_manager_set_auto_check_runtime_enabled(ota_manager_handle_t handle, bool enabled);
+esp_err_t ota_manager_get_auto_status(ota_manager_handle_t handle, ota_manager_auto_status_t *status);
 esp_err_t ota_manager_set_boot_partition(const char *partition_label);
 esp_err_t ota_manager_get_boot_state(ota_manager_boot_state_t *state);
 esp_err_t ota_manager_mark_app_valid(void);
