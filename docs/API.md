@@ -79,6 +79,7 @@ OTA_SET_SERVER host port
 OTA_SET_MANIFEST path
 OTA_CONFIG
 OTA_CHECK
+OTA_DOWNLOAD_TEST
 OTA_AUTO_CHECK ON|OFF
 OTA_AUTO_UPDATE OFF
 ```
@@ -87,10 +88,13 @@ Stores local OTA server config in NVS. `OTA_AUTO_UPDATE ON` is intentionally blo
 
 `OTA_CHECK` performs a manifest-only HTTP GET using the configured server and path. It validates project, target, build number, `min_supported_build`, URL, filename, size and SHA256, then reports whether the remote build is current or newer. It does not download the firmware binary, write flash, switch partitions or reboot.
 
+`OTA_DOWNLOAD_TEST` repeats the manifest validation, downloads the firmware binary, writes it to the inactive OTA partition returned by ESP-IDF, verifies byte count and SHA256, and finalizes the image with `esp_ota_end`. It does not call `esp_ota_set_boot_partition`, does not reboot, and does not change the active firmware.
+
 Example:
 
 ```text
 DATA OTA_CHECK STATUS:UP_TO_DATE PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:2 CURRENT_BUILD:2 MIN_SUPPORTED_BUILD:1 SIZE:972032 SHA256:<64-hex> FILENAME:sistema-motriz-rs485-v1.0.0-b2.bin URL:http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b2.bin
+DATA OTA_DOWNLOAD_TEST STATUS:VERIFIED PARTITION:ota_1 BYTES:972032 SHA256:<64-hex>
 ```
 
 ```text

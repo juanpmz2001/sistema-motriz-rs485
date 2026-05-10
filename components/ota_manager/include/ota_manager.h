@@ -14,6 +14,7 @@ extern "C" {
 #define OTA_MANAGER_FILENAME_MAX 96
 #define OTA_MANAGER_SHA256_HEX_LEN 64
 #define OTA_MANAGER_DETAIL_MAX 64
+#define OTA_MANAGER_PARTITION_LABEL_MAX 17
 
 typedef struct ota_manager_t *ota_manager_handle_t;
 
@@ -45,10 +46,20 @@ typedef struct {
     char detail[OTA_MANAGER_DETAIL_MAX];
 } ota_manager_check_result_t;
 
+typedef struct {
+    char partition_label[OTA_MANAGER_PARTITION_LABEL_MAX];
+    uint32_t partition_size;
+    uint32_t manifest_size;
+    uint32_t bytes_written;
+    char sha256[OTA_MANAGER_SHA256_HEX_LEN + 1];
+    char detail[OTA_MANAGER_DETAIL_MAX];
+} ota_manager_download_result_t;
+
 esp_err_t ota_manager_init(const ota_manager_config_t *config, ota_manager_handle_t *out_handle);
 void ota_manager_deinit(ota_manager_handle_t handle);
 
 esp_err_t ota_manager_check(ota_manager_handle_t handle, ota_manager_check_result_t *result);
+esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result);
 const char *ota_manager_check_status_to_string(ota_manager_check_status_t status);
 
 #ifdef __cplusplus

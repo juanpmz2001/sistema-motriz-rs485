@@ -612,6 +612,37 @@ static void handle_ota_check(serial_gateway_handle_t handle, int argc, char *arg
                  result.url);
 }
 
+static void handle_ota_download_test(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_DOWNLOAD_TEST\n");
+        return;
+    }
+    if (!handle->config.ota_manager) {
+        print_locked(handle, "ERR OTA_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    ota_manager_download_result_t result;
+    esp_err_t err = ota_manager_download_test(handle->config.ota_manager, &result);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR OTA_DOWNLOAD_TEST_FAILED 0x%x DETAIL:%s PARTITION:%s BYTES:%lu\n",
+                     err,
+                     result.detail[0] ? result.detail : "UNKNOWN",
+                     result.partition_label[0] ? result.partition_label : "NONE",
+                     (unsigned long)result.bytes_written);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_DOWNLOAD_TEST STATUS:VERIFIED PARTITION:%s BYTES:%lu SHA256:%s\n",
+                 result.partition_label,
+                 (unsigned long)result.bytes_written,
+                 result.sha256);
+}
+
 static void handle_ota_auto_check(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     bool enabled = false;
@@ -867,7 +898,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -1054,6 +1085,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_CHECK") == 0) {
         handle_ota_check(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_DOWNLOAD_TEST") == 0) {
+        handle_ota_download_test(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_CHECK") == 0) {
         handle_ota_auto_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_UPDATE") == 0) {

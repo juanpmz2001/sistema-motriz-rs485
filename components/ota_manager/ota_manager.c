@@ -8,11 +8,15 @@
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "mbedtls/sha256.h"
 
 static const char *TAG = "ota_manager";
 
 #define OTA_MANAGER_HTTP_TIMEOUT_MS 5000
 #define OTA_MANAGER_MANIFEST_MAX 4096
+#define OTA_MANAGER_DOWNLOAD_CHUNK 4096
 
 struct ota_manager_t {
     config_manager_handle_t config_manager;
@@ -47,6 +51,26 @@ static void set_detail(ota_manager_check_result_t *result, const char *detail)
     if (result && detail) {
         (void)copy_text(result->detail, sizeof(result->detail), detail);
     }
+}
+
+static void set_download_detail(ota_manager_download_result_t *result, const char *detail)
+{
+    if (result && detail) {
+        (void)copy_text(result->detail, sizeof(result->detail), detail);
+    }
+}
+
+static void bytes_to_hex(const unsigned char *input, size_t input_len, char *output, size_t output_size)
+{
+    static const char hex[] = "0123456789abcdef";
+    if (!input || !output || output_size < (input_len * 2U + 1U)) {
+        return;
+    }
+    for (size_t i = 0; i < input_len; i++) {
+        output[i * 2U] = hex[(input[i] >> 4) & 0x0F];
+        output[i * 2U + 1U] = hex[input[i] & 0x0F];
+    }
+    output[input_len * 2U] = '\0';
 }
 
 static bool string_is_localhost(const char *host)
@@ -399,6 +423,179 @@ esp_err_t ota_manager_check(ota_manager_handle_t handle, ota_manager_check_resul
         err = parse_manifest(handle, manifest, result);
     }
     free(manifest);
+    return err;
+}
+
+esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result)
+{
+    if (!handle || !result) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(result, 0, sizeof(*result));
+
+    ota_manager_check_result_t check;
+    esp_err_t err = ota_manager_check(handle, &check);
+    if (err != ESP_OK) {
+        set_download_detail(result, check.detail[0] ? check.detail : "OTA_CHECK");
+        return err;
+    }
+
+    const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
+    if (!partition) {
+        set_download_detail(result, "NO_UPDATE_PARTITION");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    (void)copy_text(result->partition_label, sizeof(result->partition_label), partition->label);
+    result->partition_size = partition->size;
+    result->manifest_size = check.size;
+
+    if (check.size == 0 || check.size >= partition->size) {
+        set_download_detail(result, "IMAGE_TOO_LARGE");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    char *buffer = malloc(OTA_MANAGER_DOWNLOAD_CHUNK);
+    if (!buffer) {
+        set_download_detail(result, "NO_MEM");
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_http_client_config_t config = {
+        .url = check.url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = OTA_MANAGER_HTTP_TIMEOUT_MS,
+        .buffer_size = OTA_MANAGER_DOWNLOAD_CHUNK,
+        .buffer_size_tx = 512,
+        .disable_auto_redirect = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        free(buffer);
+        set_download_detail(result, "HTTP_INIT");
+        return ESP_ERR_NO_MEM;
+    }
+
+    bool client_open = false;
+    esp_ota_handle_t ota_handle = 0;
+    bool ota_started = false;
+    mbedtls_sha256_context sha_ctx;
+    mbedtls_sha256_init(&sha_ctx);
+
+    err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        set_download_detail(result, "HTTP_OPEN");
+        goto cleanup;
+    }
+    client_open = true;
+
+    int64_t content_length = esp_http_client_fetch_headers(client);
+    if (content_length < 0) {
+        err = content_length == -1 ? ESP_FAIL : (esp_err_t)(-content_length);
+        set_download_detail(result, "HTTP_HEADERS");
+        goto cleanup;
+    }
+
+    int status_code = esp_http_client_get_status_code(client);
+    if (status_code != 200) {
+        err = ESP_ERR_INVALID_RESPONSE;
+        set_download_detail(result, "HTTP_STATUS");
+        goto cleanup;
+    }
+
+    if (content_length > 0 && (uint64_t)content_length != (uint64_t)check.size) {
+        err = ESP_ERR_INVALID_SIZE;
+        set_download_detail(result, "CONTENT_LENGTH");
+        goto cleanup;
+    }
+
+    err = esp_ota_begin(partition, check.size, &ota_handle);
+    if (err != ESP_OK) {
+        set_download_detail(result, "OTA_BEGIN");
+        goto cleanup;
+    }
+    ota_started = true;
+
+    int sha_result = mbedtls_sha256_starts(&sha_ctx, 0);
+    if (sha_result != 0) {
+        err = ESP_FAIL;
+        set_download_detail(result, "SHA_INIT");
+        goto cleanup;
+    }
+
+    while (result->bytes_written < check.size) {
+        uint32_t remaining = check.size - result->bytes_written;
+        int to_read = remaining > OTA_MANAGER_DOWNLOAD_CHUNK ? OTA_MANAGER_DOWNLOAD_CHUNK : (int)remaining;
+        int read_len = esp_http_client_read(client, buffer, to_read);
+        if (read_len < 0) {
+            err = read_len == -1 ? ESP_FAIL : (esp_err_t)(-read_len);
+            set_download_detail(result, "HTTP_READ");
+            goto cleanup;
+        }
+        if (read_len == 0) {
+            err = ESP_ERR_INVALID_RESPONSE;
+            set_download_detail(result, "HTTP_EOF");
+            goto cleanup;
+        }
+
+        sha_result = mbedtls_sha256_update(&sha_ctx, (const unsigned char *)buffer, (size_t)read_len);
+        if (sha_result != 0) {
+            err = ESP_FAIL;
+            set_download_detail(result, "SHA_UPDATE");
+            goto cleanup;
+        }
+
+        err = esp_ota_write(ota_handle, buffer, (size_t)read_len);
+        if (err != ESP_OK) {
+            set_download_detail(result, "OTA_WRITE");
+            goto cleanup;
+        }
+
+        result->bytes_written += (uint32_t)read_len;
+    }
+
+    if (result->bytes_written != check.size) {
+        err = ESP_ERR_INVALID_SIZE;
+        set_download_detail(result, "BYTES_MISMATCH");
+        goto cleanup;
+    }
+
+    unsigned char digest[32];
+    sha_result = mbedtls_sha256_finish(&sha_ctx, digest);
+    if (sha_result != 0) {
+        err = ESP_FAIL;
+        set_download_detail(result, "SHA_FINISH");
+        goto cleanup;
+    }
+
+    bytes_to_hex(digest, sizeof(digest), result->sha256, sizeof(result->sha256));
+    if (strcasecmp(result->sha256, check.sha256) != 0) {
+        err = ESP_ERR_INVALID_RESPONSE;
+        set_download_detail(result, "SHA256_MISMATCH");
+        goto cleanup;
+    }
+
+    err = esp_ota_end(ota_handle);
+    ota_started = false;
+    if (err != ESP_OK) {
+        set_download_detail(result, "OTA_END");
+        goto cleanup;
+    }
+
+    set_download_detail(result, "VERIFIED");
+
+cleanup:
+    if (ota_started) {
+        (void)esp_ota_abort(ota_handle);
+    }
+    if (client_open) {
+        (void)esp_http_client_close(client);
+    }
+    esp_http_client_cleanup(client);
+    mbedtls_sha256_free(&sha_ctx);
+    free(buffer);
     return err;
 }
 

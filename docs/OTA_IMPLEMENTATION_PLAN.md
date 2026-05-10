@@ -2244,8 +2244,10 @@ Mandatory tests:
 - good binary
 - bad hash
 - bad size
+- localhost URL
 - 404 binary
 - interrupted server
+- invalid manifest
 
 Risks:
 
@@ -2260,6 +2262,108 @@ Rollback/recovery:
 Expected end state:
 
 - Download pipeline is proven before boot changes.
+
+Iteration 7 was implemented and validated on 2026-05-09.
+
+Implementation summary:
+
+```text
+Added command: OTA_DOWNLOAD_TEST
+Download transport: esp_http_client over local HTTP
+Write target: esp_ota_get_next_update_partition(NULL)
+OTA write path: esp_ota_begin / esp_ota_write / esp_ota_end
+SHA256 implementation: mbedtls_sha256 while streaming
+Chunk size: 4096 bytes
+Boot partition switch: not implemented
+esp_ota_set_boot_partition: not called
+Reboot: not performed by OTA_DOWNLOAD_TEST
+Rollback: still disabled
+Automatic OTA task: still disabled
+```
+
+Validation rules implemented:
+
+```text
+OTA_DOWNLOAD_TEST reuses OTA_CHECK manifest validation.
+project must match FW_PROJECT.
+target must match FW_TARGET.
+CURRENT_BUILD_NUMBER must be >= remote.min_supported_build.
+URL must not point to localhost/127.0.0.1/0.0.0.0/::1.
+filename must be a .bin basename.
+size must be non-zero.
+size must be smaller than the inactive OTA partition size.
+sha256 must be exactly 64 hex characters.
+bytes_written must equal manifest.size.
+calculated sha256 must equal manifest.sha256.
+esp_ota_abort is called on validation/download/write/hash failure after OTA begin.
+esp_ota_end is called only after a complete download and matching SHA256.
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0xefd40 bytes / 982336 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x5102c0 bytes, 84%
+Total image size: 982216 bytes
+Flash Code: 705358 bytes
+Flash Data: 163572 bytes
+DIRAM: 114019 / 341760 bytes, 33.36%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Backend manifest used for validation:
+
+```text
+URL: http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b2.bin
+size: 982336
+sha256: 7855f931c0a0c1330e71033ed9b5d46e485a7e61eafc350c9c05666f3d26087a
+build_number: 2
+min_supported_build: 1
+```
+
+Physical validation:
+
+```text
+Flashed on /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00
+VERSION before test: BUILD_NUMBER:2, PARTITION:ota_0
+WIFI_STATUS: CONNECTED, IP:192.168.1.166
+OTA_CHECK: STATUS:UP_TO_DATE, BUILD_NUMBER:2, CURRENT_BUILD:2
+OTA_DOWNLOAD_TEST valid: STATUS:VERIFIED, PARTITION:ota_1, BYTES:982336, SHA256:7855f931c0a0c1330e71033ed9b5d46e485a7e61eafc350c9c05666f3d26087a
+VERSION after valid download: PARTITION:ota_0
+PING after valid download: OK
+GET_MOTOR 2 after valid download: OK, controller online
+STOP 2 after valid download: OK
+```
+
+Error validation in one continuous serial session after Wi-Fi reconnect:
+
+```text
+bad sha256: ERR OTA_DOWNLOAD_TEST_FAILED 0x108 DETAIL:SHA256_MISMATCH PARTITION:ota_1 BYTES:982336
+VERSION after bad sha256: PARTITION:ota_0
+bad size: ERR OTA_DOWNLOAD_TEST_FAILED 0x104 DETAIL:CONTENT_LENGTH PARTITION:ota_1 BYTES:0
+VERSION after bad size: PARTITION:ota_0
+localhost URL: ERR OTA_DOWNLOAD_TEST_FAILED 0x108 DETAIL:BAD_URL PARTITION:NONE BYTES:0
+VERSION after localhost URL: PARTITION:ota_0
+404 binary: ERR OTA_DOWNLOAD_TEST_FAILED 0x108 DETAIL:HTTP_STATUS PARTITION:ota_1 BYTES:0
+VERSION after 404 binary: PARTITION:ota_0
+endpoint down: ERR OTA_DOWNLOAD_TEST_FAILED 0x7002 DETAIL:HTTP_PERFORM PARTITION:NONE BYTES:0
+VERSION after endpoint down: PARTITION:ota_0
+invalid manifest missing target: ERR OTA_DOWNLOAD_TEST_FAILED 0x108 DETAIL:target PARTITION:NONE BYTES:0
+VERSION after invalid manifest: PARTITION:ota_0
+OTA_CHECK after restoring manifest/server: STATUS:UP_TO_DATE
+PING after failures: OK
+GET_MOTOR 2 after failures: OK, controller online
+STOP 2 after failures: OK
+12 seconds serial idle after failures: no task_wdt
+```
+
+Important caveat:
+
+```text
+Opening /dev/ttyACM0 from pyserial toggles the adapter lines and can reset the ESP32-S3. The reliable error matrix above was run in a single continuous serial session after the initial open/reset, so the individual OTA_DOWNLOAD_TEST commands did not cause reboots. VERSION remained on ota_0 after every valid and invalid test.
+```
 
 ### Iteration 8: Manual Real OTA
 
@@ -2669,6 +2773,7 @@ Optional but useful:
 - [ ] Manifest uses LAN IP, not localhost.
 - [ ] SHA256 verified with local tool.
 - [ ] `OTA_CHECK` works without writing flash.
+- [ ] `OTA_DOWNLOAD_TEST` verifies the binary in the inactive OTA slot without changing `VERSION` partition.
 - [ ] Robot safety gate works.
 - [ ] Rollback plan exists.
 - [ ] Serial reflash recovery path verified.
@@ -2685,15 +2790,16 @@ Current completed baseline:
 5. Iteration 4 added manual Wi-Fi station mode and confirmed real Wi-Fi connectivity.
 6. Iteration 5 added the local backend/UI server for manifest and firmware binary serving.
 7. Iteration 6 added `OTA_CHECK`, which fetches and validates the manifest without downloading or writing firmware.
+8. Iteration 7 added `OTA_DOWNLOAD_TEST`, which downloads, writes to the inactive OTA slot, verifies size/SHA256, and does not switch boot partitions or reboot.
 
 Implement next:
 
-1. Iteration 7: download the `.bin` and verify size/SHA256 without switching boot partitions.
-2. Keep `OTA_UPDATE`, rollback, automatic OTA and SoftAP disabled until their dedicated iterations.
+1. Iteration 8: implement manual `OTA_UPDATE` with robot safety checks, boot partition switch and controlled reboot.
+2. Keep rollback, automatic OTA and SoftAP disabled until their dedicated iterations.
 
 Leave for later phases:
 
-- OTA partition write and boot switch.
+- Real boot switch until Iteration 8.
 - Rollback/self-test.
 - Automatic OTA pull task.
 - SoftAP provisioning.
