@@ -2736,6 +2736,36 @@ This exercises the same ESP-IDF bootloader path used by reset, WDT or power loss
 A physical unplug/replug was not automated from this terminal because no controllable power switch is connected.
 ```
 
+### Iteration 9.5: IRAM and Memory Audit
+
+Iteration 9.5 was opened after Iteration 9 because the firmware remains functionally valid but memory risk is now the main blocker before adding automatic OTA logic.
+
+Current audited memory state after Iteration 9:
+
+```text
+Baseline commit: 213223d Enable OTA rollback validation
+Total image size: 988536 bytes
+Flash Code: 709582 bytes
+Flash Data: 165668 bytes
+DIRAM: 114019 / 341760 bytes, 33.36%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+The active Botfarms application components (`main`, `svd48`, `robot_control`, `serial_gateway`, `config_manager`, `wifi_manager`, and `ota_manager`) do not directly contribute to `.iram0.text` in the audit output. The reported IRAM pressure is dominated by ESP-IDF FreeRTOS, Wi-Fi, flash/HAL, heap, PHY and support code.
+
+Phase 9.5-A is documentation-only and records the evidence in `docs/OTA_MEMORY_AUDIT.md`.
+
+Phase 9.5-B is not approved for execution yet. It should be run as separate experiments, one change per commit, in this order:
+
+1. Try compiler optimization for size.
+2. Try placing heap functions in flash.
+3. Try placing selected non-ISR FreeRTOS functions in flash.
+4. If needed, try disabling Wi-Fi RX IRAM optimization.
+5. Only if still critical, try disabling broader Wi-Fi IRAM optimization.
+
+Do not advance to Iteration 10 until the Phase 9.5-B results are reviewed. Initial success target is at least 4 KB reported IRAM recovered, ideally 8 KB or more, without breaking manual OTA, rollback, Wi-Fi, RS485 or serial recovery.
+
 ### Iteration 10: Automatic Pull OTA Check Task
 
 Objective:
@@ -3042,8 +3072,8 @@ Current completed baseline:
 
 Implement next:
 
-1. Decide whether to reduce IRAM pressure before adding any more networking features. IRAM remains at `16383 / 16384` bytes.
-2. Iteration 10 may add automatic manifest polling only if it keeps OTA writes/reboots disabled by default.
+1. Complete and review Iteration 9.5-B before adding any more networking features. IRAM remains at `16383 / 16384` bytes after Iteration 9.
+2. Iteration 10 may add automatic manifest polling only if it keeps OTA writes/reboots disabled by default and Phase 9.5-B leaves acceptable memory margin.
 3. Keep automatic OTA writes and SoftAP disabled until explicit approval.
 
 Leave for later phases:
