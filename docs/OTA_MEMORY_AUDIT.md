@@ -567,3 +567,476 @@ Run experiments in this exact order:
 Stop as soon as the firmware has at least 4 KB reported IRAM free and the full manual OTA/rollback/RS485 validation suite passes. Continue toward 8 KB only if the next experiment has acceptable risk and the previous experiment did not create instability.
 
 If no safe experiment recovers enough IRAM, keep OTA automatic disabled, forbid new `IRAM_ATTR`/ISR-heavy features, keep manual OTA only, and add a mandatory memory gate to every future iteration.
+
+## 9.5-C Linker/IRAM Bucket Investigation
+
+Date: 2026-05-09
+
+### Objective
+
+Phase 9.5-B did not recover any reported `IRAM` from the `idf.py size` line:
+
+```text
+IRAM: 16383 / 16384 bytes
+```
+
+Phase 9.5-C investigated whether this number represents a practical blocker for normal future application code, or a fixed early linker bucket that is already saturated by ESP-IDF startup/low-level code.
+
+No functional source changes were kept. No `sdkconfig.defaults` changes were made. No firmware was flashed.
+
+### Commands Executed
+
+Baseline verification:
+
+```bash
+git status --short
+git log -3 --oneline
+. /home/jp/esp/esp-idf-v5.4.1/export.sh
+idf.py build
+idf.py size
+```
+
+Relevant output:
+
+```text
+34e7572 Document OTA memory audit
+213223d Enable OTA rollback validation
+e2f8051 Add manual OTA update command
+
+ESP-IDF v5.4.1
+sistema-motriz-rs485.bin binary size 0xf15f0 bytes
+Total image size: 988536 bytes
+Flash Code: 709582 bytes
+Flash Data: 165668 bytes
+DIRAM: 114019 / 341760 bytes, remain 227741
+IRAM: 16383 / 16384 bytes, remain 1
+RTC FAST: 52 / 8192 bytes
+```
+
+Map and symbol extraction:
+
+```bash
+grep -n "Memory Configuration" -A80 build/sistema-motriz-rs485.map
+grep -n "Linker script and memory map" -A120 build/sistema-motriz-rs485.map
+grep -n "\.iram0\.vectors\|\.iram0\.text\|_diram_i_start\|_iram_text_end\|iram0_0_seg\|iram0_2_seg" build/sistema-motriz-rs485.map
+xtensa-esp32s3-elf-nm -S --size-sort build/sistema-motriz-rs485.elf
+python -m esp_idf_size build/sistema-motriz-rs485.map --format json
+python -m esp_idf_size build/sistema-motriz-rs485.map --archives --format json
+python -m esp_idf_size build/sistema-motriz-rs485.map --files --format json
+```
+
+Notes:
+
+- The shell did not provide `python` until ESP-IDF was exported; `python3` was used for standalone map parsing scripts.
+- `xtensa-esp32s3-elf-nm` was available only after sourcing `/home/jp/esp/esp-idf-v5.4.1/export.sh`.
+
+### What The 16 KB Bucket Represents
+
+The linker memory configuration contains:
+
+```text
+iram0_0_seg  0x40374000  0x00057700  xr
+iram0_2_seg  0x42000020  0x007fffe0  xr
+```
+
+The relevant linker symbols are:
+
+```text
+_diram_i_start = 0x40378000
+.iram0.vectors 0x40374000 0x403
+.iram0.text    0x40374404 0x16a73
+_iram_text_end = 0x4038af00
+```
+
+`idf.py size` splits the executable internal RAM region at `_diram_i_start`:
+
+- `IRAM` is the first 16 KB window: `0x40374000 <= addr < 0x40378000`.
+- `DIRAM .text` is the executable internal RAM after that boundary, starting at `0x40378000`.
+
+The reported `IRAM 16383 / 16384` is therefore:
+
+```text
+.iram0.vectors: 1027 bytes
+.iram0.text before _diram_i_start: 15356 bytes
+total: 16383 bytes
+```
+
+This is a real fixed 16 KB window, but it is not the whole `.iram0.text` footprint. The full `.iram0.text` is about 92787 bytes. The remaining 77431 bytes are reported as `DIRAM .text`, not as `IRAM`, because they live after `_diram_i_start`.
+
+### Exact Occupants Before `_diram_i_start`
+
+The range `0x40374000-0x40378000` contains 16383 bytes of real linked entries. Top contributors by object:
+
+| Bytes | Object |
+|---:|---|
+| 1998 | `esp-idf/xtensa/libxtensa.a(xtensa_vectors.S.obj)` |
+| 1350 | `esp-idf/esp_system/libesp_system.a(cpu_start.c.obj)` |
+| 1017 | `esp-idf/bootloader_support/libbootloader_support.a(bootloader_flash.c.obj)` |
+| 1001 | `esp-idf/heap/libheap.a(heap_caps_base.c.obj)` |
+| 769 | `esp-idf/esp_hw_support/libesp_hw_support.a(intr_alloc.c.obj)` |
+| 759 | `esp-idf/newlib/libnewlib.a(locks.c.obj)` |
+| 732 | linker fill/alignment |
+| 699 | `esp-idf/esp_system/libesp_system.a(debug_helpers.c.obj)` |
+| 662 | `esp-idf/heap/libheap.a(heap_caps.c.obj)` |
+| 617 | `esp-idf/esp_system/libesp_system.a(system_internal.c.obj)` |
+| 479 | `esp-idf/esp_mm/libesp_mm.a(esp_mmu_map.c.obj)` |
+| 468 | `esp-idf/freertos/libfreertos.a(tasks.c.obj)` |
+| 335 | `esp-idf/esp_hw_support/libesp_hw_support.a(regi2c_ctrl.c.obj)` |
+| 316 | `esp-idf/esp_ringbuf/libesp_ringbuf.a(ringbuf.c.obj)` |
+| 275 | `esp-idf/esp_system/libesp_system.a(esp_ipc.c.obj)` |
+| 275 | `esp-idf/esp_hw_support/libesp_hw_support.a(periph_ctrl.c.obj)` |
+| 274 | `esp-idf/hal/libhal.a(efuse_hal.c.obj)` |
+
+Representative named symbols in this bucket include:
+
+- vector/startup: `_WindowOverflow4`, `_Level2Vector`, `_DebugExceptionVector`, `call_start_cpu0`, `call_start_cpu1`, `do_multicore_settings`
+- panic/backtrace/reset: `panicHandler`, `panic_abort`, `esp_backtrace_print_from_frame`, `esp_restart_noos`
+- heap: `heap_caps_malloc`, `heap_caps_malloc_default`, `heap_caps_realloc_base`, `heap_caps_free`
+- interrupts: `esp_intr_enable`, `esp_intr_disable`, `esp_intr_noniram_enable`, `esp_intr_noniram_disable`, `shared_intr_isr`
+- flash/cache/MMU: `bootloader_flash_execute_command_common`, `s_do_mapping`, `s_do_cache_invalidate`, `esp_mmu_paddr_find_caps`
+- RTOS/newlib: `ipc_task`, `_lock_acquire`, `_lock_release`, `esp_vApplicationTickHook`
+
+This is mostly ESP-IDF low-level startup, vector, interrupt, heap, flash/cache/MMU, panic and FreeRTOS support code. No Botfarms application component is a top contributor inside this first 16 KB bucket.
+
+### What Lives After `_diram_i_start`
+
+The range `0x40378000-0x4038af00` is still executable internal RAM, but `idf.py size` counts it as `DIRAM .text`. Top contributors by object:
+
+| Bytes | Object |
+|---:|---|
+| 8929 | `esp-idf/freertos/libfreertos.a(tasks.c.obj)` |
+| 4976 | `esp-idf/heap/libheap.a(tlsf.c.obj)` |
+| 4284 | `esp-idf/esp_ringbuf/libesp_ringbuf.a(ringbuf.c.obj)` |
+| 4016 | `components/esp_wifi/lib/esp32s3/libpp.a(pp.o)` |
+| 3767 | `components/esp_wifi/lib/esp32s3/libpp.a(pm.o)` |
+| 3172 | `esp-idf/hal/libhal.a(spi_flash_hal_iram.c.obj)` |
+| 2823 | `esp-idf/spi_flash/libspi_flash.a(esp_flash_api.c.obj)` |
+| 2801 | `esp-idf/spi_flash/libspi_flash.a(spi_flash_chip_generic.c.obj)` |
+| 2766 | `esp-idf/freertos/libfreertos.a(queue.c.obj)` |
+| 2699 | `components/esp_phy/lib/esp32s3/libphy.a(phy_reg.o)` |
+| 2548 | `esp-idf/esp_hw_support/libesp_hw_support.a(rtc_clk.c.obj)` |
+| 2195 | `components/esp_wifi/lib/esp32s3/libpp.a(wdev.o)` |
+| 1865 | `components/esp_wifi/lib/esp32s3/libnet80211.a(ieee80211_output.o)` |
+
+This explains Phase 9.5-B:
+
+- `CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH`
+- `CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH`
+- `CONFIG_ESP_WIFI_RX_IRAM_OPT=n`
+- `CONFIG_ESP_WIFI_IRAM_OPT=n`
+
+mostly affected the larger executable internal-RAM area after `_diram_i_start`, which `idf.py size` reports as `DIRAM .text`. They did not reduce the first fixed 16 KB `IRAM` bucket.
+
+### Temporary Normal-Code Experiment
+
+A temporary `main/iram_probe_temp.c` and temporary `main.c` reference were added, built, measured and then removed.
+
+The function was normal C code with no `IRAM_ATTR`.
+
+Result:
+
+| Metric | Baseline | Normal probe | Delta |
+|---|---:|---:|---:|
+| Binary size | 988656 | 994416 | +5760 |
+| Total image size | 988536 | 994292 | +5756 |
+| Flash Code | 709582 | 715338 | +5756 |
+| Flash Data | 165668 | 165668 | 0 |
+| DIRAM | 114019 | 114019 | 0 |
+| IRAM | 16383 | 16383 | 0 |
+
+Conclusion:
+
+- Normal C application logic increases `Flash Code`.
+- It does not increase the first 16 KB IRAM bucket.
+- It does not increase `DIRAM .text` unless the code is explicitly placed into IRAM or comes from an IRAM-safe component/library.
+
+### Temporary `IRAM_ATTR` Experiment
+
+The same temporary probe was changed to use `IRAM_ATTR`.
+
+Result:
+
+| Metric | Baseline | `IRAM_ATTR` probe | Delta |
+|---|---:|---:|---:|
+| Binary size | 988656 | 989056 | +400 |
+| Total image size | 988536 | 988940 | +404 |
+| Flash Code | 709582 | 709606 | +24 |
+| Flash Data | 165668 | 165668 | 0 |
+| DIRAM | 114019 | 114399 | +380 |
+| DIRAM `.text` | 77431 | 77811 | +380 |
+| IRAM | 16383 | 16383 | 0 |
+
+The probe symbol was placed at:
+
+```text
+40377498 00000132 T botfarms_probe_normal
+```
+
+That address is inside `0x40374000-0x40378000`, but `used_iram` stayed constant because the first 16 KB bucket was already saturated. The new IRAM function displaced other `.iram0.text` content past `_diram_i_start`, increasing `DIRAM .text`.
+
+Conclusion:
+
+- `IRAM_ATTR` is still dangerous because it consumes executable internal RAM.
+- `idf.py size` `IRAM` alone will not show growth once this first 16 KB bucket is already full.
+- Future memory gates must track `DIRAM .text`, full `.iram0.text`, and link success, not only `IRAM 16383/16384`.
+
+All temporary files and temporary `main.c`/`main/CMakeLists.txt` changes were removed after the experiments. The final rebuild returned to baseline:
+
+```text
+Binary size: 0xf15f0 / 988656 bytes
+Total image size: 988536 bytes
+Flash Code: 709582 bytes
+Flash Data: 165668 bytes
+DIRAM: 114019 / 341760 bytes
+IRAM: 16383 / 16384 bytes
+RTC FAST: 52 / 8192 bytes
+```
+
+### Answers To The 9.5-C Questions
+
+1. **What does `16383/16384` represent?**  
+   It is the fixed first 16 KB executable IRAM window from `0x40374000` to `_diram_i_start=0x40378000`, containing vectors plus the first part of `.iram0.text`.
+
+2. **What symbols are inside `0x40374000-0x40378000`?**  
+   Mostly ESP-IDF vector/startup, CPU start, heap, interrupt allocation, newlib locks, panic/backtrace, flash/cache/MMU and small FreeRTOS support symbols.
+
+3. **What occupies it most?**  
+   `xtensa_vectors.S.obj`, `cpu_start.c.obj`, `bootloader_flash.c.obj`, `heap_caps_base.c.obj`, `intr_alloc.c.obj`, `locks.c.obj`, linker fill, `debug_helpers.c.obj`, `heap_caps.c.obj`, and `system_internal.c.obj`.
+
+4. **Why did B2-B5 not reduce it?**  
+   Those flags moved or removed code from the larger `.iram0.text` area after `_diram_i_start`, which ESP-IDF reports as `DIRAM .text`, not from the first 16 KB bucket.
+
+5. **Would normal new C logic increase this bucket?**  
+   No, based on the temporary normal-code experiment. It increased `Flash Code` by 5756 bytes and did not change `IRAM` or `DIRAM`.
+
+6. **Would `IRAM_ATTR` functions increase it?**  
+   They can occupy addresses inside the bucket, but once the bucket is full the reported `used_iram` remains capped. The practical growth appears as increased `DIRAM .text` or eventual linker pressure. New `IRAM_ATTR` should still be treated as dangerous.
+
+7. **What future changes are dangerous for this bucket or executable internal RAM?**  
+   New `IRAM_ATTR`, new ISR-safe drivers, `ESP_INTR_FLAG_IRAM`, enabling inactive ISR-heavy components, changing panic/backtrace/debug settings, changing heap/FreeRTOS low-level placement, SPI flash/cache/MMU changes, and enabling `ppm_decoder` without a separate audit.
+
+8. **Can Iteration 10 advance if it only adds normal FreeRTOS task logic?**  
+   Yes, with guardrails. A normal low-priority task for periodic manifest checks should compile into flash code, not the critical IRAM bucket, provided it does not add ISR handlers, `IRAM_ATTR`, low-level driver IRAM-safe options, or automatic OTA writes.
+
+9. **What guardrails are required?**  
+   See the guardrails section below.
+
+10. **Should the success metric remain “recover 4 KB from this bucket”?**  
+    No. The better policy is: do not add new IRAM-critical code; track `IRAM`, `DIRAM .text`, full `.iram0.text`, total image size, and link success every iteration. Recovering 4 KB from the first bucket would require changing low-level ESP-IDF/startup behavior and is not a good target for normal application development.
+
+### Guardrails For Future Iterations
+
+- Do not add `IRAM_ATTR` unless the change has a written justification and map-file evidence.
+- Do not add new ISR handlers in Iteration 10.
+- Do not use `ESP_INTR_FLAG_IRAM` in Iteration 10.
+- Do not enable `ppm_decoder` until it gets its own ISR/IRAM audit.
+- Do not enable IRAM-safe driver options casually, such as UART/I2C/I2S/PCNT/RMT ISR-in-IRAM options.
+- Do not change SPI flash/cache/MMU, panic, backtrace, heap, FreeRTOS low-level, interrupt allocation or startup settings without a dedicated experiment.
+- Run `idf.py build` and `idf.py size` in every iteration.
+- Track all of these metrics, not only `IRAM`:
+  - `IRAM`
+  - `DIRAM .text`
+  - total `DIRAM`
+  - full `.iram0.text` size from the map
+  - `Flash Code`
+  - total image size
+- If `DIRAM .text` or full `.iram0.text` grows unexpectedly, stop and inspect the map.
+- Iteration 10 may add only a normal low-priority FreeRTOS task and non-ISR OTA-check logic.
+- Iteration 10 must keep automatic OTA writes/reboots disabled.
+
+### Recommendation After 9.5-C
+
+Iteration 10 can advance with the guardrails above if its scope is limited to automatic `OTA_CHECK` polling only.
+
+Evidence:
+
+- A normal temporary C function increased `Flash Code` by 5756 bytes and did not change the critical IRAM bucket.
+- A temporary `IRAM_ATTR` function consumed executable internal RAM and increased `DIRAM .text`, confirming that IRAM placement remains the real danger.
+- The current first 16 KB bucket is dominated by ESP-IDF low-level startup/vector/interrupt/heap/flash support, not by Botfarms application logic.
+- Phase 9.5-B showed that Wi-Fi/FreeRTOS/heap IRAM knobs affect a different executable internal RAM region than the `16383/16384` bucket.
+
+Minimum tests for Iteration 10:
+
+- `idf.py build`
+- `idf.py size`
+- map-file check for `.iram0.text`, `DIRAM .text`, and `IRAM`
+- `VERSION`
+- `PING`
+- `WIFI_CONNECT`
+- `WIFI_STATUS CONNECTED`
+- `OTA_CHECK`
+- endpoint-down behavior
+- repeated auto-check idle behavior
+- `OTA_DOWNLOAD_TEST`
+- `OTA_UPDATE` manual between slots
+- rollback valid confirmation
+- rollback by `NO_CONFIRM_ONCE`
+- rollback by `SELF_TEST_FAIL_ONCE`
+- `GET_MOTOR 2`
+- `STOP 2`
+- 12 seconds minimum without `task_wdt`
+
+Do not implement automatic OTA writes in Iteration 10.
+
+## 9.5-C Follow-up: Reverification Of B2-B5 With Correct Metric
+
+After the linker investigation, the B2-B5 candidates were rebuilt in isolated `/tmp` build directories using temporary `/tmp` `SDKCONFIG` files. The repo `sdkconfig.defaults` and functional source were not changed.
+
+The correct metric is not only the first `IRAM 16383 / 16384` bucket. The useful optimization target is executable internal RAM after `_diram_i_start`, reported mostly as `DIRAM .text`, plus the full `.iram0.text` map size.
+
+### Build/Size Recheck
+
+Baseline:
+
+```text
+Binary size: 988656
+Total image size: 988536
+Flash Code: 709582
+Flash Data: 165668
+DIRAM .text: 77431
+DIRAM total: 114019
+IRAM: 16383
+Full .iram0.text: 92787
+```
+
+| Candidate | Change | Bin delta | Total delta | Flash Code delta | DIRAM `.text` delta | DIRAM total delta | Full `.iram0.text` delta | Result |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| B2 | `CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y` | +144 | +140 | +7548 | -7408 | -7408 | -7408 | Build OK |
+| B3 | `CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y` | +736 | +736 | +10660 | -9924 | -9924 | -9924 | Build OK, physical OK |
+| B4 | `CONFIG_ESP_WIFI_RX_IRAM_OPT=n` | -528 | -520 | +9092 | -9580 | -9580 | -9580 | Build OK, physical OK |
+| B5 | `CONFIG_ESP_WIFI_IRAM_OPT=n` | -336 | -336 | +6936 | -7240 | -7240 | -7240 | Build OK |
+
+Interpretation:
+
+- B3 recovers the most executable internal RAM, but it moves FreeRTOS non-ISR functions to flash. That has broader scheduler/timing risk.
+- B4 recovers almost the same amount, reduces total image size slightly, and keeps the risk concentrated in Wi-Fi RX throughput/latency.
+- B2 and B5 are valid but recover less memory than B3/B4.
+
+### Physical Verification: B3
+
+Candidate:
+
+```text
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
+```
+
+Manifest:
+
+```text
+URL: http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b3.bin
+size: 989392
+sha256: f614c08311662566503b960980eadcc1fd841fedec5964164f1dc5597f9a9f93
+```
+
+Validated:
+
+- `VERSION`
+- `PING`
+- `WIFI_CONNECT`
+- `WIFI_STATUS CONNECTED`
+- `OTA_CHECK`
+- `OTA_DOWNLOAD_TEST`
+- `OTA_UPDATE` manual between slots
+- post-boot valid confirmation
+- rollback by `NO_CONFIRM_ONCE`
+- rollback by `SELF_TEST_FAIL_ONCE`
+- `GET_MOTOR 2`
+- `STOP 2`
+- idle without `task_wdt`
+
+Result:
+
+```text
+B3 physical verification: PASS
+```
+
+### Physical Verification: B4
+
+Candidate:
+
+```text
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+CONFIG_ESP_WIFI_IRAM_OPT=y
+```
+
+Manifest:
+
+```text
+URL: http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b3.bin
+size: 988128
+sha256: c564c536e2dc6707ba573e416d572e096f81a53c8eb7dd9ef896806593ab88e3
+```
+
+Boot evidence:
+
+```text
+wifi_init: WiFi IRAM OP enabled
+```
+
+The `WiFi RX IRAM OP enabled` line no longer appears in the B4 boot logs, confirming the RX IRAM optimization is disabled while the broader Wi-Fi IRAM optimization remains enabled.
+
+Validated:
+
+- `VERSION`
+- `PING`
+- `WIFI_CONNECT`
+- `WIFI_STATUS CONNECTED`
+- `OTA_CHECK`
+- `OTA_DOWNLOAD_TEST`
+- `OTA_UPDATE` manual between slots
+- post-boot valid confirmation
+- rollback by `NO_CONFIRM_ONCE`
+- rollback by `SELF_TEST_FAIL_ONCE`
+- `GET_MOTOR 2`
+- `STOP 2`
+- idle without `task_wdt`
+
+Observed Wi-Fi behavior:
+
+- Wi-Fi connected successfully in repeated boot cycles.
+- One initial B4 connection attempt required retries before association/IP, but it recovered within the configured retry window and OTA operations remained stable.
+- OTA download and OTA update completed successfully with matching SHA256.
+
+Result:
+
+```text
+B4 physical verification: PASS
+```
+
+### Recommendation After Reverification
+
+Prefer B4 as the first config optimization to keep:
+
+```text
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+```
+
+Reason:
+
+- It recovers about 9.6 KB of executable internal RAM.
+- It reduces total image size slightly.
+- It avoids moving FreeRTOS scheduler/task functions out of IRAM.
+- Its risk is concentrated in Wi-Fi RX performance, which is acceptable for local OTA checks and manual OTA updates based on the physical validation.
+
+B3 remains a valid second option if more executable internal RAM is needed later, but it should not be combined with B4 until B4 has been committed and observed through at least one normal development iteration.
+
+Consolidation decision:
+
+- B4 is the first optimization to keep permanently.
+- `sdkconfig.defaults` now keeps `CONFIG_ESP_WIFI_IRAM_OPT=y`.
+- `sdkconfig.defaults` now disables RX IRAM optimization with `# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set`.
+- B3 remains the second option if later work needs additional executable internal RAM, but it is not combined with B4 in this phase.
+- B2, B3 and B5 remain reverted for now.
+
+Final B4 consolidation build metrics from the repo build:
+
+| Metric | Value |
+|---|---:|
+| Binary size | 988128 bytes |
+| Total image size | 987988 bytes |
+| Flash Code | 718674 bytes |
+| Flash Data | 165636 bytes |
+| DIRAM `.text` | 67851 bytes |
+| DIRAM total | 104439 bytes |
+| IRAM reported | 16383 / 16384 bytes |
+| Full `.iram0.text` | 83207 bytes |

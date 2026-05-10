@@ -3069,16 +3069,20 @@ Current completed baseline:
 8. Iteration 7 added `OTA_DOWNLOAD_TEST`, which downloads, writes to the inactive OTA slot, verifies size/SHA256, and does not switch boot partitions or reboot.
 9. Iteration 8 added manual `OTA_UPDATE`, including Wi-Fi connected check, robot safety gate, STOP preparation, boot partition switch, and controlled reboot.
 10. Iteration 9 enabled ESP-IDF rollback, added post-boot self-test before marking OTA images valid, and validated success, no-confirm rollback and forced self-test rollback.
+11. Phase 9.5-B tested compiler/heap/FreeRTOS/Wi-Fi IRAM configuration experiments. None recovered the reported first 16 KB `IRAM` bucket, and all experiments were reverted.
+12. Phase 9.5-C identified that `IRAM 16383 / 16384` is the fixed `0x40374000-0x40378000` bucket before `_diram_i_start`. Normal C logic grows `Flash Code`, while `IRAM_ATTR` grows executable internal RAM and may appear as `DIRAM .text` once the first bucket is saturated.
+13. Follow-up verification rebuilt B2-B5 using `DIRAM .text` / full `.iram0.text` as the correct metric. B3 and B4 were physically validated. B4 is the recommended first optimization because it recovers about 9.6 KB executable internal RAM without moving FreeRTOS task functions to flash.
+14. B4 was selected for permanent consolidation: keep `CONFIG_ESP_WIFI_IRAM_OPT=y` and disable `CONFIG_ESP_WIFI_RX_IRAM_OPT`.
 
 Implement next:
 
-1. Complete and review Iteration 9.5-B before adding any more networking features. IRAM remains at `16383 / 16384` bytes after Iteration 9.
-2. Iteration 10 may add automatic manifest polling only if it keeps OTA writes/reboots disabled by default and Phase 9.5-B leaves acceptable memory margin.
-3. Keep automatic OTA writes and SoftAP disabled until explicit approval.
+1. Iteration 10 may add automatic manifest polling only if it is implemented as normal non-ISR FreeRTOS/application logic.
+2. Iteration 10 must keep OTA writes/reboots disabled by default. It may automate `OTA_CHECK`; it must not automate `OTA_UPDATE`.
+3. Keep SoftAP disabled until explicit approval.
 
 Leave for later phases:
 
-- Automatic OTA pull task.
+- Automatic OTA writes/reboots.
 - SoftAP provisioning.
 - HTTPS, firmware signing, secure boot and flash encryption.
 
@@ -3094,7 +3098,8 @@ Do not implement yet:
 Main risks before the next code iteration:
 
 - Physical flash and configured flash are now both `16MB`; future iterations must not regress `CONFIG_ESPTOOLPY_FLASHSIZE`, the selected CSV, or slot sizing.
-- IRAM is currently `16383 / 16384` bytes and must be monitored with `idf.py size` in every iteration.
+- IRAM is currently `16383 / 16384` bytes because the fixed first 16 KB bucket is full. Future iterations must monitor `IRAM`, `DIRAM .text`, total `DIRAM`, full `.iram0.text` from the map file, `Flash Code`, and total image size.
+- New `IRAM_ATTR`, ISR handlers, `ESP_INTR_FLAG_IRAM`, IRAM-safe driver options, low-level SPI flash/cache/MMU changes, heap/FreeRTOS placement changes, and enabling `ppm_decoder` are blocked unless separately audited.
 - Wrong USB port could cause failed diagnostics.
 - Partition migration is already complete, but any future partition edit remains high risk and requires full build, partition-table and boot validation.
 - OTA must be blocked unless robot safety state is known.
