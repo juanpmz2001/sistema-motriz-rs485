@@ -29,7 +29,7 @@ Returns firmware identity and boot context without printing secrets.
 Example:
 
 ```text
-DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:1 IDF:v5.4.1 PARTITION:ota_0
+DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:2 IDF:v5.4.1 PARTITION:ota_0
 ```
 
 ```text
@@ -52,14 +52,14 @@ Default values:
 - `OTA_AUTO_UPDATE:0`
 
 ```text
-WIFI_SET ssid password
+WIFI_SET "ssid" "password"
 WIFI_CLEAR
 WIFI_STATUS
 WIFI_CONNECT
 WIFI_DISCONNECT
 ```
 
-Stores or clears Wi-Fi credentials in NVS. `WIFI_SET` responds with a redacted password state and never echoes the password.
+Stores or clears Wi-Fi credentials in NVS. Quote SSIDs or passwords that contain spaces. `WIFI_SET` responds with a redacted password state and never echoes the password.
 
 `WIFI_STATUS` reports station state without secrets:
 

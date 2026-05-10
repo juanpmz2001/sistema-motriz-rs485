@@ -74,12 +74,61 @@ static char *trim(char *line)
 static int split_args(char *line, char *argv[], int max_args)
 {
     int argc = 0;
-    char *save = NULL;
-    for (char *tok = strtok_r(line, " \t", &save);
-         tok && argc < max_args;
-         tok = strtok_r(NULL, " \t", &save)) {
-        argv[argc++] = tok;
+    char *cursor = line;
+
+    while (*cursor) {
+        while (*cursor && isspace((unsigned char)*cursor)) {
+            cursor++;
+        }
+        if (!*cursor) {
+            break;
+        }
+        if (argc >= max_args) {
+            break;
+        }
+
+        argv[argc++] = cursor;
+        char *out = cursor;
+        bool in_quotes = false;
+        char quote = '\0';
+
+        while (*cursor) {
+            char c = *cursor++;
+
+            if (in_quotes) {
+                if (c == '\\' && *cursor) {
+                    *out++ = *cursor++;
+                    continue;
+                }
+                if (c == quote) {
+                    in_quotes = false;
+                    continue;
+                }
+                *out++ = c;
+                continue;
+            }
+
+            if (c == '\\' && *cursor) {
+                *out++ = *cursor++;
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                in_quotes = true;
+                quote = c;
+                continue;
+            }
+            if (isspace((unsigned char)c)) {
+                break;
+            }
+            *out++ = c;
+        }
+
+        if (in_quotes) {
+            return -1;
+        }
+        *out = '\0';
     }
+
     return argc;
 }
 
@@ -340,7 +389,7 @@ static void handle_config_clear(serial_gateway_handle_t handle, int argc, char *
 static void handle_wifi_set(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     if (argc != 3) {
-        print_locked(handle, "ERR USAGE WIFI_SET ssid password\n");
+        print_locked(handle, "ERR USAGE WIFI_SET \"ssid\" \"password\"\n");
         return;
     }
     if (!handle->config.config_manager) {
@@ -778,7 +827,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET ssid password,WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -923,6 +972,10 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
 
     char *argv[GATEWAY_ARG_MAX];
     int argc = split_args(line, argv, GATEWAY_ARG_MAX);
+    if (argc < 0) {
+        print_locked(handle, "ERR BAD_COMMAND_SYNTAX\n");
+        return;
+    }
     if (argc == 0) {
         return;
     }
