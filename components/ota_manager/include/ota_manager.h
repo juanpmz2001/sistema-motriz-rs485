@@ -59,7 +59,9 @@ esp_err_t ota_manager_init(const ota_manager_config_t *config, ota_manager_handl
 void ota_manager_deinit(ota_manager_handle_t handle);
 
 esp_err_t ota_manager_check(ota_manager_handle_t handle, ota_manager_check_result_t *result);
+esp_err_t ota_manager_download_to_inactive(ota_manager_handle_t handle, ota_manager_download_result_t *result);
 esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result);
+esp_err_t ota_manager_set_boot_partition(const char *partition_label);
 const char *ota_manager_check_status_to_string(ota_manager_check_status_t status);
 
 #ifdef __cplusplus

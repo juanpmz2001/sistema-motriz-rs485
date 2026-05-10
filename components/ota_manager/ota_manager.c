@@ -426,7 +426,7 @@ esp_err_t ota_manager_check(ota_manager_handle_t handle, ota_manager_check_resul
     return err;
 }
 
-esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result)
+esp_err_t ota_manager_download_to_inactive(ota_manager_handle_t handle, ota_manager_download_result_t *result)
 {
     if (!handle || !result) {
         return ESP_ERR_INVALID_ARG;
@@ -439,6 +439,10 @@ esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_dow
     if (err != ESP_OK) {
         set_download_detail(result, check.detail[0] ? check.detail : "OTA_CHECK");
         return err;
+    }
+    if (check.build_number < check.current_build_number) {
+        set_download_detail(result, "BUILD_DOWNGRADE");
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
     const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
@@ -597,6 +601,32 @@ cleanup:
     mbedtls_sha256_free(&sha_ctx);
     free(buffer);
     return err;
+}
+
+esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result)
+{
+    return ota_manager_download_to_inactive(handle, result);
+}
+
+esp_err_t ota_manager_set_boot_partition(const char *partition_label)
+{
+    if (!partition_label || partition_label[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_partition_t *partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                                               ESP_PARTITION_SUBTYPE_ANY,
+                                                               partition_label);
+    if (!partition) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running && strcmp(running->label, partition->label) == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return esp_ota_set_boot_partition(partition);
 }
 
 const char *ota_manager_check_status_to_string(ota_manager_check_status_t status)

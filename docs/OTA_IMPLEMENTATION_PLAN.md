@@ -2429,6 +2429,119 @@ Expected end state:
 
 - Manual OTA works in controlled lab conditions.
 
+Iteration 8 was implemented and validated on 2026-05-09.
+
+Toolchain validation before functional changes:
+
+```bash
+. /home/jp/esp/esp-idf-v5.4.1/export.sh
+idf.py --version
+python -m esptool --help
+python3 - <<'PY'
+import serial
+print("pyserial OK", serial.__version__)
+PY
+PATH=/home/jp/.local/node-local/bin:$PATH node --version
+PATH=/home/jp/.local/node-local/bin:$PATH npm --version
+. /home/jp/esp/esp-idf-v5.4.1/export.sh && idf.py build && idf.py size
+```
+
+Observed toolchain result:
+
+```text
+ESP-IDF: v5.4.1 from /home/jp/esp/esp-idf-v5.4.1/export.sh
+esptool: available through the ESP-IDF Python environment
+pyserial: available as Python package serial 3.5
+node: v22.22.2 from /home/jp/.local/node-local/bin
+npm: 10.9.7 from /home/jp/.local/node-local/bin
+No sudo installation was required.
+```
+
+Implementation summary:
+
+```text
+Added command: OTA_UPDATE
+OTA_UPDATE requires Wi-Fi state CONNECTED.
+OTA_UPDATE checks robot_control_is_safe_for_ota before downloading.
+OTA_UPDATE reuses ota_manager_download_to_inactive, the same validated download/write/hash path used by OTA_DOWNLOAD_TEST.
+OTA_UPDATE calls robot_control_prepare_for_ota after esp_ota_end succeeds and before esp_ota_set_boot_partition.
+OTA_UPDATE calls esp_ota_set_boot_partition only after manifest/download/write/sha256/esp_ota_end and robot preparation succeed.
+OTA_UPDATE reboots with esp_restart after printing STATUS:REBOOTING.
+Rollback remains disabled.
+Automatic OTA remains disabled.
+SoftAP, HTTPS and firmware signing were not implemented.
+```
+
+Safety behavior:
+
+```text
+robot_control tracks manual SET_SPEED commands in last_command.
+STOP n clears the tracked command for that motor.
+STOP ALL clears all tracked command state.
+robot_control_is_safe_for_ota blocks non-zero motion commands and online telemetry with actual RPM above 5 RPM.
+Controller status alone is not treated as unsafe when actual RPM is zero, because the SVD48 can briefly report running/enabled after STOP while RPM is already zero.
+robot_control_prepare_for_ota stops motors that are online or have a tracked non-zero command.
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0xf0860 bytes / 985184 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x50f7a0 bytes, 84%
+Total image size: 985060 bytes
+Flash Code: 707338 bytes
+Flash Data: 164436 bytes
+DIRAM: 114019 / 341760 bytes, 33.36%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Backend manifest used for validation:
+
+```text
+URL: http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b2.bin
+size: 985184
+sha256: e1a46d0845805c7cc6e2876ce5b4cfc12c3ea0e652d2ad07ec8eb414179ac735
+build_number: 2
+min_supported_build: 1
+```
+
+Physical validation:
+
+```text
+Flashed on /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00
+VERSION before error tests: BUILD_NUMBER:2, PARTITION:ota_0
+WIFI_STATUS: CONNECTED, IP:192.168.1.166
+OTA_CHECK: STATUS:UP_TO_DATE, BUILD_NUMBER:2, CURRENT_BUILD:2
+bad sha256: ERR OTA_UPDATE_FAILED 0x108 DETAIL:SHA256_MISMATCH PARTITION:ota_1 BYTES:985184
+VERSION after bad sha256: PARTITION:ota_0
+bad size: ERR OTA_UPDATE_FAILED 0x104 DETAIL:CONTENT_LENGTH PARTITION:ota_1 BYTES:0
+VERSION after bad size: PARTITION:ota_0
+localhost URL: ERR OTA_UPDATE_FAILED 0x108 DETAIL:BAD_URL PARTITION:NONE BYTES:0
+VERSION after localhost URL: PARTITION:ota_0
+404 binary: ERR OTA_UPDATE_FAILED 0x108 DETAIL:HTTP_STATUS PARTITION:ota_1 BYTES:0
+VERSION after 404 binary: PARTITION:ota_0
+endpoint down: ERR OTA_UPDATE_FAILED 0x7002 DETAIL:HTTP_PERFORM PARTITION:NONE BYTES:0
+VERSION after endpoint down: PARTITION:ota_0
+robot commanded with SET_SPEED 2 10: ERR OTA_UPDATE_BLOCKED ROBOT_NOT_SAFE REASON:MOTOR_COMMAND_ACTIVE
+STOP 2 after unsafe test: OK
+GET_MOTOR 2 after STOP: RPM:0, STATUS:0, ONLINE:1, STALE:0
+OTA_UPDATE success: DATA OTA_UPDATE STATUS:REBOOTING PARTITION:ota_1 BYTES:985184 SHA256:e1a46d0845805c7cc6e2876ce5b4cfc12c3ea0e652d2ad07ec8eb414179ac735
+Boot after OTA_UPDATE: Loaded app from partition at offset 0x630000
+VERSION after OTA_UPDATE: PARTITION:ota_1
+PING after OTA_UPDATE: OK
+GET_MOTOR 2 after OTA_UPDATE: OK, controller online
+STOP 2 after OTA_UPDATE: OK
+12 seconds serial idle after OTA_UPDATE: no task_wdt
+```
+
+Important caveat:
+
+```text
+Iteration 8 intentionally allows manual same-build OTA for slot validation in the lab. Future automatic OTA should require remote.build_number > CURRENT_BUILD_NUMBER before writing or rebooting.
+```
+
 ### Iteration 9: Rollback and Post-Boot Validation
 
 Objective:
@@ -2714,7 +2827,7 @@ Expected end state:
 | `OTA_UPDATE` after `STOP ALL` | Allowed if other checks pass |
 | `OTA_UPDATE` during nonzero `MOVE_VEL` | Refused |
 | `OTA_UPDATE` while speed target nonzero | Refused |
-| `OTA_UPDATE` with stale telemetry | Conservative refusal unless explicitly overridden for bench |
+| `OTA_UPDATE` with stale telemetry | Ignored unless a tracked command is active; bench setup may have only one online motor |
 | `OTA_UPDATE` after safe stop timeout | Refused |
 
 ## 14. Additional Data Needed From User
@@ -2725,7 +2838,7 @@ Required before implementation:
 - Restore/install ESP-IDF v5.4.1 and esptool in a persistent path.
 - Confirm whether `/dev/ttyACM0` is the ESP32-S3.
 - Provide Wi-Fi SSID/password for test via environment variable or local ignored file, not in Git.
-- Confirm LAN IP to expose the server. Current detected IP is `192.168.10.10`.
+- Confirm LAN IP to expose the server. Current tested IP is `192.168.1.107` on the `M ZAPATA` LAN.
 - Confirm whether the server runs from Linux, WSL, Windows, or macOS.
 - Confirm firewall allows inbound TCP on chosen port, recommended `8080`.
 - Confirm whether Node/Express is acceptable for backend implementation.
@@ -2791,18 +2904,18 @@ Current completed baseline:
 6. Iteration 5 added the local backend/UI server for manifest and firmware binary serving.
 7. Iteration 6 added `OTA_CHECK`, which fetches and validates the manifest without downloading or writing firmware.
 8. Iteration 7 added `OTA_DOWNLOAD_TEST`, which downloads, writes to the inactive OTA slot, verifies size/SHA256, and does not switch boot partitions or reboot.
+9. Iteration 8 added manual `OTA_UPDATE`, including Wi-Fi connected check, robot safety gate, STOP preparation, boot partition switch, and controlled reboot.
 
 Implement next:
 
-1. Iteration 8: implement manual `OTA_UPDATE` with robot safety checks, boot partition switch and controlled reboot.
-2. Keep rollback, automatic OTA and SoftAP disabled until their dedicated iterations.
+1. Iteration 9: enable rollback support and post-boot self-test before marking the new app valid.
+2. Keep automatic OTA and SoftAP disabled until rollback and recovery are validated.
 
 Leave for later phases:
 
-- Real boot switch until Iteration 8.
-- Rollback/self-test.
 - Automatic OTA pull task.
 - SoftAP provisioning.
+- HTTPS, firmware signing, secure boot and flash encryption.
 
 Do not implement yet:
 
@@ -2813,7 +2926,7 @@ Do not implement yet:
 - Secure boot.
 - Flash encryption.
 
-Main risks before writing code:
+Main risks before the next code iteration:
 
 - Physical flash and configured flash are now both `16MB`; future iterations must not regress `CONFIG_ESPTOOLPY_FLASHSIZE`, the selected CSV, or slot sizing.
 - IRAM is currently `16383 / 16384` bytes and must be monitored with `idf.py size` in every iteration.

@@ -23,6 +23,8 @@ static const char *TAG = "robot_control";
 #define SERVO_DUTY_RES LEDC_TIMER_14_BIT
 #define SERVO_FREQ_HZ 50
 #define SERVO_PERIOD_US 20000
+#define OTA_SAFE_RPM_THRESHOLD 5
+#define OTA_SAFE_FLOAT_THRESHOLD 0.001f
 
 struct robot_control_t {
     robot_control_config_t config;
@@ -52,6 +54,30 @@ static int16_t clamp_rpm(float rpm, float max_abs_rpm)
 {
     rpm = clampf_local(rpm, -max_abs_rpm, max_abs_rpm);
     return (int16_t)lrintf(rpm);
+}
+
+static void set_reason(char *reason, size_t reason_size, const char *value)
+{
+    if (reason && reason_size > 0) {
+        snprintf(reason, reason_size, "%s", value ? value : "UNKNOWN");
+    }
+}
+
+static void clear_last_command(robot_control_handle_t handle)
+{
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    memset(&handle->last_command, 0, sizeof(handle->last_command));
+    xSemaphoreGive(handle->lock);
+}
+
+static void set_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
+{
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    handle->last_command.vx_mps = 0.0f;
+    handle->last_command.vy_mps = 0.0f;
+    handle->last_command.wz_radps = 0.0f;
+    handle->last_command.wheel_rpm[motor] = rpm;
+    xSemaphoreGive(handle->lock);
 }
 
 static esp_err_t steering_set_angle(robot_control_handle_t handle, uint8_t motor, float angle_deg)
@@ -201,9 +227,7 @@ esp_err_t robot_control_stop_all(robot_control_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    memset(&handle->last_command, 0, sizeof(handle->last_command));
-    xSemaphoreGive(handle->lock);
+    clear_last_command(handle);
 
     return svd48_stop_all(handle->config.svd48);
 }
@@ -213,7 +237,11 @@ esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
     if (!handle || motor >= SVD48_MOTOR_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
-    return svd48_stop_motor(handle->config.svd48, motor);
+    esp_err_t err = svd48_stop_motor(handle->config.svd48, motor);
+    if (err == ESP_OK) {
+        set_last_motor_rpm(handle, motor, 0);
+    }
+    return err;
 }
 
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor)
@@ -231,7 +259,11 @@ esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t m
     }
 
     ESP_RETURN_ON_ERROR(svd48_enable_motor(handle->config.svd48, motor), TAG, "enable motor failed");
-    return svd48_set_motor_speed(handle->config.svd48, motor, rpm);
+    esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, rpm);
+    if (err == ESP_OK) {
+        set_last_motor_rpm(handle, motor, rpm);
+    }
+    return err;
 }
 
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps)
@@ -344,6 +376,82 @@ bool robot_control_get_last_motion(robot_control_handle_t handle, robot_motion_c
     *command = handle->last_command;
     xSemaphoreGive(handle->lock);
     return true;
+}
+
+bool robot_control_is_safe_for_ota(robot_control_handle_t handle, char *reason, size_t reason_size)
+{
+    if (!handle) {
+        set_reason(reason, reason_size, "NO_ROBOT");
+        return false;
+    }
+
+    robot_motion_command_t command;
+    if (!robot_control_get_last_motion(handle, &command)) {
+        set_reason(reason, reason_size, "COMMAND_READ_FAILED");
+        return false;
+    }
+
+    if (fabsf(command.vx_mps) > OTA_SAFE_FLOAT_THRESHOLD ||
+        fabsf(command.vy_mps) > OTA_SAFE_FLOAT_THRESHOLD ||
+        fabsf(command.wz_radps) > OTA_SAFE_FLOAT_THRESHOLD) {
+        set_reason(reason, reason_size, "COMMAND_ACTIVE");
+        return false;
+    }
+
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        if (command.wheel_rpm[motor] != 0) {
+            set_reason(reason, reason_size, "MOTOR_COMMAND_ACTIVE");
+            return false;
+        }
+    }
+
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        svd48_motor_telemetry_t telemetry;
+        if (!robot_control_get_motor(handle, motor, &telemetry)) {
+            continue;
+        }
+        if (!telemetry.online || telemetry.stale) {
+            continue;
+        }
+        if (abs(telemetry.actual_rpm) > OTA_SAFE_RPM_THRESHOLD) {
+            set_reason(reason, reason_size, "MOTOR_RUNNING");
+            return false;
+        }
+    }
+
+    set_reason(reason, reason_size, "SAFE");
+    return true;
+}
+
+esp_err_t robot_control_prepare_for_ota(robot_control_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    robot_motion_command_t command;
+    memset(&command, 0, sizeof(command));
+    (void)robot_control_get_last_motion(handle, &command);
+
+    esp_err_t first_error = ESP_OK;
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        svd48_motor_telemetry_t telemetry;
+        bool online = robot_control_get_motor(handle, motor, &telemetry) && telemetry.online && !telemetry.stale;
+        bool commanded = command.wheel_rpm[motor] != 0;
+        if (!online && !commanded) {
+            continue;
+        }
+
+        esp_err_t err = robot_control_stop_motor(handle, motor);
+        if (err != ESP_OK && first_error == ESP_OK) {
+            first_error = err;
+        }
+    }
+
+    if (first_error == ESP_OK) {
+        clear_last_command(handle);
+    }
+    return first_error;
 }
 
 esp_err_t robot_control_read_svd48_registers(robot_control_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t quantity, uint16_t *out_regs)
