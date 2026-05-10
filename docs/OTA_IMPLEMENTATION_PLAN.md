@@ -695,12 +695,12 @@ Additional physical validation completed before Iteration 6:
 
 ```text
 Firmware commit: ed53a8f Support quoted Wi-Fi credentials
-WIFI_SET now accepts quoted SSID/password arguments, e.g. WIFI_SET "M ZAPATA" "..."
+WIFI_SET now accepts quoted SSID/password arguments, e.g. WIFI_SET "LAB SSID" "..."
 .env is ignored by Git to protect local credentials
 FW_BUILD_NUMBER bumped to 2 because a new firmware binary was flashed
 ESP system event task stack increased to 4096 bytes
 Serial gateway command task stack increased to 12288 bytes during Iteration 6 validation
-SSID with space validated: M ZAPATA
+SSID with space validated using a local test network name containing a space
 Two password candidates were read from local .env without printing either password
 Candidate 2 connected successfully
 WIFI_STATUS: STATUS:CONNECTED, IP:192.168.1.166
@@ -2191,7 +2191,7 @@ STOP 2 after OTA checks: OK
 Important caveat:
 
 ```text
-During this test the actual PC LAN IP was 192.168.1.107. The previously suggested 192.168.10.10 is not reachable from the ESP32 while the ESP32 is connected to M ZAPATA on 192.168.1.0/24 unless the network provides routing.
+During this test the actual PC LAN IP was 192.168.1.107. The previously suggested 192.168.10.10 is not reachable from the ESP32 while the ESP32 is connected to the tested 192.168.1.0/24 LAN unless the network provides routing.
 ```
 
 ### Iteration 7: Download and Verify in Inactive OTA Slot Without Boot Switch
@@ -2559,7 +2559,9 @@ Files likely touched:
 - `sdkconfig.defaults`
 - `components/ota_manager/*`
 - `main/main.c`
-- `docs/OTA_OPERATION.md`
+- `components/serial_gateway/serial_gateway.c`
+- `docs/API.md`
+- `docs/OTA_IMPLEMENTATION_PLAN.md`
 
 Subtasks:
 
@@ -2572,9 +2574,9 @@ Subtasks:
 Commands:
 
 ```bash
-idf.py menuconfig
 idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
+idf.py size
+idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00 flash
 ```
 
 Acceptance criteria:
@@ -2602,6 +2604,137 @@ Rollback/recovery:
 Expected end state:
 
 - Device is protected against broken OTA app.
+
+Iteration 9 was implemented and validated on 2026-05-09.
+
+Pre-implementation guardrails:
+
+```text
+Firmware repo .gitignore ignores .env and sdkconfig.
+Web/backend repo .gitignore ignores firmware/*.bin and firmware/manifest.json.
+No .env file or Wi-Fi password is tracked by Git in either repository.
+Automatic OTA remains disabled: OTA_AUTO_UPDATE ON is still rejected.
+SoftAP provisioning, HTTPS, firmware signing, secure boot and flash encryption remain out of scope.
+Manual same-build OTA remains allowed only for lab slot/rollback validation. Future automatic OTA must require remote.build_number > CURRENT_BUILD_NUMBER.
+```
+
+Implementation summary:
+
+```text
+Enabled CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE in sdkconfig.defaults.
+Updated local ignored sdkconfig for the physical build/flash used in this iteration.
+Incremented FW_BUILD_NUMBER to 3.
+Added ota_manager_get_boot_state(), ota_manager_mark_app_valid(), ota_manager_mark_app_invalid_and_rollback().
+Added one-shot lab rollback test mode in NVS namespace bot_ota with key rb_test.
+Added VERSION fields: OTA_STATE, PENDING_VERIFY, ROLLBACK_POSSIBLE.
+Added serial commands: OTA_ROLLBACK_STATUS and OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE.
+main/app_main detects PENDING_VERIFY early, initializes critical subsystems, then marks valid only after serial_gateway starts.
+Self-test does not require Wi-Fi connection success or OTA backend availability.
+```
+
+Critical self-test sequence:
+
+```text
+1. Read running partition OTA state.
+2. Initialize NVS.
+3. Initialize config_manager.
+4. Initialize wifi_manager.
+5. Initialize ota_manager.
+6. Initialize SVD48 UART/RS485 driver.
+7. Initialize robot_control.
+8. Start SVD48 telemetry polling.
+9. Initialize and start serial_gateway.
+10. If the app was PENDING_VERIFY, consume any one-shot rollback test mode.
+11. If no forced test mode is active, call esp_ota_mark_app_valid_cancel_rollback().
+12. If a critical init step fails while PENDING_VERIFY, call esp_ota_mark_app_invalid_rollback_and_reboot().
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0xf15f0 bytes / 988656 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x50ea10 bytes, 84%
+Total image size: 988536 bytes
+Flash Code: 709582 bytes
+Flash Data: 165668 bytes
+DIRAM: 114019 / 341760 bytes, 33.36%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Rollback config evidence:
+
+```text
+build/config/sdkconfig.h: CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE 1
+build/config/sdkconfig.h: CONFIG_APP_ROLLBACK_ENABLE CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+Bootloader binary size: 0x5280 bytes, 36% free before partition table.
+```
+
+Backend manifest used:
+
+```text
+URL: http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b3.bin
+build_number: 3
+size: 988656
+sha256: 3a21dcb7c2309c4ee1d391b03683aad246ec8f16cd9d36bf022fd835d80a1e65
+min_supported_build: 1
+```
+
+Physical validation:
+
+```text
+Initial serial flash boot:
+VERSION: BUILD_NUMBER:3, PARTITION:ota_0, OTA_STATE:VALID, PENDING_VERIFY:0, ROLLBACK_POSSIBLE:0
+WIFI_STATUS after WIFI_CONNECT: CONNECTED, IP:192.168.1.166
+OTA_CHECK: UP_TO_DATE, BUILD_NUMBER:3, CURRENT_BUILD:3
+GET_MOTOR 2: ONLINE:1, STALE:0
+STOP 2: OK
+12 seconds idle: no task_wdt
+
+Successful OTA with rollback enabled:
+OTA_UPDATE: STATUS:REBOOTING, PARTITION:ota_1, BYTES:988656, SHA256:3a21dcb7...
+Boot: ota_1 loaded as PENDING_VERIFY with rollback_possible:1
+After self-test: Pending OTA app marked valid after subsystem self-test
+VERSION: PARTITION:ota_1, OTA_STATE:VALID, PENDING_VERIFY:0, ROLLBACK_POSSIBLE:1
+PING, GET_MOTOR 2 and STOP 2: OK
+12 seconds idle: no task_wdt
+
+No-confirm rollback simulation:
+OTA_ROLLBACK_TEST NO_CONFIRM_ONCE: OK
+OTA_UPDATE to ota_0: STATUS:REBOOTING
+Boot: ota_0 loaded as PENDING_VERIFY
+main: Rollback test mode NO_CONFIRM_ONCE consumed; rebooting before app validation
+Next boot: ota_1 loaded, OTA_STATE:VALID
+VERSION/PING/GET_MOTOR 2/STOP 2: OK
+
+Self-test failure rollback simulation:
+OTA_ROLLBACK_TEST SELF_TEST_FAIL_ONCE: OK
+OTA_UPDATE to ota_0: STATUS:REBOOTING
+Boot: ota_0 loaded as PENDING_VERIFY
+main: Pending OTA app failed self-test stage:forced_self_test_failure
+esp_ota_ops: Rollback to previously worked partition. Restart.
+Next boot: ota_1 loaded, OTA_STATE:VALID
+VERSION/PING/GET_MOTOR 2/STOP 2: OK
+
+Final recovery state:
+OTA_ROLLBACK_TEST NONE: OK
+Final OTA_UPDATE to ota_0: STATUS:REBOOTING
+Boot: ota_0 loaded as PENDING_VERIFY
+After self-test: Pending OTA app marked valid after subsystem self-test
+VERSION: PARTITION:ota_0, OTA_STATE:VALID, PENDING_VERIFY:0, ROLLBACK_POSSIBLE:1
+OTA_ROLLBACK_STATUS: TEST_MODE:NONE
+PING, GET_MOTOR 2 and STOP 2: OK
+12 seconds idle: no task_wdt
+```
+
+Power-cycle note:
+
+```text
+The no-confirm test intentionally rebooted before calling esp_ota_mark_app_valid_cancel_rollback().
+This exercises the same ESP-IDF bootloader path used by reset, WDT or power loss while an app is PENDING_VERIFY.
+A physical unplug/replug was not automated from this terminal because no controllable power switch is connected.
+```
 
 ### Iteration 10: Automatic Pull OTA Check Task
 
@@ -2838,7 +2971,7 @@ Required before implementation:
 - Restore/install ESP-IDF v5.4.1 and esptool in a persistent path.
 - Confirm whether `/dev/ttyACM0` is the ESP32-S3.
 - Provide Wi-Fi SSID/password for test via environment variable or local ignored file, not in Git.
-- Confirm LAN IP to expose the server. Current tested IP is `192.168.1.107` on the `M ZAPATA` LAN.
+- Confirm LAN IP to expose the server. Current tested IP is `192.168.1.107` on the local lab LAN.
 - Confirm whether the server runs from Linux, WSL, Windows, or macOS.
 - Confirm firewall allows inbound TCP on chosen port, recommended `8080`.
 - Confirm whether Node/Express is acceptable for backend implementation.
@@ -2905,11 +3038,13 @@ Current completed baseline:
 7. Iteration 6 added `OTA_CHECK`, which fetches and validates the manifest without downloading or writing firmware.
 8. Iteration 7 added `OTA_DOWNLOAD_TEST`, which downloads, writes to the inactive OTA slot, verifies size/SHA256, and does not switch boot partitions or reboot.
 9. Iteration 8 added manual `OTA_UPDATE`, including Wi-Fi connected check, robot safety gate, STOP preparation, boot partition switch, and controlled reboot.
+10. Iteration 9 enabled ESP-IDF rollback, added post-boot self-test before marking OTA images valid, and validated success, no-confirm rollback and forced self-test rollback.
 
 Implement next:
 
-1. Iteration 9: enable rollback support and post-boot self-test before marking the new app valid.
-2. Keep automatic OTA and SoftAP disabled until rollback and recovery are validated.
+1. Decide whether to reduce IRAM pressure before adding any more networking features. IRAM remains at `16383 / 16384` bytes.
+2. Iteration 10 may add automatic manifest polling only if it keeps OTA writes/reboots disabled by default.
+3. Keep automatic OTA writes and SoftAP disabled until explicit approval.
 
 Leave for later phases:
 

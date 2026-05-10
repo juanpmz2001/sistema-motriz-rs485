@@ -240,6 +240,26 @@ static bool parse_on_off_arg(const char *text, bool *enabled)
     return false;
 }
 
+static bool parse_rollback_test_mode_arg(const char *text, ota_manager_rollback_test_mode_t *mode)
+{
+    if (!text || !mode) {
+        return false;
+    }
+    if (strcasecmp(text, "NONE") == 0 || strcasecmp(text, "CLEAR") == 0) {
+        *mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+        return true;
+    }
+    if (strcasecmp(text, "NO_CONFIRM_ONCE") == 0) {
+        *mode = OTA_MANAGER_ROLLBACK_TEST_NO_CONFIRM_ONCE;
+        return true;
+    }
+    if (strcasecmp(text, "SELF_TEST_FAIL_ONCE") == 0 || strcasecmp(text, "SELFTEST_FAIL_ONCE") == 0) {
+        *mode = OTA_MANAGER_ROLLBACK_TEST_SELF_TEST_FAIL_ONCE;
+        return true;
+    }
+    return false;
+}
+
 static void print_motor_full(serial_gateway_handle_t handle, uint8_t motor)
 {
     svd48_motor_telemetry_t t;
@@ -296,17 +316,26 @@ static const char *safe_text(const char *value, const char *fallback)
 
 static void handle_version(serial_gateway_handle_t handle)
 {
-    const esp_partition_t *partition = esp_ota_get_running_partition();
-    const char *partition_label = partition ? partition->label : "UNKNOWN";
+    ota_manager_boot_state_t boot_state;
+    esp_err_t state_err = ota_manager_get_boot_state(&boot_state);
+    const char *partition_label = state_err == ESP_OK && boot_state.partition_label[0]
+                                      ? boot_state.partition_label
+                                      : "UNKNOWN";
+    const char *ota_state = state_err == ESP_OK && boot_state.state_known
+                                ? ota_manager_image_state_to_string(boot_state.state)
+                                : "UNKNOWN";
 
     print_locked(handle,
-                 "DATA VERSION PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu IDF:%s PARTITION:%s\n",
+                 "DATA VERSION PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu IDF:%s PARTITION:%s OTA_STATE:%s PENDING_VERIFY:%u ROLLBACK_POSSIBLE:%u\n",
                  safe_text(handle->config.fw_project, "UNKNOWN"),
                  safe_text(handle->config.fw_target, "UNKNOWN"),
                  safe_text(handle->config.fw_version, "UNKNOWN"),
                  (unsigned long)handle->config.fw_build_number,
                  esp_get_idf_version(),
-                 safe_text(partition_label, "UNKNOWN"));
+                 safe_text(partition_label, "UNKNOWN"),
+                 ota_state,
+                 state_err == ESP_OK && boot_state.pending_verify ? 1 : 0,
+                 state_err == ESP_OK && boot_state.rollback_possible ? 1 : 0);
 }
 
 static esp_err_t get_config_snapshot(serial_gateway_handle_t handle, config_manager_snapshot_t *snapshot)
@@ -725,6 +754,56 @@ static void handle_ota_update(serial_gateway_handle_t handle, int argc, char *ar
     esp_restart();
 }
 
+static void handle_ota_rollback_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_ROLLBACK_STATUS\n");
+        return;
+    }
+
+    ota_manager_boot_state_t boot_state;
+    esp_err_t state_err = ota_manager_get_boot_state(&boot_state);
+    ota_manager_rollback_test_mode_t test_mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+    esp_err_t test_err = ota_manager_get_rollback_test_mode(&test_mode);
+    if (test_err != ESP_OK) {
+        test_mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_ROLLBACK PARTITION:%s OTA_STATE:%s PENDING_VERIFY:%u ROLLBACK_POSSIBLE:%u STATE_ERR:0x%x TEST_MODE:%s TEST_ERR:0x%x\n",
+                 state_err == ESP_OK && boot_state.partition_label[0] ? boot_state.partition_label : "UNKNOWN",
+                 state_err == ESP_OK && boot_state.state_known ? ota_manager_image_state_to_string(boot_state.state) : "UNKNOWN",
+                 state_err == ESP_OK && boot_state.pending_verify ? 1 : 0,
+                 state_err == ESP_OK && boot_state.rollback_possible ? 1 : 0,
+                 state_err == ESP_OK ? boot_state.state_error : state_err,
+                 ota_manager_rollback_test_mode_to_string(test_mode),
+                 test_err);
+}
+
+static void handle_ota_rollback_test(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc != 2) {
+        print_locked(handle, "ERR USAGE OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE\n");
+        return;
+    }
+
+    ota_manager_rollback_test_mode_t mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+    if (!parse_rollback_test_mode_arg(argv[1], &mode)) {
+        print_locked(handle, "ERR USAGE OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE\n");
+        return;
+    }
+
+    esp_err_t err = ota_manager_set_rollback_test_mode(mode);
+    if (err == ESP_OK) {
+        print_locked(handle,
+                     "OK OTA_ROLLBACK_TEST MODE:%s\n",
+                     ota_manager_rollback_test_mode_to_string(mode));
+    } else {
+        print_locked(handle, "ERR OTA_ROLLBACK_TEST_FAILED 0x%x\n", err);
+    }
+}
+
 static void handle_ota_auto_check(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     bool enabled = false;
@@ -980,7 +1059,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -1171,6 +1250,10 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_download_test(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_UPDATE") == 0) {
         handle_ota_update(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_ROLLBACK_STATUS") == 0) {
+        handle_ota_rollback_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_ROLLBACK_TEST") == 0) {
+        handle_ota_rollback_test(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_CHECK") == 0) {
         handle_ota_auto_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_UPDATE") == 0) {

@@ -11,12 +11,15 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "mbedtls/sha256.h"
+#include "nvs.h"
 
 static const char *TAG = "ota_manager";
 
 #define OTA_MANAGER_HTTP_TIMEOUT_MS 5000
 #define OTA_MANAGER_MANIFEST_MAX 4096
 #define OTA_MANAGER_DOWNLOAD_CHUNK 4096
+#define OTA_MANAGER_NVS_NAMESPACE "bot_ota"
+#define OTA_MANAGER_NVS_KEY_ROLLBACK_TEST "rb_test"
 
 struct ota_manager_t {
     config_manager_handle_t config_manager;
@@ -58,6 +61,55 @@ static void set_download_detail(ota_manager_download_result_t *result, const cha
     if (result && detail) {
         (void)copy_text(result->detail, sizeof(result->detail), detail);
     }
+}
+
+const char *ota_manager_image_state_to_string(esp_ota_img_states_t state)
+{
+    switch (state) {
+    case ESP_OTA_IMG_NEW:
+        return "NEW";
+    case ESP_OTA_IMG_PENDING_VERIFY:
+        return "PENDING_VERIFY";
+    case ESP_OTA_IMG_VALID:
+        return "VALID";
+    case ESP_OTA_IMG_INVALID:
+        return "INVALID";
+    case ESP_OTA_IMG_ABORTED:
+        return "ABORTED";
+    case ESP_OTA_IMG_UNDEFINED:
+        return "UNDEFINED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+const char *ota_manager_rollback_test_mode_to_string(ota_manager_rollback_test_mode_t mode)
+{
+    switch (mode) {
+    case OTA_MANAGER_ROLLBACK_TEST_NONE:
+        return "NONE";
+    case OTA_MANAGER_ROLLBACK_TEST_NO_CONFIRM_ONCE:
+        return "NO_CONFIRM_ONCE";
+    case OTA_MANAGER_ROLLBACK_TEST_SELF_TEST_FAIL_ONCE:
+        return "SELF_TEST_FAIL_ONCE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static bool rollback_test_mode_is_valid(ota_manager_rollback_test_mode_t mode)
+{
+    return mode == OTA_MANAGER_ROLLBACK_TEST_NONE ||
+           mode == OTA_MANAGER_ROLLBACK_TEST_NO_CONFIRM_ONCE ||
+           mode == OTA_MANAGER_ROLLBACK_TEST_SELF_TEST_FAIL_ONCE;
+}
+
+static esp_err_t open_ota_nvs(nvs_open_mode_t open_mode, nvs_handle_t *out_nvs)
+{
+    if (!out_nvs) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return nvs_open(OTA_MANAGER_NVS_NAMESPACE, open_mode, out_nvs);
 }
 
 static void bytes_to_hex(const unsigned char *input, size_t input_len, char *output, size_t output_size)
@@ -627,6 +679,118 @@ esp_err_t ota_manager_set_boot_partition(const char *partition_label)
     }
 
     return esp_ota_set_boot_partition(partition);
+}
+
+esp_err_t ota_manager_get_boot_state(ota_manager_boot_state_t *state)
+{
+    if (!state) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(state, 0, sizeof(*state));
+    state->state = ESP_OTA_IMG_UNDEFINED;
+
+    const esp_partition_t *partition = esp_ota_get_running_partition();
+    if (!partition) {
+        state->state_error = ESP_ERR_NOT_FOUND;
+        return state->state_error;
+    }
+
+    (void)copy_text(state->partition_label, sizeof(state->partition_label), partition->label);
+
+    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+    esp_err_t err = esp_ota_get_state_partition(partition, &ota_state);
+    state->state_error = err;
+    if (err == ESP_OK) {
+        state->state = ota_state;
+        state->state_known = true;
+        state->pending_verify = ota_state == ESP_OTA_IMG_PENDING_VERIFY;
+    }
+    state->rollback_possible = esp_ota_check_rollback_is_possible();
+    return ESP_OK;
+}
+
+esp_err_t ota_manager_mark_app_valid(void)
+{
+    return esp_ota_mark_app_valid_cancel_rollback();
+}
+
+esp_err_t ota_manager_mark_app_invalid_and_rollback(void)
+{
+    return esp_ota_mark_app_invalid_rollback_and_reboot();
+}
+
+esp_err_t ota_manager_get_rollback_test_mode(ota_manager_rollback_test_mode_t *mode)
+{
+    if (!mode) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+
+    nvs_handle_t nvs = 0;
+    esp_err_t err = open_ota_nvs(NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t stored = 0;
+    err = nvs_get_u8(nvs, OTA_MANAGER_NVS_KEY_ROLLBACK_TEST, &stored);
+    nvs_close(nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    ota_manager_rollback_test_mode_t stored_mode = (ota_manager_rollback_test_mode_t)stored;
+    if (!rollback_test_mode_is_valid(stored_mode)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    *mode = stored_mode;
+    return ESP_OK;
+}
+
+esp_err_t ota_manager_set_rollback_test_mode(ota_manager_rollback_test_mode_t mode)
+{
+    if (!rollback_test_mode_is_valid(mode)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs = 0;
+    esp_err_t err = open_ota_nvs(NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (mode == OTA_MANAGER_ROLLBACK_TEST_NONE) {
+        err = nvs_erase_key(nvs, OTA_MANAGER_NVS_KEY_ROLLBACK_TEST);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
+    } else {
+        err = nvs_set_u8(nvs, OTA_MANAGER_NVS_KEY_ROLLBACK_TEST, (uint8_t)mode);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+esp_err_t ota_manager_consume_rollback_test_mode(ota_manager_rollback_test_mode_t *mode)
+{
+    esp_err_t err = ota_manager_get_rollback_test_mode(mode);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (*mode != OTA_MANAGER_ROLLBACK_TEST_NONE) {
+        err = ota_manager_set_rollback_test_mode(OTA_MANAGER_ROLLBACK_TEST_NONE);
+    }
+    return err;
 }
 
 const char *ota_manager_check_status_to_string(ota_manager_check_status_t status)

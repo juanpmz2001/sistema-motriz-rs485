@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "app_version.h"
 #include "config_manager.h"
 #include "nvs_flash.h"
@@ -43,6 +44,51 @@ static esp_err_t init_nvs(void)
     return err;
 }
 
+static void rollback_pending_app(const char *stage, esp_err_t err)
+{
+    ESP_LOGE(TAG, "Pending OTA app failed self-test stage:%s err=0x%x; rolling back", stage, err);
+    esp_err_t rollback_err = ota_manager_mark_app_invalid_and_rollback();
+    ESP_LOGE(TAG, "Rollback request failed, err=0x%x", rollback_err);
+}
+
+static void handle_startup_failure(const char *stage, esp_err_t err, bool pending_verify)
+{
+    ESP_LOGE(TAG, "Startup failed at %s, err=0x%x", stage, err);
+    if (pending_verify) {
+        rollback_pending_app(stage, err);
+    }
+}
+
+static void confirm_pending_app_after_self_test(void)
+{
+    ota_manager_rollback_test_mode_t test_mode = OTA_MANAGER_ROLLBACK_TEST_NONE;
+    esp_err_t err = ota_manager_consume_rollback_test_mode(&test_mode);
+    if (err != ESP_OK) {
+        rollback_pending_app("rollback_test_mode", err);
+        return;
+    }
+
+    if (test_mode == OTA_MANAGER_ROLLBACK_TEST_NO_CONFIRM_ONCE) {
+        ESP_LOGW(TAG, "Rollback test mode NO_CONFIRM_ONCE consumed; rebooting before app validation");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart();
+        return;
+    }
+
+    if (test_mode == OTA_MANAGER_ROLLBACK_TEST_SELF_TEST_FAIL_ONCE) {
+        rollback_pending_app("forced_self_test_failure", ESP_FAIL);
+        return;
+    }
+
+    err = ota_manager_mark_app_valid();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Pending OTA app marked valid after subsystem self-test");
+        return;
+    }
+
+    rollback_pending_app("mark_app_valid", err);
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "SVD48 robot framework starting");
@@ -54,21 +100,40 @@ void app_main(void)
              FW_BUILD_NUMBER);
     ESP_LOGI(TAG, "Read docs/skills/SVD48B50A_SKILL.md before changing RS485 behavior");
 
+    ota_manager_boot_state_t boot_state;
+    esp_err_t boot_state_err = ota_manager_get_boot_state(&boot_state);
+    bool pending_verify = boot_state_err == ESP_OK && boot_state.pending_verify;
+    if (boot_state_err == ESP_OK) {
+        ESP_LOGI(TAG,
+                 "Boot partition:%s ota_state:%s pending_verify:%u rollback_possible:%u",
+                 boot_state.partition_label[0] ? boot_state.partition_label : "UNKNOWN",
+                 boot_state.state_known ? ota_manager_image_state_to_string(boot_state.state) : "UNKNOWN",
+                 boot_state.pending_verify ? 1 : 0,
+                 boot_state.rollback_possible ? 1 : 0);
+    } else {
+        ESP_LOGW(TAG, "Failed to read OTA boot state, err=0x%x", boot_state_err);
+    }
+
     esp_err_t err = init_nvs();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize NVS, err=0x%x", err);
+        handle_startup_failure("nvs", err, pending_verify);
         return;
     }
 
     err = config_manager_init(&config_manager);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize config manager, err=0x%x", err);
+        handle_startup_failure("config_manager", err, pending_verify);
         return;
     }
 
     err = wifi_manager_init(config_manager, &wifi_manager);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi manager unavailable, err=0x%x; robot startup continues", err);
+        if (pending_verify) {
+            handle_startup_failure("wifi_manager", err, pending_verify);
+            config_manager_deinit(config_manager);
+            return;
+        }
         wifi_manager = NULL;
     }
 
@@ -81,6 +146,12 @@ void app_main(void)
     err = ota_manager_init(&ota_config, &ota_manager);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "OTA check manager unavailable, err=0x%x; robot startup continues", err);
+        if (pending_verify) {
+            handle_startup_failure("ota_manager", err, pending_verify);
+            wifi_manager_deinit(wifi_manager);
+            config_manager_deinit(config_manager);
+            return;
+        }
         ota_manager = NULL;
     }
 
@@ -100,7 +171,7 @@ void app_main(void)
 
     svd48 = svd48_init(&svd48_config);
     if (!svd48) {
-        ESP_LOGE(TAG, "Failed to initialize SVD48 bus");
+        handle_startup_failure("svd48", ESP_FAIL, pending_verify);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
@@ -124,7 +195,7 @@ void app_main(void)
 
     robot = robot_control_init(&robot_config);
     if (!robot) {
-        ESP_LOGE(TAG, "Failed to initialize robot control");
+        handle_startup_failure("robot_control", ESP_FAIL, pending_verify);
         svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
@@ -133,7 +204,7 @@ void app_main(void)
     }
 
     if (svd48_start_polling(svd48) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start SVD48 telemetry polling");
+        handle_startup_failure("svd48_polling", ESP_FAIL, pending_verify);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
@@ -157,7 +228,7 @@ void app_main(void)
 
     gateway = serial_gateway_init(&gateway_config);
     if (!gateway) {
-        ESP_LOGE(TAG, "Failed to initialize serial gateway");
+        handle_startup_failure("serial_gateway_init", ESP_FAIL, pending_verify);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
@@ -167,7 +238,7 @@ void app_main(void)
     }
 
     if (serial_gateway_start(gateway) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start serial gateway");
+        handle_startup_failure("serial_gateway_start", ESP_FAIL, pending_verify);
         serial_gateway_deinit(gateway);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
@@ -175,6 +246,10 @@ void app_main(void)
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
+    }
+
+    if (pending_verify) {
+        confirm_pending_app_after_self_test();
     }
 
     ESP_LOGI(TAG, "Ready. Try: PING, GET_SPEED 0, GET_MOTOR 0, MOVE_VEL 1.0 0.0 0.5");
