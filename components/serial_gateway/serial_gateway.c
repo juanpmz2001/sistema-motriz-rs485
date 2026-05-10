@@ -30,6 +30,8 @@ static const char *TAG = "serial_gateway";
 #define SVD48_CHANNEL_ALL (-1)
 #define GATEWAY_RX_IDLE_TICKS 1
 #define GATEWAY_RX_DRAIN_MAX 256
+#define GATEWAY_RX_TASK_STACK 12288
+#define GATEWAY_STREAM_TASK_STACK 4096
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
@@ -572,6 +574,44 @@ static void handle_ota_config(serial_gateway_handle_t handle, int argc, char *ar
                  snapshot.ota_auto_update_enabled ? 1 : 0);
 }
 
+static void handle_ota_check(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_CHECK\n");
+        return;
+    }
+    if (!handle->config.ota_manager) {
+        print_locked(handle, "ERR OTA_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    ota_manager_check_result_t result;
+    esp_err_t err = ota_manager_check(handle->config.ota_manager, &result);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR OTA_CHECK_FAILED 0x%x DETAIL:%s CURRENT_BUILD:%lu\n",
+                     err,
+                     result.detail[0] ? result.detail : "UNKNOWN",
+                     (unsigned long)result.current_build_number);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_CHECK STATUS:%s PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu CURRENT_BUILD:%lu MIN_SUPPORTED_BUILD:%lu SIZE:%lu SHA256:%s FILENAME:%s URL:%s\n",
+                 ota_manager_check_status_to_string(result.status),
+                 result.project,
+                 result.target,
+                 result.version,
+                 (unsigned long)result.build_number,
+                 (unsigned long)result.current_build_number,
+                 (unsigned long)result.min_supported_build,
+                 (unsigned long)result.size,
+                 result.sha256,
+                 result.filename,
+                 result.url);
+}
+
 static void handle_ota_auto_check(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     bool enabled = false;
@@ -827,7 +867,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -1012,6 +1052,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_set_manifest(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_CONFIG") == 0) {
         handle_ota_config(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_CHECK") == 0) {
+        handle_ota_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_CHECK") == 0) {
         handle_ota_auto_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_AUTO_UPDATE") == 0) {
@@ -1266,11 +1308,11 @@ esp_err_t serial_gateway_start(serial_gateway_handle_t handle)
     }
 
     handle->running = true;
-    if (xTaskCreate(gateway_rx_task, "serial_gateway", 4096, handle, 6, &handle->rx_task) != pdPASS) {
+    if (xTaskCreate(gateway_rx_task, "serial_gateway", GATEWAY_RX_TASK_STACK, handle, 6, &handle->rx_task) != pdPASS) {
         handle->running = false;
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(gateway_stream_task, "gateway_stream", 4096, handle, 4, &handle->stream_task) != pdPASS) {
+    if (xTaskCreate(gateway_stream_task, "gateway_stream", GATEWAY_STREAM_TASK_STACK, handle, 4, &handle->stream_task) != pdPASS) {
         handle->running = false;
         return ESP_ERR_NO_MEM;
     }

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "config_manager.h"
 #include "esp_err.h"
+#include "ota_manager.h"
 #include "robot_control.h"
 #include "wifi_manager.h"
 
@@ -18,6 +19,7 @@ typedef struct {
     robot_control_handle_t robot;
     config_manager_handle_t config_manager;
     wifi_manager_handle_t wifi_manager;
+    ota_manager_handle_t ota_manager;
     const char *fw_project;
     const char *fw_target;
     const char *fw_version;

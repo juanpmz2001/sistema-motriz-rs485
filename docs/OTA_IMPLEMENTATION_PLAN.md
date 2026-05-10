@@ -691,14 +691,28 @@ STOP 2: OK
 12 seconds monitor idle: no task_wdt
 ```
 
-Pending physical validation:
+Additional physical validation completed before Iteration 6:
 
 ```text
-Correct Wi-Fi credentials test is pending because no test SSID/password was provided to the agent.
-Once provided, run WIFI_SET <ssid> <password>, WIFI_CONNECT, WIFI_STATUS and confirm STATUS:CONNECTED with IP.
+Firmware commit: ed53a8f Support quoted Wi-Fi credentials
+WIFI_SET now accepts quoted SSID/password arguments, e.g. WIFI_SET "M ZAPATA" "..."
+.env is ignored by Git to protect local credentials
+FW_BUILD_NUMBER bumped to 2 because a new firmware binary was flashed
+ESP system event task stack increased to 4096 bytes
+Serial gateway command task stack increased to 12288 bytes during Iteration 6 validation
+SSID with space validated: M ZAPATA
+Two password candidates were read from local .env without printing either password
+Candidate 2 connected successfully
+WIFI_STATUS: STATUS:CONNECTED, IP:192.168.1.166
+PING: OK
+GET_MOTOR 2: OK, controller online
+STOP 2: OK
+12 seconds monitor idle: no task_wdt
 ```
 
 Important risk: IRAM remains at `16383 / 16384` bytes. Wi-Fi increased flash and DIRAM substantially, but did not increase the reported IRAM usage.
+
+Note: the PC's active Wi-Fi LAN IP during this validation was `192.168.1.107`, not `192.168.10.10`. OTA tests therefore used `OTA_SET_SERVER 192.168.1.107 8080` because the ESP32 was on `192.168.1.0/24`.
 
 ## 4. Technical Decisions
 
@@ -2109,6 +2123,77 @@ Expected end state:
 
 - ESP32 can reason about available updates without writing flash.
 
+Iteration 6 was implemented and validated on 2026-05-09.
+
+Implementation summary:
+
+```text
+Added component: components/ota_manager
+Added command: OTA_CHECK
+HTTP client: esp_http_client
+JSON parser: cJSON via ESP-IDF json component
+Firmware download: not implemented
+OTA partition writes: not implemented
+Boot partition switch: not implemented
+Rollback: still disabled
+Automatic OTA task: still disabled
+```
+
+Validation rules implemented:
+
+```text
+Manifest URL is built from NVS: OTA_HOST + OTA_PORT + OTA_MANIFEST
+HTTP scheme is local development HTTP only
+localhost, 127.0.0.1, 0.0.0.0 and ::1 are rejected
+Required fields: project, target, version, build_number, min_supported_build, url, filename, size, sha256
+project must match FW_PROJECT
+target must match FW_TARGET
+filename must be a .bin basename
+sha256 must be exactly 64 hex characters
+size must be non-zero
+CURRENT_BUILD_NUMBER must be >= remote.min_supported_build
+remote.build_number > CURRENT_BUILD_NUMBER reports UPDATE_AVAILABLE
+remote.build_number <= CURRENT_BUILD_NUMBER reports UP_TO_DATE
+```
+
+Build and size result:
+
+```text
+sistema-motriz-rs485.bin binary size: 0xed500 bytes
+Smallest app partition: 0x600000 bytes
+Free in smallest app partition: 0x512b00 bytes, 85%
+Total image size: 971920 bytes
+Flash Code: 698598 bytes
+Flash Data: 160212 bytes
+DIRAM: 113835 / 341760 bytes, 33.31%
+IRAM: 16383 / 16384 bytes, 99.99%
+RTC FAST: 52 / 8192 bytes, 0.63%
+```
+
+Physical validation:
+
+```text
+Flashed on /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B026509-if00
+VERSION: BUILD_NUMBER:2, PARTITION:ota_0
+WIFI_STATUS: CONNECTED, IP:192.168.1.166
+OTA_CONFIG: HOST:192.168.1.107 PORT:8080 MANIFEST:/api/firmware/latest
+OTA_CHECK equal build: STATUS:UP_TO_DATE, BUILD_NUMBER:2, CURRENT_BUILD:2
+OTA_CHECK remote build greater: STATUS:UPDATE_AVAILABLE, BUILD_NUMBER:3, CURRENT_BUILD:2
+OTA_CHECK localhost manifest URL: ERR OTA_CHECK_FAILED 0x108 DETAIL:BAD_URL
+OTA_CHECK invalid manifest JSON through backend: ERR OTA_CHECK_FAILED 0x108 DETAIL:HTTP_STATUS
+OTA_CHECK endpoint down: ERR OTA_CHECK_FAILED 0x7002 DETAIL:HTTP_PERFORM
+PING after OTA checks: OK
+GET_MOTOR 2 after OTA checks: OK, controller online
+STOP 2 after OTA checks: OK
+12 seconds monitor idle: no task_wdt
+```
+
+Important caveat:
+
+```text
+During this test the actual PC LAN IP was 192.168.1.107. The previously suggested 192.168.10.10 is not reachable from the ESP32 while the ESP32 is connected to M ZAPATA on 192.168.1.0/24 unless the network provides routing.
+```
+
 ### Iteration 7: Download and Verify in Inactive OTA Slot Without Boot Switch
 
 Objective:
@@ -2596,17 +2681,22 @@ Current completed baseline:
 1. Iteration 0 restored the ESP-IDF toolchain, measured the board and documented the original firmware state.
 2. Iteration 1 added firmware version metadata and the `VERSION` serial command.
 3. Iteration 2 migrated the board to `partitions_ota_16mb.csv`, updated `CONFIG_ESPTOOLPY_FLASHSIZE` to `16MB`, and confirmed boot from `ota_0`.
+4. Iteration 3 added NVS-backed configuration diagnostics.
+5. Iteration 4 added manual Wi-Fi station mode and confirmed real Wi-Fi connectivity.
+6. Iteration 5 added the local backend/UI server for manifest and firmware binary serving.
+7. Iteration 6 added `OTA_CHECK`, which fetches and validates the manifest without downloading or writing firmware.
 
 Implement next:
 
-1. Add NVS-backed configuration management and serial diagnostics.
-2. Keep Wi-Fi, OTA client, rollback and automatic OTA disabled until their dedicated iterations.
+1. Iteration 7: download the `.bin` and verify size/SHA256 without switching boot partitions.
+2. Keep `OTA_UPDATE`, rollback, automatic OTA and SoftAP disabled until their dedicated iterations.
 
 Leave for later phases:
 
-- Wi-Fi station.
-- Backend API.
-- Manifest check.
+- OTA partition write and boot switch.
+- Rollback/self-test.
+- Automatic OTA pull task.
+- SoftAP provisioning.
 
 Do not implement yet:
 
