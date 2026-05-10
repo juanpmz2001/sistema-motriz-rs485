@@ -14,6 +14,9 @@ extern "C" {
 #define CONFIG_MANAGER_WIFI_PASSWORD_MAX 65
 #define CONFIG_MANAGER_OTA_HOST_MAX 64
 #define CONFIG_MANAGER_OTA_MANIFEST_PATH_MAX 128
+#define CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_DEFAULT_MS 600000U
+#define CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MIN_MS 60000U
+#define CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MAX_MS 86400000U
 
 typedef struct config_manager_t *config_manager_handle_t;
 
@@ -25,6 +28,7 @@ typedef struct {
     char ota_manifest_path[CONFIG_MANAGER_OTA_MANIFEST_PATH_MAX];
     bool ota_auto_check_enabled;
     bool ota_auto_update_enabled;
+    uint32_t ota_auto_check_interval_ms;
 } config_manager_snapshot_t;
 
 esp_err_t config_manager_init(config_manager_handle_t *out_handle);
@@ -42,6 +46,7 @@ esp_err_t config_manager_set_ota_server(config_manager_handle_t handle, const ch
 esp_err_t config_manager_set_ota_manifest_path(config_manager_handle_t handle, const char *path);
 esp_err_t config_manager_set_ota_auto_check(config_manager_handle_t handle, bool enabled);
 esp_err_t config_manager_set_ota_auto_update(config_manager_handle_t handle, bool enabled);
+esp_err_t config_manager_set_ota_auto_check_interval_ms(config_manager_handle_t handle, uint32_t interval_ms);
 esp_err_t config_manager_clear(config_manager_handle_t handle);
 
 #ifdef __cplusplus

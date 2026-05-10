@@ -28,7 +28,6 @@ static const char *TAG = "ota_manager";
 #define OTA_MANAGER_AUTO_TASK_STACK 8192
 #define OTA_MANAGER_AUTO_TASK_PRIORITY 2
 #define OTA_MANAGER_AUTO_IDLE_MS 5000
-#define OTA_MANAGER_AUTO_INTERVAL_MS (10U * 60U * 1000U)
 #define OTA_MANAGER_AUTO_BACKOFF_INITIAL_MS 30000
 #define OTA_MANAGER_AUTO_BACKOFF_MAX_MS (5U * 60U * 1000U)
 
@@ -52,8 +51,11 @@ struct ota_manager_t {
     int64_t auto_last_check_us;
     int64_t auto_next_check_us;
     esp_err_t auto_last_error;
+    int auto_last_http_status;
     ota_manager_check_status_t auto_last_status;
     uint32_t auto_last_build_number;
+    bool auto_update_available;
+    bool auto_update_enabled;
     char auto_last_version[OTA_MANAGER_VERSION_MAX];
     char auto_last_detail[OTA_MANAGER_DETAIL_MAX];
     char auto_last_url[OTA_MANAGER_URL_MAX];
@@ -65,6 +67,11 @@ typedef struct {
     size_t length;
     bool overflow;
 } manifest_capture_t;
+
+typedef struct {
+    const char *tag;
+    esp_log_level_t previous_level;
+} log_level_guard_t;
 
 static esp_err_t copy_text(char *dest, size_t dest_size, const char *src)
 {
@@ -111,6 +118,33 @@ static uint32_t age_ms(int64_t past_us, int64_t current_us)
     }
     int64_t delta_ms = (current_us - past_us) / 1000;
     return delta_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)delta_ms;
+}
+
+static void log_level_guard_begin(log_level_guard_t *guards, size_t count)
+{
+    if (!guards) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        guards[i].previous_level = esp_log_level_get(guards[i].tag);
+        esp_log_level_set(guards[i].tag, ESP_LOG_NONE);
+    }
+}
+
+static void log_level_guard_end(const log_level_guard_t *guards, size_t count)
+{
+    if (!guards) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        esp_log_level_set(guards[i].tag, guards[i].previous_level);
+    }
+}
+
+static bool interval_ms_is_valid(uint32_t interval_ms)
+{
+    return interval_ms >= CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MIN_MS &&
+           interval_ms <= CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MAX_MS;
 }
 
 static void set_detail(ota_manager_check_result_t *result, const char *detail)
@@ -378,14 +412,15 @@ static esp_err_t fetch_manifest(const char *url, char *buffer, size_t buffer_siz
     esp_err_t err = esp_http_client_perform(client);
     int status_code = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    if (result) {
+        result->http_status = status_code;
+    }
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "manifest fetch failed url=%s err=0x%x", url, err);
         set_detail(result, "HTTP_PERFORM");
         return err;
     }
     if (status_code != 200) {
-        ESP_LOGW(TAG, "manifest fetch status=%d url=%s", status_code, url);
         set_detail(result, "HTTP_STATUS");
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -494,10 +529,18 @@ esp_err_t ota_manager_init(const ota_manager_config_t *config, ota_manager_handl
     handle->config_manager = config->config_manager;
     handle->wifi_manager = config->wifi_manager;
     handle->current_build_number = config->current_build_number;
-    handle->auto_interval_ms = OTA_MANAGER_AUTO_INTERVAL_MS;
+    handle->auto_interval_ms = CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_DEFAULT_MS;
+    config_manager_snapshot_t snapshot;
+    if (config_manager_get_snapshot(config->config_manager, &snapshot) == ESP_OK &&
+        interval_ms_is_valid(snapshot.ota_auto_check_interval_ms)) {
+        handle->auto_interval_ms = snapshot.ota_auto_check_interval_ms;
+    }
     handle->auto_backoff_ms = OTA_MANAGER_AUTO_BACKOFF_INITIAL_MS;
     handle->auto_last_status = OTA_MANAGER_CHECK_STATUS_UNKNOWN;
     handle->auto_last_error = ESP_ERR_INVALID_STATE;
+    handle->auto_last_http_status = 0;
+    handle->auto_update_available = false;
+    handle->auto_update_enabled = false;
     (void)copy_text(handle->auto_last_detail, sizeof(handle->auto_last_detail), "NEVER_RUN");
     handle->op_lock = xSemaphoreCreateMutex();
     handle->state_lock = xSemaphoreCreateMutex();
@@ -831,19 +874,23 @@ static void auto_status_set_enabled(ota_manager_handle_t handle, bool enabled, i
 static void auto_status_record_failure(ota_manager_handle_t handle,
                                        esp_err_t err,
                                        const char *detail,
-                                       uint32_t delay_ms)
+                                       uint32_t delay_ms,
+                                       int http_status)
 {
     int64_t now = now_us();
     if (take_semaphore(handle->state_lock, 100) != ESP_OK) {
         return;
     }
     handle->auto_checking = false;
+    handle->auto_checks++;
     handle->auto_failures++;
     handle->auto_last_check_us = now;
-    handle->auto_next_check_us = now + ((int64_t)delay_ms * 1000);
+    handle->auto_next_check_us = handle->auto_enabled ? now + ((int64_t)delay_ms * 1000) : 0;
     handle->auto_last_error = err;
+    handle->auto_last_http_status = http_status;
     handle->auto_last_status = OTA_MANAGER_CHECK_STATUS_UNKNOWN;
     handle->auto_last_build_number = 0;
+    handle->auto_update_available = false;
     handle->auto_last_version[0] = '\0';
     handle->auto_last_url[0] = '\0';
     (void)copy_text(handle->auto_last_detail, sizeof(handle->auto_last_detail), detail ? detail : "FAILED");
@@ -859,11 +906,13 @@ static void auto_status_record_success(ota_manager_handle_t handle, const ota_ma
     handle->auto_checking = false;
     handle->auto_checks++;
     handle->auto_last_check_us = now;
-    handle->auto_next_check_us = now + ((int64_t)handle->auto_interval_ms * 1000);
+    handle->auto_next_check_us = handle->auto_enabled ? now + ((int64_t)handle->auto_interval_ms * 1000) : 0;
     handle->auto_last_error = ESP_OK;
+    handle->auto_last_http_status = result->http_status;
     handle->auto_last_status = result->status;
     handle->auto_last_build_number = result->build_number;
     handle->current_build_number = result->current_build_number;
+    handle->auto_update_available = result->status == OTA_MANAGER_CHECK_STATUS_UPDATE_AVAILABLE;
     (void)copy_text(handle->auto_last_version, sizeof(handle->auto_last_version), result->version);
     (void)copy_text(handle->auto_last_url, sizeof(handle->auto_last_url), result->url);
     (void)copy_text(handle->auto_last_detail, sizeof(handle->auto_last_detail), "OK");
@@ -894,30 +943,6 @@ static uint32_t auto_status_failure_delay(ota_manager_handle_t handle)
     return delay_ms;
 }
 
-static void auto_print_failure(esp_err_t err, const char *detail, uint32_t next_ms)
-{
-    printf("DATA OTA_AUTO_CHECK STATUS:FAILED ERR:0x%x DETAIL:%s NEXT_MS:%lu\n",
-           err,
-           detail && detail[0] ? detail : "UNKNOWN",
-           (unsigned long)next_ms);
-    fflush(stdout);
-}
-
-static void auto_print_success(const ota_manager_check_result_t *result, uint32_t next_ms)
-{
-    printf("DATA OTA_AUTO_CHECK STATUS:%s VERSION:%s BUILD_NUMBER:%lu CURRENT_BUILD:%lu MIN_SUPPORTED_BUILD:%lu SIZE:%lu FILENAME:%s URL:%s NEXT_MS:%lu\n",
-           ota_manager_check_status_to_string(result->status),
-           result->version,
-           (unsigned long)result->build_number,
-           (unsigned long)result->current_build_number,
-           (unsigned long)result->min_supported_build,
-           (unsigned long)result->size,
-           result->filename,
-           result->url,
-           (unsigned long)next_ms);
-    fflush(stdout);
-}
-
 static void ota_manager_auto_task(void *arg)
 {
     ota_manager_handle_t handle = (ota_manager_handle_t)arg;
@@ -928,8 +953,6 @@ static void ota_manager_auto_task(void *arg)
         xSemaphoreGive(handle->state_lock);
     }
 
-    ESP_LOGI(TAG, "automatic OTA_CHECK task started interval_ms=%lu", (unsigned long)OTA_MANAGER_AUTO_INTERVAL_MS);
-
     while (!handle->auto_stop) {
         config_manager_snapshot_t snapshot;
         esp_err_t cfg_err = config_manager_get_snapshot(handle->config_manager, &snapshot);
@@ -938,11 +961,17 @@ static void ota_manager_auto_task(void *arg)
 
         if (cfg_err != ESP_OK) {
             uint32_t delay_ms = auto_status_failure_delay(handle);
-            auto_status_record_failure(handle, cfg_err, "CONFIG_READ", delay_ms);
-            ESP_LOGW(TAG, "automatic OTA_CHECK skipped: config read failed err=0x%x", cfg_err);
-            auto_print_failure(cfg_err, "CONFIG_READ", delay_ms);
+            auto_status_record_failure(handle, cfg_err, "CONFIG_READ", delay_ms, 0);
             vTaskDelay(pdMS_TO_TICKS(OTA_MANAGER_AUTO_IDLE_MS));
             continue;
+        }
+
+        if (take_semaphore(handle->state_lock, 100) == ESP_OK) {
+            if (interval_ms_is_valid(snapshot.ota_auto_check_interval_ms)) {
+                handle->auto_interval_ms = snapshot.ota_auto_check_interval_ms;
+            }
+            handle->auto_update_enabled = false;
+            xSemaphoreGive(handle->state_lock);
         }
 
         if (enabled && !was_enabled) {
@@ -966,13 +995,7 @@ static void ota_manager_auto_task(void *arg)
             uint32_t delay_ms = auto_status_failure_delay(handle);
             const char *detail = wifi_err == ESP_OK ? "WIFI_NOT_CONNECTED" : "WIFI_STATUS";
             esp_err_t stored_err = wifi_err == ESP_OK ? ESP_ERR_INVALID_STATE : wifi_err;
-            auto_status_record_failure(handle, stored_err, detail, delay_ms);
-            ESP_LOGI(TAG,
-                     "automatic OTA_CHECK skipped: %s state=%s next_ms=%lu",
-                     detail,
-                     wifi_err == ESP_OK ? wifi_manager_state_to_string(wifi_status.state) : "UNKNOWN",
-                     (unsigned long)delay_ms);
-            auto_print_failure(stored_err, detail, delay_ms);
+            auto_status_record_failure(handle, stored_err, detail, delay_ms, 0);
             vTaskDelay(pdMS_TO_TICKS(OTA_MANAGER_AUTO_IDLE_MS));
             continue;
         }
@@ -980,39 +1003,34 @@ static void ota_manager_auto_task(void *arg)
         esp_err_t lock_err = take_semaphore(handle->op_lock, 0);
         if (lock_err != ESP_OK) {
             uint32_t delay_ms = auto_status_failure_delay(handle);
-            auto_status_record_failure(handle, lock_err, "OTA_BUSY", delay_ms);
-            ESP_LOGI(TAG, "automatic OTA_CHECK skipped: OTA operation busy next_ms=%lu", (unsigned long)delay_ms);
-            auto_print_failure(lock_err, "OTA_BUSY", delay_ms);
+            auto_status_record_failure(handle, lock_err, "OTA_BUSY", delay_ms, 0);
             vTaskDelay(pdMS_TO_TICKS(OTA_MANAGER_AUTO_IDLE_MS));
             continue;
         }
 
         auto_status_set_checking(handle, true);
         ota_manager_check_result_t result;
+        log_level_guard_t quiet_logs[] = {
+            { .tag = TAG },
+            { .tag = "esp-tls" },
+            { .tag = "transport_base" },
+            { .tag = "HTTP_CLIENT" },
+            { .tag = "esp_http_client" },
+        };
+        log_level_guard_begin(quiet_logs, sizeof(quiet_logs) / sizeof(quiet_logs[0]));
         esp_err_t err = ota_manager_check_unlocked(handle, &result);
+        log_level_guard_end(quiet_logs, sizeof(quiet_logs) / sizeof(quiet_logs[0]));
         xSemaphoreGive(handle->op_lock);
 
         if (err != ESP_OK) {
             const char *detail = result.detail[0] ? result.detail : "OTA_CHECK";
             uint32_t delay_ms = auto_status_failure_delay(handle);
-            auto_status_record_failure(handle, err, detail, delay_ms);
-            ESP_LOGW(TAG,
-                     "automatic OTA_CHECK failed err=0x%x detail=%s next_ms=%lu",
-                     err,
-                     detail,
-                     (unsigned long)delay_ms);
-            auto_print_failure(err, detail, delay_ms);
+            auto_status_record_failure(handle, err, detail, delay_ms, result.http_status);
             vTaskDelay(pdMS_TO_TICKS(OTA_MANAGER_AUTO_IDLE_MS));
             continue;
         }
 
         auto_status_record_success(handle, &result);
-        ESP_LOGI(TAG,
-                 "automatic OTA_CHECK status=%s build=%lu current=%lu",
-                 ota_manager_check_status_to_string(result.status),
-                 (unsigned long)result.build_number,
-                 (unsigned long)result.current_build_number);
-        auto_print_success(&result, OTA_MANAGER_AUTO_INTERVAL_MS);
         vTaskDelay(pdMS_TO_TICKS(OTA_MANAGER_AUTO_IDLE_MS));
     }
 
@@ -1066,6 +1084,74 @@ esp_err_t ota_manager_set_auto_check_runtime_enabled(ota_manager_handle_t handle
     return ESP_OK;
 }
 
+esp_err_t ota_manager_set_auto_check_interval_runtime_ms(ota_manager_handle_t handle, uint32_t interval_ms)
+{
+    if (!handle || !interval_ms_is_valid(interval_ms)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = take_semaphore(handle->state_lock, 100);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    handle->auto_interval_ms = interval_ms;
+    if (handle->auto_enabled) {
+        int64_t now = now_us();
+        int64_t max_next_us = now + ((int64_t)interval_ms * 1000);
+        if (handle->auto_next_check_us <= 0 || handle->auto_next_check_us > max_next_us) {
+            handle->auto_next_check_us = max_next_us;
+        }
+    }
+
+    xSemaphoreGive(handle->state_lock);
+    return ESP_OK;
+}
+
+esp_err_t ota_manager_force_check(ota_manager_handle_t handle, ota_manager_check_result_t *result)
+{
+    if (!handle || !result) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->status = OTA_MANAGER_CHECK_STATUS_UNKNOWN;
+    result->current_build_number = handle->current_build_number;
+
+    wifi_manager_status_t wifi_status;
+    esp_err_t err = wifi_manager_get_status(handle->wifi_manager, &wifi_status);
+    if (err != ESP_OK) {
+        set_detail(result, "WIFI_STATUS");
+        auto_status_record_failure(handle, err, result->detail, auto_status_failure_delay(handle), 0);
+        return err;
+    }
+    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+        set_detail(result, "WIFI_NOT_CONNECTED");
+        auto_status_record_failure(handle, ESP_ERR_INVALID_STATE, result->detail, auto_status_failure_delay(handle), 0);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    err = take_semaphore(handle->op_lock, 0);
+    if (err != ESP_OK) {
+        set_detail(result, "OTA_BUSY");
+        auto_status_record_failure(handle, err, result->detail, auto_status_failure_delay(handle), 0);
+        return err;
+    }
+
+    auto_status_set_checking(handle, true);
+    err = ota_manager_check_unlocked(handle, result);
+    xSemaphoreGive(handle->op_lock);
+
+    if (err == ESP_OK) {
+        auto_status_record_success(handle, result);
+        return ESP_OK;
+    }
+
+    const char *detail = result->detail[0] ? result->detail : "OTA_CHECK";
+    auto_status_record_failure(handle, err, detail, auto_status_failure_delay(handle), result->http_status);
+    return err;
+}
+
 esp_err_t ota_manager_get_auto_status(ota_manager_handle_t handle, ota_manager_auto_status_t *status)
 {
     if (!handle || !status) {
@@ -1086,11 +1172,15 @@ esp_err_t ota_manager_get_auto_status(ota_manager_handle_t handle, ota_manager_a
     status->checks = handle->auto_checks;
     status->failures = handle->auto_failures;
     status->last_check_age_ms = age_ms(handle->auto_last_check_us, now);
+    status->last_check_time_ms = handle->auto_last_check_us > 0 ? (uint32_t)(handle->auto_last_check_us / 1000) : 0;
     status->next_check_in_ms = ms_until(handle->auto_next_check_us, now);
     status->last_error = handle->auto_last_error;
+    status->last_http_status = handle->auto_last_http_status;
     status->last_status = handle->auto_last_status;
     status->last_build_number = handle->auto_last_build_number;
     status->current_build_number = handle->current_build_number;
+    status->update_available = handle->auto_update_available;
+    status->auto_update_enabled = handle->auto_update_enabled;
     (void)copy_text(status->last_version, sizeof(status->last_version), handle->auto_last_version);
     (void)copy_text(status->last_detail, sizeof(status->last_detail), handle->auto_last_detail);
     (void)copy_text(status->last_url, sizeof(status->last_url), handle->auto_last_url);

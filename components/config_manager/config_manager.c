@@ -15,6 +15,7 @@
 #define KEY_OTA_MANIFEST "ota_path"
 #define KEY_AUTO_CHECK "auto_check"
 #define KEY_AUTO_UPDATE "auto_update"
+#define KEY_AUTO_INTERVAL "auto_int_ms"
 
 #define DEFAULT_OTA_HOST "192.168.10.10"
 #define DEFAULT_OTA_PORT 8080
@@ -53,6 +54,7 @@ static void snapshot_defaults(config_manager_snapshot_t *snapshot)
     (void)copy_text(snapshot->ota_manifest_path, sizeof(snapshot->ota_manifest_path), DEFAULT_OTA_MANIFEST);
     snapshot->ota_auto_check_enabled = false;
     snapshot->ota_auto_update_enabled = false;
+    snapshot->ota_auto_check_interval_ms = CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_DEFAULT_MS;
 }
 
 static esp_err_t read_string(nvs_handle_t nvs, const char *key, char *dest, size_t dest_size)
@@ -173,6 +175,18 @@ esp_err_t config_manager_get_snapshot(config_manager_handle_t handle, config_man
             snapshot->ota_auto_update_enabled = value != 0;
         } else if (flag_err != ESP_ERR_NVS_NOT_FOUND) {
             err = flag_err;
+        }
+    }
+    if (err == ESP_OK) {
+        uint32_t interval_ms = CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_DEFAULT_MS;
+        esp_err_t interval_err = nvs_get_u32(handle->nvs, KEY_AUTO_INTERVAL, &interval_ms);
+        if (interval_err == ESP_OK) {
+            if (interval_ms >= CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MIN_MS &&
+                interval_ms <= CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MAX_MS) {
+                snapshot->ota_auto_check_interval_ms = interval_ms;
+            }
+        } else if (interval_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = interval_err;
         }
     }
 
@@ -321,6 +335,26 @@ esp_err_t config_manager_set_ota_auto_update(config_manager_handle_t handle, boo
         return err;
     }
     err = nvs_set_u8(handle->nvs, KEY_AUTO_UPDATE, enabled ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle->nvs);
+    }
+    xSemaphoreGive(handle->lock);
+    return err;
+}
+
+esp_err_t config_manager_set_ota_auto_check_interval_ms(config_manager_handle_t handle, uint32_t interval_ms)
+{
+    if (!handle ||
+        interval_ms < CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MIN_MS ||
+        interval_ms > CONFIG_MANAGER_OTA_AUTO_CHECK_INTERVAL_MAX_MS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u32(handle->nvs, KEY_AUTO_INTERVAL, interval_ms);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }

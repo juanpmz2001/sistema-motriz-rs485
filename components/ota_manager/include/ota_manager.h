@@ -63,6 +63,7 @@ typedef struct {
     char url[OTA_MANAGER_URL_MAX];
     char sha256[OTA_MANAGER_SHA256_HEX_LEN + 1];
     char detail[OTA_MANAGER_DETAIL_MAX];
+    int http_status;
 } ota_manager_check_result_t;
 
 typedef struct {
@@ -83,11 +84,15 @@ typedef struct {
     uint32_t checks;
     uint32_t failures;
     uint32_t last_check_age_ms;
+    uint32_t last_check_time_ms;
     uint32_t next_check_in_ms;
     esp_err_t last_error;
+    int last_http_status;
     ota_manager_check_status_t last_status;
     uint32_t last_build_number;
     uint32_t current_build_number;
+    bool update_available;
+    bool auto_update_enabled;
     char last_version[OTA_MANAGER_VERSION_MAX];
     char last_detail[OTA_MANAGER_DETAIL_MAX];
     char last_url[OTA_MANAGER_URL_MAX];
@@ -101,6 +106,8 @@ esp_err_t ota_manager_download_to_inactive(ota_manager_handle_t handle, ota_mana
 esp_err_t ota_manager_download_test(ota_manager_handle_t handle, ota_manager_download_result_t *result);
 esp_err_t ota_manager_start_auto_check_task(ota_manager_handle_t handle);
 esp_err_t ota_manager_set_auto_check_runtime_enabled(ota_manager_handle_t handle, bool enabled);
+esp_err_t ota_manager_set_auto_check_interval_runtime_ms(ota_manager_handle_t handle, uint32_t interval_ms);
+esp_err_t ota_manager_force_check(ota_manager_handle_t handle, ota_manager_check_result_t *result);
 esp_err_t ota_manager_get_auto_status(ota_manager_handle_t handle, ota_manager_auto_status_t *status);
 esp_err_t ota_manager_set_boot_partition(const char *partition_label);
 esp_err_t ota_manager_get_boot_state(ota_manager_boot_state_t *state);

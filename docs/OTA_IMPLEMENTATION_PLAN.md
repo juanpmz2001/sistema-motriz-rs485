@@ -2835,6 +2835,70 @@ Expected end state:
 
 - Safe automatic OTA checks exist. Automatic OTA writes remain disabled by default.
 
+### Iteration 10.5: OTA Auto-Check Observability and Operation
+
+Objective:
+
+- Make automatic manifest polling easier to operate and diagnose without expanding into automatic updates.
+
+Scope:
+
+- Keep the auto-check task as normal FreeRTOS/application code only.
+- Do not add `IRAM_ATTR`, ISR handlers, `ESP_INTR_FLAG_IRAM`, `ppm_decoder`, or low-level memory/cache/FreeRTOS flag changes.
+- Do not download firmware automatically.
+- Do not write flash automatically.
+- Do not call `OTA_UPDATE` automatically.
+- Do not switch boot partitions or reboot automatically.
+- Keep `OTA_AUTO_UPDATE ON` blocked.
+
+Implementation plan:
+
+- Stop emitting unsolicited `DATA OTA_AUTO_CHECK` lines from the background task. The task updates internal state only so serial command responses cannot be interleaved with automatic reports.
+- Suppress routine HTTP-client log tags only while the background task is performing its manifest request. Manual `OTA_CHECK`, `OTA_DOWNLOAD_TEST`, and `OTA_UPDATE` keep their existing response behavior.
+- Extend persisted config with `ota_auto_check_interval_ms`, default `600000`, minimum `60000`, maximum `86400000`.
+- Add `OTA_AUTO_INTERVAL [milliseconds]` to read/update the interval. Runtime changes apply without reboot and persist in NVS.
+- Add `OTA_AUTO_FORCE_CHECK` to run one manifest-only check immediately, even if automatic polling is disabled. It refuses to run without Wi-Fi or while another OTA operation is active.
+- Expand `OTA_AUTO_STATUS` with task state, enable state, checking state, interval, next delay, backoff, check/failure counts, last result/error/http status, last check age/time, current build, remote build, update availability, last URL and auto-update state.
+
+Validation commands:
+
+```bash
+idf.py build
+idf.py size
+```
+
+Mandatory tests:
+
+- `VERSION` reports build 5 and the current OTA partition.
+- `PING`.
+- `WIFI_CONNECT` and `WIFI_STATUS CONNECTED`.
+- Manual `OTA_CHECK`.
+- `OTA_AUTO_STATUS` with `OTA_AUTO_CHECK OFF`.
+- Confirm no automatic manifest requests occur while disabled.
+- `OTA_AUTO_FORCE_CHECK` with Wi-Fi connected reports `UP_TO_DATE` or `UPDATE_AVAILABLE`.
+- `OTA_AUTO_INTERVAL` reads the current value.
+- `OTA_AUTO_INTERVAL <valid>` saves, applies at runtime and persists after reboot.
+- `OTA_AUTO_INTERVAL <invalid>` is rejected.
+- `OTA_AUTO_CHECK ON` runs periodic manifest checks at the configured interval.
+- Endpoint-down state records failure/backoff without blocking serial or causing watchdog resets.
+- Wi-Fi disconnected state reports `WIFI_NOT_CONNECTED` without reconnecting aggressively.
+- `OTA_AUTO_UPDATE ON` remains blocked.
+- Manual `OTA_DOWNLOAD_TEST` and `OTA_UPDATE` still work.
+- Rollback valid path, `NO_CONFIRM_ONCE`, and `SELF_TEST_FAIL_ONCE` still work.
+- `GET_MOTOR 2` and `STOP 2` still work.
+- With auto-check enabled, manual `PING`, `OTA_AUTO_STATUS`, and `GET_MOTOR 2` responses do not get corrupted or mixed with unsolicited auto-check `DATA` lines or background HTTP error logs.
+- 12 seconds idle without `task_wdt`.
+
+Acceptance criteria:
+
+- Auto-check is observable through `OTA_AUTO_STATUS`.
+- Forced check works and updates status.
+- Interval configuration works and persists.
+- No automatic download, flash write, boot switch or reboot exists.
+- OTA manual and rollback behavior remain valid.
+- RS485 and serial gateway behavior remain valid.
+- Memory reports stay within expected bounds for `IRAM`, `DIRAM .text`, full `.iram0.text`, `Flash Code`, `Flash Data`, and total image size.
+
 ### Iteration 11: SoftAP Provisioning Fallback
 
 Objective:

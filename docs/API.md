@@ -49,6 +49,7 @@ Default values:
 - `OTA_PORT:8080`
 - `OTA_MANIFEST:/api/firmware/latest`
 - `OTA_AUTO_CHECK:0`
+- `OTA_AUTO_INTERVAL_MS:600000`
 - `OTA_AUTO_UPDATE:0`
 
 ```text
@@ -84,6 +85,8 @@ OTA_UPDATE
 OTA_ROLLBACK_STATUS
 OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE
 OTA_AUTO_STATUS
+OTA_AUTO_FORCE_CHECK
+OTA_AUTO_INTERVAL [milliseconds]
 OTA_AUTO_CHECK ON|OFF
 OTA_AUTO_UPDATE OFF
 ```
@@ -96,13 +99,29 @@ Stores local OTA server config in NVS. `OTA_AUTO_UPDATE ON` is intentionally blo
 
 `OTA_UPDATE` is the manual real OTA path. It requires Wi-Fi to be connected and the robot to be stopped/safe, downloads and verifies the binary, stops known active/online motors, calls `esp_ota_set_boot_partition` only after `esp_ota_end` succeeds, then reboots with `esp_restart`. Automatic OTA remains disabled.
 
-`OTA_AUTO_CHECK ON` enables a low-priority background task that periodically runs the same manifest-only validation as `OTA_CHECK`. It does not download firmware, write flash, switch partitions, call `OTA_UPDATE`, or reboot. The first check runs soon after enabling; later checks use a conservative 10 minute interval, with backoff on failures. `OTA_AUTO_CHECK OFF` disables background checks.
+`OTA_AUTO_CHECK ON` enables a low-priority background task that periodically runs the same manifest-only validation as `OTA_CHECK`. It does not download firmware, write flash, switch partitions, call `OTA_UPDATE`, or reboot. The first check runs soon after enabling; later checks use the configured interval, with backoff on failures. `OTA_AUTO_CHECK OFF` disables background checks.
+
+The background task does not print unsolicited `DATA OTA_AUTO_CHECK` lines. It only updates internal state so serial command responses are not interleaved with automatic reports. During background checks it also suppresses routine HTTP-client log tags; use `OTA_AUTO_STATUS` to inspect the last automatic or forced check result.
+
+`OTA_AUTO_FORCE_CHECK` runs one manifest-only diagnostic check immediately, even when `OTA_AUTO_CHECK` is off. It requires Wi-Fi to already be connected, refuses to run while another OTA operation is active, and never downloads, writes flash, switches partitions, or reboots.
+
+Example:
+
+```text
+DATA OTA_AUTO_FORCE_CHECK STATUS:UP_TO_DATE CURRENT_BUILD:5 REMOTE_BUILD:5 HTTP_STATUS:200 UPDATE_AVAILABLE:0
+ERR OTA_AUTO_FORCE_CHECK WIFI_NOT_CONNECTED
+ERR OTA_AUTO_FORCE_CHECK BUSY
+```
+
+`OTA_AUTO_INTERVAL` prints the persisted auto-check interval in milliseconds. `OTA_AUTO_INTERVAL <milliseconds>` validates, saves and applies the interval at runtime. The accepted range is `60000..86400000` ms. The default is `600000` ms.
 
 `OTA_AUTO_STATUS` reports the background checker state, last result and next scheduled check:
 
 ```text
-DATA OTA_AUTO TASK:1 ENABLED:1 CHECKING:0 INTERVAL_MS:600000 BACKOFF_MS:30000 CHECKS:1 FAILURES:0 LAST_AGE_MS:1200 NEXT_MS:598800 LAST_STATUS:UP_TO_DATE LAST_ERR:0x0 CURRENT_BUILD:3 LAST_BUILD:3 LAST_VERSION:1.0.0 DETAIL:OK URL:http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b3.bin
+DATA OTA_AUTO TASK:RUNNING ENABLED:1 CHECKING:0 INTERVAL_MS:600000 BACKOFF_MS:30000 NEXT_DELAY_MS:598800 CHECK_COUNT:1 FAILURE_COUNT:0 LAST_RESULT:UP_TO_DATE LAST_ERROR:0x0 LAST_HTTP_STATUS:200 LAST_CHECK_AGE_MS:1200 LAST_CHECK_TIME_MS:42110 CURRENT_BUILD:5 LAST_REMOTE_BUILD:5 LAST_VERSION:1.0.0 UPDATE_AVAILABLE:0 AUTO_UPDATE_ENABLED:0 DETAIL:OK LAST_URL:http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b5.bin
 ```
+
+`OTA_AUTO_UPDATE ON` remains blocked and currently returns `ERR AUTO_UPDATE_DISABLED_UNTIL_EXPLICITLY_APPROVED`.
 
 With rollback enabled, a newly booted OTA image starts as `PENDING_VERIFY`. The firmware marks it `VALID` only after NVS, `config_manager`, `wifi_manager`, `ota_manager`, `svd48`, `robot_control`, and `serial_gateway` initialize. The self-test does not require Wi-Fi association or the OTA backend to be online.
 
