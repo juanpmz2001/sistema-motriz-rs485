@@ -35,6 +35,8 @@ typedef struct {
     float wz_radps;
     int16_t wheel_rpm[SVD48_MOTOR_COUNT];
     float steering_deg[SVD48_MOTOR_COUNT];
+    uint32_t sequence;
+    uint32_t issued_ms;
 } robot_motion_command_t;
 
 robot_control_handle_t robot_control_init(const robot_control_config_t *config);

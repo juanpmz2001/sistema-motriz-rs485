@@ -29,15 +29,54 @@ Returns firmware identity and boot context without printing secrets.
 Example:
 
 ```text
-DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:3 IDF:v5.4.1 PARTITION:ota_0 OTA_STATE:VALID PENDING_VERIFY:0 ROLLBACK_POSSIBLE:1
+DATA VERSION PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:5 IDF:v5.4.1 PARTITION:ota_0 OTA_STATE:VALID PENDING_VERIFY:0 ROLLBACK_POSSIBLE:1
 ```
+
+```text
+PLATFORM_STATUS
+```
+
+Returns the current read-only platform boundary status for supervised prototype tests. This command does not change motor state and does not implement heartbeat, E-stop, command leasing or Jetson arbitration.
+
+Example:
+
+```text
+DATA PLATFORM STATE:SAFE_IDLE AUTHORITY:SERIAL_ASCII PROTOCOL:ASCII_V1 HEARTBEAT:UNSUPPORTED ESTOP:UNSUPPORTED LAST_SEQ:3 LAST_AGE_MS:1204 MOTION_ACTIVE:0 SAFE_FOR_OTA:1 SAFE_REASON:SAFE ONLINE:4 STALE:0 RUNNING:0 FAULTED:0 TRACE:0 STREAM:0
+```
+
+Fields:
+
+- `STATE`: `SAFE_IDLE`, `MOTION_ACTIVE`, or `FAULT`.
+- `AUTHORITY`: current command authority. The current firmware only supports `SERIAL_ASCII`.
+- `PROTOCOL`: current PC/Jetson gateway protocol. The current firmware uses `ASCII_V1`.
+- `HEARTBEAT` and `ESTOP`: currently `UNSUPPORTED`.
+- `LAST_SEQ`: sequence number for the last accepted movement or stop command.
+- `LAST_AGE_MS`: elapsed milliseconds since that accepted command. It is `0` before the first tracked command.
+- `MOTION_ACTIVE`: `1` when the last accepted command or online/non-stale telemetry indicates motion.
+- `SAFE_FOR_OTA` and `SAFE_REASON`: result from the same safety gate used by `OTA_UPDATE`.
+- `ONLINE`, `STALE`, `RUNNING`, and `FAULTED`: aggregate counts across the four logical motors.
+- `TRACE` and `STREAM`: current serial diagnostics and telemetry stream state.
+
+```text
+SAFETY_STATUS
+```
+
+Returns the high-priority safety supervisor state. This task does not perform Wi-Fi, HTTP, JSON, OTA or NVS work.
+
+Example:
+
+```text
+DATA SAFETY TASK:RUNNING RC_AVAILABLE:1 RC_SEEN:1 RC_VALID:1 RC_LOSS:0 RC_LAST_AGE_MS:12 MOTOR_FAULT:0 STOP_REQUESTS:0 LAST_STOP_REASON:NONE LAST_STOP_ERR:0x0 LOOPS:5210
+```
+
+The safety task requests `STOP ALL` if it has seen valid RC/i-BUS signal and then detects RC loss beyond the configured timeout, or if online/non-stale motor telemetry reports a fault.
 
 ```text
 CONFIG_STATUS
 CONFIG_CLEAR
 ```
 
-`CONFIG_STATUS` prints the persistent Wi-Fi and OTA configuration currently loaded from NVS. It never prints the Wi-Fi password value; it only reports `WIFI_PASSWORD:<set>` or `WIFI_PASSWORD:<empty>`.
+`CONFIG_STATUS` prints the persistent Wi-Fi and OTA configuration currently loaded from NVS. It never prints the Wi-Fi password or OTA announce token values; it only reports `<set>` or `<empty>`.
 
 `CONFIG_CLEAR` erases the config namespace and restores runtime defaults.
 
@@ -51,6 +90,7 @@ Default values:
 - `OTA_AUTO_CHECK:0`
 - `OTA_AUTO_INTERVAL_MS:600000`
 - `OTA_AUTO_UPDATE:0`
+- `OTA_ANNOUNCE_TOKEN:<empty>`
 
 ```text
 WIFI_SET "ssid" "password"
@@ -65,19 +105,22 @@ Stores or clears Wi-Fi credentials in NVS. Quote SSIDs or passwords that contain
 `WIFI_STATUS` reports station state without secrets:
 
 ```text
-DATA WIFI STATUS:UNCONFIGURED SSID:<empty> IP:<none> RSSI:0 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0
-DATA WIFI STATUS:CONNECTED SSID:BotfarmsNet IP:192.168.10.42 RSSI:-58 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0
+DATA WIFI STATUS:UNCONFIGURED SSID:<empty> IP:<none> RSSI:0 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0 AUTOCONNECT:RUNNING PAUSED:0 RETRY_DELAY_MS:5000
+DATA WIFI STATUS:CONNECTED SSID:BotfarmsNet IP:192.168.10.42 RSSI:-58 RETRIES:0/3 DISCONNECT_REASON:0 LAST_ERR:0x0 AUTOCONNECT:RUNNING PAUSED:0 RETRY_DELAY_MS:5000
 ```
 
 States are `UNCONFIGURED`, `DISCONNECTED`, `CONNECTING`, `CONNECTED`, and `FAILED`.
 
-`WIFI_CONNECT` starts an asynchronous station connection using credentials from NVS. It does not block robot control. If no SSID is configured it returns `ERR WIFI_NOT_CONFIGURED`.
+`WIFI_CONNECT` starts an asynchronous station connection using credentials from NVS and resumes auto-connect. It does not block robot control. If no SSID is configured it returns `ERR WIFI_NOT_CONFIGURED`.
 
-`WIFI_DISCONNECT` disconnects station mode without deleting saved credentials. Use `WIFI_CLEAR` to erase credentials.
+When credentials are saved, a low-priority `wifi_reconnect` supervisor connects on boot and retries with backoff after failures or disconnects. `WIFI_DISCONNECT` disconnects station mode and pauses auto-connect without deleting saved credentials. Use `WIFI_CLEAR` to erase credentials.
 
 ```text
 OTA_SET_SERVER host port
 OTA_SET_MANIFEST path
+OTA_ANNOUNCE_TOKEN_SET token
+OTA_ANNOUNCE_TOKEN_CLEAR
+OTA_ANNOUNCE_STATUS
 OTA_CONFIG
 OTA_CHECK
 OTA_DOWNLOAD_TEST
@@ -93,11 +136,27 @@ OTA_AUTO_UPDATE OFF
 
 Stores local OTA server config in NVS. `OTA_AUTO_UPDATE ON` is intentionally blocked until manual OTA, rollback, and serial recovery are validated.
 
+`OTA_ANNOUNCE_TOKEN_SET` stores the authenticated UDP announce token in NVS and never echoes the token. `OTA_ANNOUNCE_TOKEN_CLEAR` removes it. `TRACE` output redacts `OTA_ANNOUNCE_TOKEN_SET`.
+
+`OTA_ANNOUNCE_STATUS` reports the low-priority UDP listener on port `32320`:
+
+```text
+DATA OTA_ANNOUNCE TASK:RUNNING PORT:32320 SEEN:1 ACCEPTED:1 REJECTED:0 CHECKS:1 DOWNLOAD_TESTS:0 UPDATES:0 LAST_SENDER:192.168.1.107 LAST_ACTION:check DETAIL:UPDATE_AVAILABLE
+```
+
+An announce packet must be JSON:
+
+```json
+{"type":"botfarms_ota_offer","token":"<token>","port":8080,"manifest":"/api/firmware/latest","action":"check"}
+```
+
+Accepted actions are `config`, `check`, `download_test`, and `update`. After token validation, the ESP32 uses the UDP packet source IP as the OTA host and saves `host:port` plus `manifest` to NVS. `download_test` and `update` require `SAFE_FOR_OTA:1`; `update` reboots only after a verified download and boot-partition switch.
+
 `OTA_CHECK` performs a manifest-only HTTP GET using the configured server and path. It validates project, target, build number, `min_supported_build`, URL, filename, size and SHA256, then reports whether the remote build is current or newer. It does not download the firmware binary, write flash, switch partitions or reboot.
 
-`OTA_DOWNLOAD_TEST` repeats the manifest validation, downloads the firmware binary, writes it to the inactive OTA partition returned by ESP-IDF, verifies byte count and SHA256, and finalizes the image with `esp_ota_end`. It does not call `esp_ota_set_boot_partition`, does not reboot, and does not change the active firmware.
+`OTA_DOWNLOAD_TEST` repeats the manifest validation, downloads the firmware binary, writes it to the inactive OTA partition returned by ESP-IDF, verifies byte count and SHA256, and finalizes the image with `esp_ota_end`. It requires Wi-Fi connected and the robot to be safe for OTA, does not call `esp_ota_set_boot_partition`, does not reboot, and does not change the active firmware. Manual download/update paths reject a lower remote build as `BUILD_DOWNGRADE` and reject the same remote build as `BUILD_NOT_NEWER`.
 
-`OTA_UPDATE` is the manual real OTA path. It requires Wi-Fi to be connected and the robot to be stopped/safe, downloads and verifies the binary, stops known active/online motors, calls `esp_ota_set_boot_partition` only after `esp_ota_end` succeeds, then reboots with `esp_restart`. Automatic OTA remains disabled.
+`OTA_UPDATE` is the manual real OTA path. It requires Wi-Fi to be connected and the robot to be stopped/safe, downloads and verifies the binary, stops known active/online motors, calls `esp_ota_set_boot_partition` only after `esp_ota_end` succeeds, then reboots with `esp_restart`. Automatic OTA writes remain disabled.
 
 `OTA_AUTO_CHECK ON` enables a low-priority background task that periodically runs the same manifest-only validation as `OTA_CHECK`. It does not download firmware, write flash, switch partitions, call `OTA_UPDATE`, or reboot. The first check runs soon after enabling; later checks use the configured interval, with backoff on failures. `OTA_AUTO_CHECK OFF` disables background checks.
 
@@ -123,7 +182,7 @@ DATA OTA_AUTO TASK:RUNNING ENABLED:1 CHECKING:0 INTERVAL_MS:600000 BACKOFF_MS:30
 
 `OTA_AUTO_UPDATE ON` remains blocked and currently returns `ERR AUTO_UPDATE_DISABLED_UNTIL_EXPLICITLY_APPROVED`.
 
-With rollback enabled, a newly booted OTA image starts as `PENDING_VERIFY`. The firmware marks it `VALID` only after NVS, `config_manager`, `wifi_manager`, `ota_manager`, `svd48`, `robot_control`, and `serial_gateway` initialize. The self-test does not require Wi-Fi association or the OTA backend to be online.
+With rollback enabled, a newly booted OTA image starts as `PENDING_VERIFY`. The firmware marks it `VALID` only after NVS, `config_manager`, `svd48`, SVD48 polling, `robot_control`, `robot_safety`, and `serial_gateway` start successfully. Wi-Fi and OTA services are maintenance paths; failure to initialize or associate Wi-Fi does not by itself cause rollback or block robot startup.
 
 `OTA_ROLLBACK_STATUS` reports the running partition, OTA image state, whether rollback is currently possible, and any pending one-shot rollback test flag.
 
@@ -138,7 +197,7 @@ The test flag is consumed once and stored in NVS namespace `bot_ota`; it does no
 Example:
 
 ```text
-DATA OTA_CHECK STATUS:UP_TO_DATE PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:3 CURRENT_BUILD:3 MIN_SUPPORTED_BUILD:1 SIZE:988656 SHA256:<64-hex> FILENAME:sistema-motriz-rs485-v1.0.0-b3.bin URL:http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b3.bin
+DATA OTA_CHECK STATUS:UP_TO_DATE PROJECT:sistema-motriz-rs485 TARGET:esp32s3 VERSION:1.0.0 BUILD_NUMBER:5 CURRENT_BUILD:5 MIN_SUPPORTED_BUILD:1 SIZE:988656 SHA256:<64-hex> FILENAME:sistema-motriz-rs485-v1.0.0-b5.bin URL:http://192.168.1.107:8080/firmware/sistema-motriz-rs485-v1.0.0-b5.bin
 DATA OTA_DOWNLOAD_TEST STATUS:VERIFIED PARTITION:ota_1 BYTES:988656 SHA256:<64-hex>
 DATA OTA_UPDATE STATUS:REBOOTING PARTITION:ota_1 BYTES:988656 SHA256:<64-hex>
 DATA OTA_ROLLBACK PARTITION:ota_0 OTA_STATE:VALID PENDING_VERIFY:0 ROLLBACK_POSSIBLE:1 STATE_ERR:0x0 TEST_MODE:NONE TEST_ERR:0x0
@@ -161,7 +220,7 @@ Trace lines include:
 
 CRC remains `init=0xFFFF`, `poly=0xA001`, transmitted as high byte then low byte.
 
-For `WIFI_SET`, trace output redacts the password.
+For `WIFI_SET`, trace output redacts the password. For `OTA_ANNOUNCE_TOKEN_SET`, trace output redacts the token.
 
 ```text
 POLL_ONCE

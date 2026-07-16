@@ -6,6 +6,7 @@
 #include "driver/ledc.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -30,6 +31,7 @@ struct robot_control_t {
     robot_control_config_t config;
     SemaphoreHandle_t lock;
     robot_motion_command_t last_command;
+    uint32_t command_sequence;
 };
 
 static const ledc_channel_t SERVO_CHANNELS[SVD48_MOTOR_COUNT] = {
@@ -63,21 +65,36 @@ static void set_reason(char *reason, size_t reason_size, const char *value)
     }
 }
 
-static void clear_last_command(robot_control_handle_t handle)
+static uint32_t monotonic_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static void stamp_command(robot_control_handle_t handle, robot_motion_command_t *command)
+{
+    command->sequence = ++handle->command_sequence;
+    command->issued_ms = monotonic_ms();
+}
+
+static void record_last_command(robot_control_handle_t handle, robot_motion_command_t *command)
 {
     xSemaphoreTake(handle->lock, portMAX_DELAY);
-    memset(&handle->last_command, 0, sizeof(handle->last_command));
+    stamp_command(handle, command);
+    handle->last_command = *command;
     xSemaphoreGive(handle->lock);
 }
 
-static void set_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
+static void record_stop_command(robot_control_handle_t handle)
 {
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    handle->last_command.vx_mps = 0.0f;
-    handle->last_command.vy_mps = 0.0f;
-    handle->last_command.wz_radps = 0.0f;
-    handle->last_command.wheel_rpm[motor] = rpm;
-    xSemaphoreGive(handle->lock);
+    robot_motion_command_t command = {0};
+    record_last_command(handle, &command);
+}
+
+static void record_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
+{
+    robot_motion_command_t command = {0};
+    command.wheel_rpm[motor] = rpm;
+    record_last_command(handle, &command);
 }
 
 static esp_err_t steering_set_angle(robot_control_handle_t handle, uint8_t motor, float angle_deg)
@@ -227,9 +244,11 @@ esp_err_t robot_control_stop_all(robot_control_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    clear_last_command(handle);
-
-    return svd48_stop_all(handle->config.svd48);
+    esp_err_t err = svd48_stop_all(handle->config.svd48);
+    if (err == ESP_OK) {
+        record_stop_command(handle);
+    }
+    return err;
 }
 
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
@@ -239,7 +258,7 @@ esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
     }
     esp_err_t err = svd48_stop_motor(handle->config.svd48, motor);
     if (err == ESP_OK) {
-        set_last_motor_rpm(handle, motor, 0);
+        record_last_motor_rpm(handle, motor, 0);
     }
     return err;
 }
@@ -261,7 +280,7 @@ esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t m
     ESP_RETURN_ON_ERROR(svd48_enable_motor(handle->config.svd48, motor), TAG, "enable motor failed");
     esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, rpm);
     if (err == ESP_OK) {
-        set_last_motor_rpm(handle, motor, rpm);
+        record_last_motor_rpm(handle, motor, rpm);
     }
     return err;
 }
@@ -329,9 +348,7 @@ esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, fl
         ESP_RETURN_ON_ERROR(svd48_set_motor_speed(handle->config.svd48, i, command.wheel_rpm[i]), TAG, "set speed failed");
     }
 
-    xSemaphoreTake(handle->lock, portMAX_DELAY);
-    handle->last_command = command;
-    xSemaphoreGive(handle->lock);
+    record_last_command(handle, &command);
     return ESP_OK;
 }
 
@@ -449,7 +466,7 @@ esp_err_t robot_control_prepare_for_ota(robot_control_handle_t handle)
     }
 
     if (first_error == ESP_OK) {
-        clear_last_command(handle);
+        record_stop_command(handle);
     }
     return first_error;
 }

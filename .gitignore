@@ -2,3 +2,6 @@ build/
 sdkconfig
 sdkconfig.old
 .env
+ota_release/
+__pycache__/
+*.pyc
