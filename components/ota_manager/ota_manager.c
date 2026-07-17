@@ -667,6 +667,11 @@ esp_err_t ota_manager_download_to_inactive(ota_manager_handle_t handle, ota_mana
         xSemaphoreGive(handle->op_lock);
         return ESP_ERR_NOT_SUPPORTED;
     }
+    if (check.build_number == check.current_build_number) {
+        set_download_detail(result, "BUILD_NOT_NEWER");
+        xSemaphoreGive(handle->op_lock);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
     if (!partition) {

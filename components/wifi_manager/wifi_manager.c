@@ -19,6 +19,11 @@ static const char *TAG = "wifi_manager";
 #define WIFI_MANAGER_LOCK_TIMEOUT_MS 100
 #define WIFI_MANAGER_TIMEOUT_TASK_STACK 3072
 #define WIFI_MANAGER_TIMEOUT_TASK_PRIORITY 3
+#define WIFI_MANAGER_SUPERVISOR_TASK_STACK 4096
+#define WIFI_MANAGER_SUPERVISOR_TASK_PRIORITY 2
+#define WIFI_MANAGER_SUPERVISOR_IDLE_MS 5000
+#define WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS 5000
+#define WIFI_MANAGER_SUPERVISOR_BACKOFF_MAX_MS (5U * 60U * 1000U)
 
 struct wifi_manager_t {
     config_manager_handle_t config_manager;
@@ -35,7 +40,12 @@ struct wifi_manager_t {
     esp_err_t last_error;
     bool started;
     bool manual_disconnect;
+    bool auto_connect_paused;
+    bool supervisor_stop;
+    bool supervisor_running;
+    uint32_t supervisor_retry_delay_ms;
     uint32_t connect_generation;
+    TaskHandle_t supervisor_task;
 };
 
 typedef struct {
@@ -117,6 +127,29 @@ static void connect_timeout_task(void *arg)
     }
 
     vTaskDelete(NULL);
+}
+
+static uint32_t next_supervisor_backoff_ms(uint32_t current)
+{
+    if (current == 0) {
+        return WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS;
+    }
+    if (current >= WIFI_MANAGER_SUPERVISOR_BACKOFF_MAX_MS / 2U) {
+        return WIFI_MANAGER_SUPERVISOR_BACKOFF_MAX_MS;
+    }
+    return current * 2U;
+}
+
+static void set_supervisor_state(wifi_manager_handle_t handle,
+                                 bool running,
+                                 uint32_t retry_delay_ms)
+{
+    if (take_lock(handle) != ESP_OK) {
+        return;
+    }
+    handle->supervisor_running = running;
+    handle->supervisor_retry_delay_ms = retry_delay_ms;
+    xSemaphoreGive(handle->lock);
 }
 
 static esp_err_t load_credentials(wifi_manager_handle_t handle,
@@ -288,10 +321,84 @@ esp_err_t wifi_manager_init(config_manager_handle_t config_manager, wifi_manager
     return ESP_OK;
 }
 
+static void wifi_supervisor_task(void *arg)
+{
+    wifi_manager_handle_t handle = (wifi_manager_handle_t)arg;
+    uint32_t retry_delay_ms = WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS;
+    bool retry_ready = true;
+
+    set_supervisor_state(handle, true, retry_delay_ms);
+
+    while (!handle->supervisor_stop) {
+        wifi_manager_status_t status;
+        esp_err_t status_err = wifi_manager_get_status(handle, &status);
+        if (status_err != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+            continue;
+        }
+
+        if (status.state == WIFI_MANAGER_STATE_CONNECTED) {
+            retry_delay_ms = WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS;
+            retry_ready = true;
+            set_supervisor_state(handle, true, retry_delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+            continue;
+        }
+
+        if (status.state == WIFI_MANAGER_STATE_UNCONFIGURED ||
+            status.state == WIFI_MANAGER_STATE_CONNECTING ||
+            status.auto_connect_paused ||
+            status.ssid[0] == '\0') {
+            vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+            continue;
+        }
+
+        if (!retry_ready) {
+            set_supervisor_state(handle, true, retry_delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
+            retry_delay_ms = next_supervisor_backoff_ms(retry_delay_ms);
+            retry_ready = true;
+            continue;
+        }
+
+        esp_err_t err = wifi_manager_connect(handle);
+        retry_ready = false;
+        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+            set_supervisor_state(handle, true, retry_delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+            continue;
+        }
+
+        if (err == ESP_ERR_NOT_FOUND) {
+            retry_delay_ms = WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS;
+            retry_ready = true;
+            set_supervisor_state(handle, true, retry_delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+            continue;
+        }
+
+        set_supervisor_state(handle, true, retry_delay_ms);
+        vTaskDelay(pdMS_TO_TICKS(WIFI_MANAGER_SUPERVISOR_IDLE_MS));
+    }
+
+    set_supervisor_state(handle, false, retry_delay_ms);
+    if (take_lock(handle) == ESP_OK) {
+        handle->supervisor_task = NULL;
+        xSemaphoreGive(handle->lock);
+    }
+    vTaskDelete(NULL);
+}
+
 void wifi_manager_deinit(wifi_manager_handle_t handle)
 {
     if (!handle) {
         return;
+    }
+    handle->supervisor_stop = true;
+    if (handle->supervisor_task) {
+        for (int i = 0; i < 120 && handle->supervisor_running; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
     }
     if (handle->wifi_event_handler) {
         (void)esp_event_handler_instance_unregister(WIFI_EVENT,
@@ -353,6 +460,7 @@ esp_err_t wifi_manager_connect(wifi_manager_handle_t handle)
     handle->disconnect_reason = 0;
     handle->last_error = ESP_OK;
     handle->manual_disconnect = false;
+    handle->auto_connect_paused = false;
     handle->ip_addr[0] = '\0';
     copy_text(handle->ssid, sizeof(handle->ssid), ssid);
     xSemaphoreGive(handle->lock);
@@ -423,6 +531,7 @@ esp_err_t wifi_manager_disconnect(wifi_manager_handle_t handle)
     }
     handle->connect_generation++;
     handle->manual_disconnect = true;
+    handle->auto_connect_paused = true;
     handle->ip_addr[0] = '\0';
     handle->last_error = ESP_OK;
     started = handle->started;
@@ -441,6 +550,49 @@ esp_err_t wifi_manager_disconnect(wifi_manager_handle_t handle)
 
     esp_err_t err = esp_wifi_disconnect();
     return err == ESP_ERR_WIFI_NOT_CONNECT ? ESP_OK : err;
+}
+
+esp_err_t wifi_manager_start_auto_connect_task(wifi_manager_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (take_lock(handle) != ESP_OK) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (handle->supervisor_task) {
+        xSemaphoreGive(handle->lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    handle->supervisor_stop = false;
+    handle->supervisor_retry_delay_ms = WIFI_MANAGER_SUPERVISOR_BACKOFF_INITIAL_MS;
+    xSemaphoreGive(handle->lock);
+
+    BaseType_t ok = xTaskCreate(wifi_supervisor_task,
+                                "wifi_reconnect",
+                                WIFI_MANAGER_SUPERVISOR_TASK_STACK,
+                                handle,
+                                WIFI_MANAGER_SUPERVISOR_TASK_PRIORITY,
+                                &handle->supervisor_task);
+    return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+esp_err_t wifi_manager_set_auto_connect_paused(wifi_manager_handle_t handle, bool paused)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    handle->auto_connect_paused = paused;
+    if (!paused) {
+        handle->manual_disconnect = false;
+    }
+    xSemaphoreGive(handle->lock);
+    return ESP_OK;
 }
 
 esp_err_t wifi_manager_get_status(wifi_manager_handle_t handle, wifi_manager_status_t *status)
@@ -475,6 +627,9 @@ esp_err_t wifi_manager_get_status(wifi_manager_handle_t handle, wifi_manager_sta
     status->max_retries = handle->max_retries;
     status->disconnect_reason = handle->disconnect_reason;
     status->last_error = handle->last_error;
+    status->auto_connect_running = handle->supervisor_running;
+    status->auto_connect_paused = handle->auto_connect_paused;
+    status->auto_retry_delay_ms = handle->supervisor_retry_delay_ms;
     copy_text(status->ssid, sizeof(status->ssid), handle->ssid);
     copy_text(status->ip_addr, sizeof(status->ip_addr), handle->ip_addr);
     xSemaphoreGive(handle->lock);

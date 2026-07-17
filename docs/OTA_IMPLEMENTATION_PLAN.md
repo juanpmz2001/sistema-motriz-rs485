@@ -4,6 +4,8 @@ Date: 2026-05-09
 Firmware repo: `/mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485`  
 Web/backend repo: `/home/jp/Documents/botfarms/web_controll_esp_svd48`
 
+Status note: this is a historical implementation plan. The current firmware in this repo has progressed beyond Iteration 10.5: `FW_BUILD_NUMBER` is `8`, the active target is `esp32s3`, the active partition table is `partitions_ota_16mb.csv`, rollback is enabled, Wi-Fi reconnect/OTA announce run as low-priority maintenance services, and automatic OTA is limited to manifest-only checks plus `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, and `OTA_AUTO_INTERVAL`. Earlier sections that say "current" preserve the state observed during that iteration; Section 16 summarizes the current next decision.
+
 ## 1. Executive Summary
 
 The goal is to add a local pull-based OTA update system to the ESP32-S3 robot firmware. The ESP32-S3 will connect to a local Wi-Fi network, periodically query a firmware manifest served by a local backend running on the development computer, decide whether a newer build exists, download the `.bin`, verify `size` and `sha256`, write it to an inactive OTA partition, switch boot partition, stop the robot safely, reboot, and validate the new application using ESP-IDF rollback support.
@@ -778,7 +780,7 @@ Future hardening:
 Validation:
 
 - Every manifest must include `sha256` and `size`.
-- ESP32 must reject missing hash, wrong hash, wrong size, malformed URL, and downgrade attempts.
+- ESP32 must reject missing hash, wrong hash, wrong size and malformed URL. `OTA_CHECK` may report lower builds as up-to-date, but write paths must reject lower-build downgrades.
 
 ### 4.3 JSON Manifest
 
@@ -806,7 +808,7 @@ Trade-offs:
 Validation:
 
 - `OTA_CHECK` must reject invalid JSON.
-- Manifest fetch must cap max bytes, for example 4096 or 8192 bytes.
+- Manifest fetch must cap max bytes; the current firmware cap is `4096` bytes.
 
 ### 4.4 Include `size` and `sha256`
 
@@ -1356,14 +1358,15 @@ ESP32 validation rules:
 
 - `project` must equal `sistema-motriz-rs485`.
 - `target` must equal `esp32s3`.
-- `remote.build_number` must be greater than `CURRENT_BUILD_NUMBER` for update.
+- `remote.build_number` greater than `CURRENT_BUILD_NUMBER` reports `UPDATE_AVAILABLE`; equal or lower reports `UP_TO_DATE` from `OTA_CHECK`.
+- Manual write paths reject `remote.build_number < CURRENT_BUILD_NUMBER` as `BUILD_DOWNGRADE` and reject `remote.build_number == CURRENT_BUILD_NUMBER` as `BUILD_NOT_NEWER`.
 - `CURRENT_BUILD_NUMBER` must be greater than or equal to `remote.min_supported_build`.
 - It is not sufficient to check `remote.build_number >= remote.min_supported_build`; the compatibility gate applies to the currently running firmware.
 - `url` must be HTTP initially, HTTPS later.
 - `url` must not contain `localhost`.
 - `size` must be positive and less than inactive OTA partition size.
 - `sha256` must be exactly 64 lowercase/uppercase hex chars.
-- Manifest body should be limited to a small size, for example 8192 bytes.
+- Manifest body is currently limited to `4096` bytes by `ota_manager`.
 
 ## 9. ESP32 Pseudocode
 
@@ -2539,7 +2542,7 @@ STOP 2 after OTA_UPDATE: OK
 Important caveat:
 
 ```text
-Iteration 8 intentionally allows manual same-build OTA for slot validation in the lab. Future automatic OTA should require remote.build_number > CURRENT_BUILD_NUMBER before writing or rebooting.
+Iteration 8 originally allowed manual same-build OTA for slot validation in the lab. The current firmware no longer allows same-build writes; manual and future automatic write paths must require remote.build_number > CURRENT_BUILD_NUMBER before writing or rebooting.
 ```
 
 ### Iteration 9: Rollback and Post-Boot Validation
@@ -2615,7 +2618,7 @@ Web/backend repo .gitignore ignores firmware/*.bin and firmware/manifest.json.
 No .env file or Wi-Fi password is tracked by Git in either repository.
 Automatic OTA remains disabled: OTA_AUTO_UPDATE ON is still rejected.
 SoftAP provisioning, HTTPS, firmware signing, secure boot and flash encryption remain out of scope.
-Manual same-build OTA remains allowed only for lab slot/rollback validation. Future automatic OTA must require remote.build_number > CURRENT_BUILD_NUMBER.
+Manual same-build OTA is no longer allowed. Manual and future automatic OTA write paths must require remote.build_number > CURRENT_BUILD_NUMBER.
 ```
 
 Implementation summary:
@@ -3029,8 +3032,8 @@ Expected end state:
 | Manifest missing required field | Rejected, no reboot |
 | Manifest wrong project | Rejected, no reboot |
 | Manifest wrong target | Rejected, no reboot |
-| Manifest same build | Reports up-to-date |
-| Manifest lower build | Rejects downgrade |
+| Manifest same build | `OTA_CHECK` reports up-to-date; `OTA_DOWNLOAD_TEST`/`OTA_UPDATE` reject it as `BUILD_NOT_NEWER` |
+| Manifest lower build | `OTA_CHECK` reports up-to-date; `OTA_DOWNLOAD_TEST`/`OTA_UPDATE` reject it as downgrade |
 | Manifest higher build | Reports update available |
 | Binary missing | Rejected, no boot switch |
 | SHA256 incorrect | Rejected, no boot switch |
@@ -3143,23 +3146,25 @@ Current completed baseline:
 12. Phase 9.5-C identified that `IRAM 16383 / 16384` is the fixed `0x40374000-0x40378000` bucket before `_diram_i_start`. Normal C logic grows `Flash Code`, while `IRAM_ATTR` grows executable internal RAM and may appear as `DIRAM .text` once the first bucket is saturated.
 13. Follow-up verification rebuilt B2-B5 using `DIRAM .text` / full `.iram0.text` as the correct metric. B3 and B4 were physically validated. B4 is the recommended first optimization because it recovers about 9.6 KB executable internal RAM without moving FreeRTOS task functions to flash.
 14. B4 was selected for permanent consolidation: keep `CONFIG_ESP_WIFI_IRAM_OPT=y` and disable `CONFIG_ESP_WIFI_RX_IRAM_OPT`.
+15. Iteration 10 added the automatic pull OTA check task. It runs manifest validation only and does not download firmware, write flash, switch partitions, call `OTA_UPDATE`, or reboot.
+16. Iteration 10.5 added auto-check observability and operation commands: `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, and `OTA_AUTO_INTERVAL [milliseconds]`. It also stopped unsolicited auto-check `DATA` output and kept `OTA_AUTO_UPDATE ON` blocked.
 
 Implement next:
 
-1. Iteration 10 may add automatic manifest polling only if it is implemented as normal non-ISR FreeRTOS/application logic.
-2. Iteration 10 must keep OTA writes/reboots disabled by default. It may automate `OTA_CHECK`; it must not automate `OTA_UPDATE`.
-3. Keep SoftAP disabled until explicit approval.
+1. Iteration 11 may add SoftAP provisioning fallback only after explicit approval, with serial configuration kept as recovery.
+2. If SoftAP is not the next priority, proceed with Iteration 12 documentation/hardening and keep the current OTA behavior manual for writes.
+3. Automatic OTA writes/reboots remain out of scope. The current firmware may automate manifest checks only; it must not automate `OTA_UPDATE`.
 
 Leave for later phases:
 
 - Automatic OTA writes/reboots.
-- SoftAP provisioning.
+- SoftAP provisioning, unless Iteration 11 is explicitly selected and approved next.
 - HTTPS, firmware signing, secure boot and flash encryption.
 
 Do not implement yet:
 
 - Automatic OTA writes/reboots.
-- SoftAP provisioning.
+- SoftAP provisioning without explicit Iteration 11 approval.
 - HTTPS.
 - Firmware signing.
 - Secure boot.

@@ -10,7 +10,15 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 
 - `components/svd48`: SVD48V50A/SVD48B50A RS485 driver with read/write transactions, telemetry polling, logical motor mapping, and UU Motor CRC byte order.
 - `components/robot_control`: four-wheel robot abstraction, independent steering kinematics for `MOVE_VEL`, and PWM steering servo outputs.
+- `components/robot_safety`: high-priority RC/motor-fault safety supervisor. It never performs Wi-Fi, HTTP, JSON, OTA or NVS work.
+- `components/ibus_receiver`: FlySky i-BUS/SBUS receiver input and diagnostics.
 - `components/serial_gateway`: ASCII PC gateway over the ESP-IDF console/USB serial stream.
+- `components/config_manager`: NVS-backed Wi-Fi and OTA configuration store.
+- `components/wifi_manager`: Wi-Fi station manager used by manual OTA, automatic manifest checks, and low-priority auto-connect/reconnect.
+- `components/ota_manager`: OTA manifest validation, inactive-slot download verification, manual update, rollback state, and automatic manifest-only checks.
+- `components/ota_announce`: authenticated UDP LAN announce listener for no-USB OTA server discovery.
+
+The root `CMakeLists.txt` explicitly includes `main`, `svd48`, `robot_control`, `robot_safety`, `serial_gateway`, `ibus_receiver`, and `ota_announce`. `config_manager`, `wifi_manager`, and `ota_manager` are also active through ESP-IDF component `REQUIRES`.
 
 ## Legacy Components
 

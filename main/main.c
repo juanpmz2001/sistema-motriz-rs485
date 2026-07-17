@@ -5,9 +5,12 @@
 #include "esp_system.h"
 #include "app_version.h"
 #include "config_manager.h"
+#include "ibus_receiver.h"
 #include "nvs_flash.h"
+#include "ota_announce.h"
 #include "ota_manager.h"
 #include "robot_control.h"
+#include "robot_safety.h"
 #include "serial_gateway.h"
 #include "svd48.h"
 #include "wifi_manager.h"
@@ -26,12 +29,19 @@ static const char *TAG = "main";
 #define STEER_RL_PIN 6
 #define STEER_RR_PIN 7
 
+// Experimental FlySky i-BUS receiver input.
+#define IBUS_UART_PORT UART_NUM_1
+#define IBUS_RX_PIN 18
+
 static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
 static serial_gateway_handle_t gateway = NULL;
 static config_manager_handle_t config_manager = NULL;
 static wifi_manager_handle_t wifi_manager = NULL;
 static ota_manager_handle_t ota_manager = NULL;
+static ota_announce_handle_t ota_announce = NULL;
+static ibus_receiver_handle_t ibus_receiver = NULL;
+static robot_safety_handle_t robot_safety = NULL;
 
 static esp_err_t init_nvs(void)
 {
@@ -129,31 +139,24 @@ void app_main(void)
     err = wifi_manager_init(config_manager, &wifi_manager);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi manager unavailable, err=0x%x; robot startup continues", err);
-        if (pending_verify) {
-            handle_startup_failure("wifi_manager", err, pending_verify);
-            config_manager_deinit(config_manager);
-            return;
-        }
         wifi_manager = NULL;
     }
 
-    ota_manager_config_t ota_config = {
-        .config_manager = config_manager,
-        .wifi_manager = wifi_manager,
-        .current_project = FW_PROJECT,
-        .current_target = FW_TARGET,
-        .current_build_number = FW_BUILD_NUMBER,
-    };
-    err = ota_manager_init(&ota_config, &ota_manager);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "OTA check manager unavailable, err=0x%x; robot startup continues", err);
-        if (pending_verify) {
-            handle_startup_failure("ota_manager", err, pending_verify);
-            wifi_manager_deinit(wifi_manager);
-            config_manager_deinit(config_manager);
-            return;
+    if (wifi_manager) {
+        ota_manager_config_t ota_config = {
+            .config_manager = config_manager,
+            .wifi_manager = wifi_manager,
+            .current_project = FW_PROJECT,
+            .current_target = FW_TARGET,
+            .current_build_number = FW_BUILD_NUMBER,
+        };
+        err = ota_manager_init(&ota_config, &ota_manager);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "OTA check manager unavailable, err=0x%x; robot startup continues", err);
+            ota_manager = NULL;
         }
-        ota_manager = NULL;
+    } else {
+        ESP_LOGW(TAG, "OTA check manager disabled because Wi-Fi manager is unavailable");
     }
 
     svd48_config_t svd48_config = {
@@ -214,11 +217,79 @@ void app_main(void)
         return;
     }
 
+    ibus_receiver_config_t ibus_config = {
+        .uart_port = IBUS_UART_PORT,
+        .rx_pin = IBUS_RX_PIN,
+        .tx_pin = UART_PIN_NO_CHANGE,
+        .baud_rate = 115200,
+        .stale_timeout_ms = 100,
+        .invert_rx = false,
+    };
+    err = ibus_receiver_init(&ibus_config, &ibus_receiver);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "Experimental i-BUS receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
+                 IBUS_RX_PIN,
+                 err);
+        ibus_receiver = NULL;
+    }
+
+    robot_safety_config_t safety_config = {
+        .robot = robot,
+        .ibus_receiver = ibus_receiver,
+        .period_ms = 20,
+        .rc_loss_timeout_ms = 150,
+        .stop_repeat_ms = 500,
+        .stop_on_rc_loss = true,
+        .stop_on_motor_fault = true,
+    };
+    err = robot_safety_init(&safety_config, &robot_safety);
+    if (err != ESP_OK) {
+        handle_startup_failure("robot_safety_init", err, pending_verify);
+        ibus_receiver_deinit(ibus_receiver);
+        robot_control_deinit(robot);
+        svd48_deinit(svd48);
+        ota_manager_deinit(ota_manager);
+        wifi_manager_deinit(wifi_manager);
+        config_manager_deinit(config_manager);
+        return;
+    }
+    err = robot_safety_start(robot_safety);
+    if (err != ESP_OK) {
+        handle_startup_failure("robot_safety_start", err, pending_verify);
+        robot_safety_deinit(robot_safety);
+        ibus_receiver_deinit(ibus_receiver);
+        robot_control_deinit(robot);
+        svd48_deinit(svd48);
+        ota_manager_deinit(ota_manager);
+        wifi_manager_deinit(wifi_manager);
+        config_manager_deinit(config_manager);
+        return;
+    }
+
+    if (ota_manager && wifi_manager) {
+        ota_announce_config_t announce_config = {
+            .config_manager = config_manager,
+            .wifi_manager = wifi_manager,
+            .ota_manager = ota_manager,
+            .robot = robot,
+            .listen_port = OTA_ANNOUNCE_DEFAULT_PORT,
+        };
+        err = ota_announce_init(&announce_config, &ota_announce);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "OTA LAN announce listener unavailable, err=0x%x; robot startup continues", err);
+            ota_announce = NULL;
+        }
+    }
+
     serial_gateway_config_t gateway_config = {
         .robot = robot,
         .config_manager = config_manager,
         .wifi_manager = wifi_manager,
         .ota_manager = ota_manager,
+        .ota_announce = ota_announce,
+        .ibus_receiver = ibus_receiver,
+        .robot_safety = robot_safety,
         .fw_project = FW_PROJECT,
         .fw_target = FW_TARGET,
         .fw_version = FW_VERSION,
@@ -230,6 +301,9 @@ void app_main(void)
     gateway = serial_gateway_init(&gateway_config);
     if (!gateway) {
         handle_startup_failure("serial_gateway_init", ESP_FAIL, pending_verify);
+        ota_announce_deinit(ota_announce);
+        robot_safety_deinit(robot_safety);
+        ibus_receiver_deinit(ibus_receiver);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
@@ -241,6 +315,9 @@ void app_main(void)
     if (serial_gateway_start(gateway) != ESP_OK) {
         handle_startup_failure("serial_gateway_start", ESP_FAIL, pending_verify);
         serial_gateway_deinit(gateway);
+        ota_announce_deinit(ota_announce);
+        robot_safety_deinit(robot_safety);
+        ibus_receiver_deinit(ibus_receiver);
         robot_control_deinit(robot);
         svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
@@ -253,10 +330,24 @@ void app_main(void)
         confirm_pending_app_after_self_test();
     }
 
+    if (wifi_manager) {
+        err = wifi_manager_start_auto_connect_task(wifi_manager);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Wi-Fi reconnect supervisor unavailable, err=0x%x", err);
+        }
+    }
+
     if (ota_manager) {
         err = ota_manager_start_auto_check_task(ota_manager);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Automatic OTA_CHECK task unavailable, err=0x%x", err);
+        }
+    }
+
+    if (ota_announce) {
+        err = ota_announce_start(ota_announce);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "OTA LAN announce listener failed to start, err=0x%x", err);
         }
     }
 

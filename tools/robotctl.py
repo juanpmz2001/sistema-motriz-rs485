@@ -62,6 +62,28 @@ def cmd_ping(args: argparse.Namespace) -> int:
     return print_response(send_command(args, "PING"))
 
 
+def cmd_platform_status(args: argparse.Namespace) -> int:
+    return print_response(send_command(args, "PLATFORM_STATUS"))
+
+
+def cmd_ibus_status(args: argparse.Namespace) -> int:
+    return print_response(send_command(args, "IBUS_STATUS"))
+
+
+def cmd_ibus_mode(args: argparse.Namespace) -> int:
+    command = "IBUS_MODE" if args.mode is None else f"IBUS_MODE {args.mode}"
+    return print_response(send_command(args, command))
+
+
+def cmd_ibus_channels(args: argparse.Namespace) -> int:
+    return print_response(send_command(args, "IBUS_CHANNELS"))
+
+
+def cmd_ppm_capture(args: argparse.Namespace) -> int:
+    command = f"PPM_CAPTURE {args.duration_ms} {args.interval_us}"
+    return print_response(send_command(args, command, read_lines=4))
+
+
 def cmd_get_speed(args: argparse.Namespace) -> int:
     return print_response(send_command(args, f"GET_SPEED {args.motor}"))
 
@@ -129,6 +151,21 @@ def build_parser() -> argparse.ArgumentParser:
     raw.set_defaults(func=cmd_raw)
 
     sub.add_parser("ping").set_defaults(func=cmd_ping)
+
+    sub.add_parser("platform-status").set_defaults(func=cmd_platform_status)
+
+    sub.add_parser("ibus-status").set_defaults(func=cmd_ibus_status)
+
+    ibus_mode = sub.add_parser("ibus-mode")
+    ibus_mode.add_argument("mode", nargs="?", choices=["IBUS", "IBUS_INV", "IBUS_8N2", "IBUS_INV_8N2", "SBUS", "SBUS_NOINV"])
+    ibus_mode.set_defaults(func=cmd_ibus_mode)
+
+    sub.add_parser("ibus-channels").set_defaults(func=cmd_ibus_channels)
+
+    ppm_capture = sub.add_parser("ppm-capture")
+    ppm_capture.add_argument("--duration-ms", type=int, default=80)
+    ppm_capture.add_argument("--interval-us", type=int, default=20)
+    ppm_capture.set_defaults(func=cmd_ppm_capture)
 
     get_speed = sub.add_parser("get-speed")
     get_speed.add_argument("motor", type=int)

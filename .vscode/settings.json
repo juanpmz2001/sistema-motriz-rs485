@@ -8,7 +8,7 @@
   "idf.portWin": "COM6",
   "idf.toolsPathWin": "C:\\Users\\juanp\\.espressif",
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32"
+    "IDF_TARGET": "esp32s3"
   },
   "idf.flashType": "UART"
 }

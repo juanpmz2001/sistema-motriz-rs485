@@ -5,8 +5,11 @@
 #include <stdint.h>
 #include "config_manager.h"
 #include "esp_err.h"
+#include "ibus_receiver.h"
+#include "ota_announce.h"
 #include "ota_manager.h"
 #include "robot_control.h"
+#include "robot_safety.h"
 #include "wifi_manager.h"
 
 #ifdef __cplusplus
@@ -20,6 +23,9 @@ typedef struct {
     config_manager_handle_t config_manager;
     wifi_manager_handle_t wifi_manager;
     ota_manager_handle_t ota_manager;
+    ota_announce_handle_t ota_announce;
+    ibus_receiver_handle_t ibus_receiver;
+    robot_safety_handle_t robot_safety;
     const char *fw_project;
     const char *fw_target;
     const char *fw_version;

@@ -4,7 +4,7 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.5)
 
-set(COMPONENTS main svd48 robot_control serial_gateway)
+set(COMPONENTS main svd48 robot_control robot_safety serial_gateway ibus_receiver ota_announce)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(sistema-motriz-rs485)

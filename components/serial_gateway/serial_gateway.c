@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include "esp_ota_ops.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -32,6 +34,8 @@ static const char *TAG = "serial_gateway";
 #define GATEWAY_RX_DRAIN_MAX 256
 #define GATEWAY_RX_TASK_STACK 12288
 #define GATEWAY_STREAM_TASK_STACK 4096
+#define PLATFORM_SAFE_RPM_THRESHOLD 5
+#define PLATFORM_SAFE_FLOAT_THRESHOLD 0.001f
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
@@ -274,6 +278,38 @@ static bool parse_rollback_test_mode_arg(const char *text, ota_manager_rollback_
     return false;
 }
 
+static bool parse_ibus_mode_arg(const char *text, ibus_receiver_mode_t *mode)
+{
+    if (!text || !mode) {
+        return false;
+    }
+    if (strcasecmp(text, "IBUS") == 0) {
+        *mode = IBUS_RECEIVER_MODE_IBUS;
+        return true;
+    }
+    if (strcasecmp(text, "IBUS_INV") == 0 || strcasecmp(text, "IBUS_INVERTED") == 0) {
+        *mode = IBUS_RECEIVER_MODE_IBUS_INVERTED;
+        return true;
+    }
+    if (strcasecmp(text, "IBUS_8N2") == 0) {
+        *mode = IBUS_RECEIVER_MODE_IBUS_8N2;
+        return true;
+    }
+    if (strcasecmp(text, "IBUS_INV_8N2") == 0 || strcasecmp(text, "IBUS_INVERTED_8N2") == 0) {
+        *mode = IBUS_RECEIVER_MODE_IBUS_INVERTED_8N2;
+        return true;
+    }
+    if (strcasecmp(text, "SBUS") == 0) {
+        *mode = IBUS_RECEIVER_MODE_SBUS;
+        return true;
+    }
+    if (strcasecmp(text, "SBUS_NOINV") == 0 || strcasecmp(text, "SBUS_NONINV") == 0) {
+        *mode = IBUS_RECEIVER_MODE_SBUS_NON_INVERTED;
+        return true;
+    }
+    return false;
+}
+
 static void print_motor_full(serial_gateway_handle_t handle, uint8_t motor)
 {
     svd48_motor_telemetry_t t;
@@ -328,6 +364,94 @@ static const char *safe_text(const char *value, const char *fallback)
     return (value && value[0] != '\0') ? value : fallback;
 }
 
+static uint32_t gateway_monotonic_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static bool motion_command_active(const robot_motion_command_t *command)
+{
+    if (!command) {
+        return false;
+    }
+    if (fabsf(command->vx_mps) > PLATFORM_SAFE_FLOAT_THRESHOLD ||
+        fabsf(command->vy_mps) > PLATFORM_SAFE_FLOAT_THRESHOLD ||
+        fabsf(command->wz_radps) > PLATFORM_SAFE_FLOAT_THRESHOLD) {
+        return true;
+    }
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        if (command->wheel_rpm[motor] != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void handle_platform_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE PLATFORM_STATUS\n");
+        return;
+    }
+
+    robot_motion_command_t command = {0};
+    bool have_command = robot_control_get_last_motion(handle->config.robot, &command);
+    bool command_active = have_command && motion_command_active(&command);
+    uint32_t last_age_ms = 0;
+    if (have_command && command.sequence != 0) {
+        last_age_ms = gateway_monotonic_ms() - command.issued_ms;
+    }
+
+    uint8_t online_count = 0;
+    uint8_t stale_count = 0;
+    uint8_t running_count = 0;
+    uint8_t faulted_count = 0;
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        svd48_motor_telemetry_t telemetry;
+        if (!robot_control_get_motor(handle->config.robot, motor, &telemetry)) {
+            continue;
+        }
+        if (telemetry.online) {
+            online_count++;
+        }
+        if (telemetry.stale) {
+            stale_count++;
+        }
+        if (telemetry.online && !telemetry.stale && abs(telemetry.actual_rpm) > PLATFORM_SAFE_RPM_THRESHOLD) {
+            running_count++;
+        }
+        if (telemetry.error_code != 0) {
+            faulted_count++;
+        }
+    }
+
+    char safe_reason[32];
+    bool safe_for_ota = robot_control_is_safe_for_ota(handle->config.robot, safe_reason, sizeof(safe_reason));
+    bool motion_active = command_active || running_count > 0;
+    const char *state = "SAFE_IDLE";
+    if (faulted_count > 0) {
+        state = "FAULT";
+    } else if (motion_active) {
+        state = "MOTION_ACTIVE";
+    }
+
+    print_locked(handle,
+                 "DATA PLATFORM STATE:%s AUTHORITY:SERIAL_ASCII PROTOCOL:ASCII_V1 HEARTBEAT:UNSUPPORTED ESTOP:UNSUPPORTED LAST_SEQ:%lu LAST_AGE_MS:%lu MOTION_ACTIVE:%u SAFE_FOR_OTA:%u SAFE_REASON:%s ONLINE:%u STALE:%u RUNNING:%u FAULTED:%u TRACE:%u STREAM:%u\n",
+                 state,
+                 (unsigned long)command.sequence,
+                 (unsigned long)last_age_ms,
+                 motion_active ? 1 : 0,
+                 safe_for_ota ? 1 : 0,
+                 safe_reason,
+                 online_count,
+                 stale_count,
+                 running_count,
+                 faulted_count,
+                 robot_control_get_trace_enabled(handle->config.robot) ? 1 : 0,
+                 handle->stream_enabled ? 1 : 0);
+}
+
 static void handle_version(serial_gateway_handle_t handle)
 {
     ota_manager_boot_state_t boot_state;
@@ -371,7 +495,7 @@ static esp_err_t get_wifi_status(serial_gateway_handle_t handle, wifi_manager_st
 static void print_wifi_status(serial_gateway_handle_t handle, const wifi_manager_status_t *status)
 {
     print_locked(handle,
-                 "DATA WIFI STATUS:%s SSID:%s IP:%s RSSI:%d RETRIES:%u/%u DISCONNECT_REASON:%u LAST_ERR:0x%x\n",
+                 "DATA WIFI STATUS:%s SSID:%s IP:%s RSSI:%d RETRIES:%u/%u DISCONNECT_REASON:%u LAST_ERR:0x%x AUTOCONNECT:%s PAUSED:%u RETRY_DELAY_MS:%lu\n",
                  wifi_manager_state_to_string(status->state),
                  status->ssid[0] ? status->ssid : "<empty>",
                  status->ip_addr[0] ? status->ip_addr : "<none>",
@@ -379,7 +503,44 @@ static void print_wifi_status(serial_gateway_handle_t handle, const wifi_manager
                  status->retry_count,
                  status->max_retries,
                  status->disconnect_reason,
-                 status->last_error);
+                 status->last_error,
+                 status->auto_connect_running ? "RUNNING" : "STOPPED",
+                 status->auto_connect_paused ? 1 : 0,
+                 (unsigned long)status->auto_retry_delay_ms);
+}
+
+static void handle_safety_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE SAFETY_STATUS\n");
+        return;
+    }
+    if (!handle->config.robot_safety) {
+        print_locked(handle, "ERR ROBOT_SAFETY_UNAVAILABLE\n");
+        return;
+    }
+
+    robot_safety_status_t status;
+    esp_err_t err = robot_safety_get_status(handle->config.robot_safety, &status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR SAFETY_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA SAFETY TASK:%s RC_AVAILABLE:%u RC_SEEN:%u RC_VALID:%u RC_LOSS:%u RC_LAST_AGE_MS:%lu MOTOR_FAULT:%u STOP_REQUESTS:%lu LAST_STOP_REASON:%s LAST_STOP_ERR:0x%x LOOPS:%lu\n",
+                 status.task_running ? "RUNNING" : "STOPPED",
+                 status.rc_available ? 1 : 0,
+                 status.rc_signal_seen ? 1 : 0,
+                 status.rc_signal_valid ? 1 : 0,
+                 status.rc_loss_active ? 1 : 0,
+                 (unsigned long)status.rc_last_frame_age_ms,
+                 status.motor_fault_active ? 1 : 0,
+                 (unsigned long)status.stop_requests,
+                 status.last_stop_reason[0] ? status.last_stop_reason : "NONE",
+                 status.last_stop_error,
+                 (unsigned long)status.loop_count);
 }
 
 static void handle_config_status(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -398,7 +559,7 @@ static void handle_config_status(serial_gateway_handle_t handle, int argc, char 
     }
 
     print_locked(handle,
-                 "DATA CONFIG WIFI_SSID:%s WIFI_PASSWORD:%s OTA_HOST:%s OTA_PORT:%u OTA_MANIFEST:%s OTA_AUTO_CHECK:%u OTA_AUTO_INTERVAL_MS:%lu OTA_AUTO_UPDATE:%u\n",
+                 "DATA CONFIG WIFI_SSID:%s WIFI_PASSWORD:%s OTA_HOST:%s OTA_PORT:%u OTA_MANIFEST:%s OTA_AUTO_CHECK:%u OTA_AUTO_INTERVAL_MS:%lu OTA_AUTO_UPDATE:%u OTA_ANNOUNCE_TOKEN:%s\n",
                  snapshot.wifi_ssid[0] ? snapshot.wifi_ssid : "<empty>",
                  snapshot.wifi_password_set ? "<set>" : "<empty>",
                  snapshot.ota_server_host,
@@ -406,7 +567,8 @@ static void handle_config_status(serial_gateway_handle_t handle, int argc, char 
                  snapshot.ota_manifest_path,
                  snapshot.ota_auto_check_enabled ? 1 : 0,
                  (unsigned long)snapshot.ota_auto_check_interval_ms,
-                 snapshot.ota_auto_update_enabled ? 1 : 0);
+                 snapshot.ota_auto_update_enabled ? 1 : 0,
+                 snapshot.ota_announce_token_set ? "<set>" : "<empty>");
 }
 
 static void handle_config_clear(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -447,6 +609,7 @@ static void handle_wifi_set(serial_gateway_handle_t handle, int argc, char *argv
     if (err == ESP_OK) {
         if (handle->config.wifi_manager) {
             (void)wifi_manager_disconnect(handle->config.wifi_manager);
+            (void)wifi_manager_set_auto_connect_paused(handle->config.wifi_manager, false);
         }
         print_locked(handle,
                      "OK WIFI_SET SSID:%s PASSWORD:%s\n",
@@ -610,13 +773,88 @@ static void handle_ota_config(serial_gateway_handle_t handle, int argc, char *ar
     }
 
     print_locked(handle,
-                 "DATA OTA_CONFIG HOST:%s PORT:%u MANIFEST:%s AUTO_CHECK:%u AUTO_CHECK_INTERVAL_MS:%lu AUTO_UPDATE:%u\n",
+                 "DATA OTA_CONFIG HOST:%s PORT:%u MANIFEST:%s AUTO_CHECK:%u AUTO_CHECK_INTERVAL_MS:%lu AUTO_UPDATE:%u ANNOUNCE_PORT:%u ANNOUNCE_TOKEN:%s\n",
                  snapshot.ota_server_host,
                  snapshot.ota_server_port,
                  snapshot.ota_manifest_path,
                  snapshot.ota_auto_check_enabled ? 1 : 0,
                  (unsigned long)snapshot.ota_auto_check_interval_ms,
-                 snapshot.ota_auto_update_enabled ? 1 : 0);
+                 snapshot.ota_auto_update_enabled ? 1 : 0,
+                 OTA_ANNOUNCE_DEFAULT_PORT,
+                 snapshot.ota_announce_token_set ? "<set>" : "<empty>");
+}
+
+static void handle_ota_announce_token_set(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc != 2) {
+        print_locked(handle, "ERR USAGE OTA_ANNOUNCE_TOKEN_SET token\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_ota_announce_token(handle->config.config_manager, argv[1]);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_ANNOUNCE_TOKEN_SET TOKEN:<set>\n");
+    } else {
+        print_locked(handle, "ERR OTA_ANNOUNCE_TOKEN_SET_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_announce_token_clear(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_ANNOUNCE_TOKEN_CLEAR\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_clear_ota_announce_token(handle->config.config_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK OTA_ANNOUNCE_TOKEN_CLEAR\n");
+    } else {
+        print_locked(handle, "ERR OTA_ANNOUNCE_TOKEN_CLEAR_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_ota_announce_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE OTA_ANNOUNCE_STATUS\n");
+        return;
+    }
+    if (!handle->config.ota_announce) {
+        print_locked(handle, "ERR OTA_ANNOUNCE_UNAVAILABLE\n");
+        return;
+    }
+
+    ota_announce_status_t status;
+    esp_err_t err = ota_announce_get_status(handle->config.ota_announce, &status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR OTA_ANNOUNCE_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA OTA_ANNOUNCE TASK:%s PORT:%u SEEN:%lu ACCEPTED:%lu REJECTED:%lu CHECKS:%lu DOWNLOAD_TESTS:%lu UPDATES:%lu LAST_SENDER:%s LAST_ACTION:%s DETAIL:%s\n",
+                 status.task_running ? "RUNNING" : "STOPPED",
+                 status.listen_port,
+                 (unsigned long)status.packets_seen,
+                 (unsigned long)status.packets_accepted,
+                 (unsigned long)status.packets_rejected,
+                 (unsigned long)status.checks,
+                 (unsigned long)status.download_tests,
+                 (unsigned long)status.updates,
+                 status.last_sender[0] ? status.last_sender : "<none>",
+                 status.last_action[0] ? status.last_action : "<none>",
+                 status.last_detail[0] ? status.last_detail : "<none>");
 }
 
 static void handle_ota_check(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -668,9 +906,38 @@ static void handle_ota_download_test(serial_gateway_handle_t handle, int argc, c
         print_locked(handle, "ERR OTA_MANAGER_UNAVAILABLE\n");
         return;
     }
+    if (!handle->config.wifi_manager) {
+        print_locked(handle, "ERR WIFI_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+    if (!handle->config.robot) {
+        print_locked(handle, "ERR ROBOT_CONTROL_UNAVAILABLE\n");
+        return;
+    }
+
+    wifi_manager_status_t wifi_status;
+    esp_err_t err = wifi_manager_get_status(handle->config.wifi_manager, &wifi_status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR OTA_DOWNLOAD_TEST_BLOCKED WIFI_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+        print_locked(handle,
+                     "ERR OTA_DOWNLOAD_TEST_BLOCKED WIFI_NOT_CONNECTED STATUS:%s\n",
+                     wifi_manager_state_to_string(wifi_status.state));
+        return;
+    }
+
+    char safety_reason[48] = { 0 };
+    if (!robot_control_is_safe_for_ota(handle->config.robot, safety_reason, sizeof(safety_reason))) {
+        print_locked(handle,
+                     "ERR OTA_DOWNLOAD_TEST_BLOCKED ROBOT_NOT_SAFE REASON:%s\n",
+                     safety_reason[0] ? safety_reason : "UNKNOWN");
+        return;
+    }
 
     ota_manager_download_result_t result;
-    esp_err_t err = ota_manager_download_test(handle->config.ota_manager, &result);
+    err = ota_manager_download_test(handle->config.ota_manager, &result);
     if (err != ESP_OK) {
         print_locked(handle,
                      "ERR OTA_DOWNLOAD_TEST_FAILED 0x%x DETAIL:%s PARTITION:%s BYTES:%lu\n",
@@ -1210,7 +1477,268 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+}
+
+static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
+{
+    if (!handle->config.ibus_receiver) {
+        print_locked(handle, "ERR IBUS_UNAVAILABLE\n");
+        return;
+    }
+
+    ibus_receiver_status_t status;
+    esp_err_t err = ibus_receiver_get_status(handle->config.ibus_receiver, &status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR IBUS_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu LAST_AGE_MS:%lu BYTES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu",
+                 status.signal_valid ? "OK" : "NO_SIGNAL",
+                 ibus_receiver_mode_to_string(status.mode),
+                 status.uart_port,
+                 status.rx_pin,
+                 (unsigned long)status.baud_rate,
+                 (unsigned long)status.stale_timeout_ms,
+                 (unsigned long)status.last_frame_age_ms,
+                 (unsigned long)status.bytes_received,
+                 (unsigned long)status.frames_seen,
+                 (unsigned long)status.valid_frames,
+                 (unsigned long)status.bad_header_frames,
+                 (unsigned long)status.bad_checksum_frames);
+    if (include_channels) {
+        for (uint8_t i = 0; i < IBUS_RECEIVER_CHANNELS; i++) {
+            print_locked(handle, " CH%u:%u", i + 1, status.channels[i]);
+        }
+    }
+    print_locked(handle, "\n");
+}
+
+static void handle_ibus_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE IBUS_STATUS\n");
+        return;
+    }
+    print_ibus_status(handle, true);
+}
+
+static void handle_ibus_mode(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (!handle->config.ibus_receiver) {
+        print_locked(handle, "ERR IBUS_UNAVAILABLE\n");
+        return;
+    }
+    if (argc != 1 && argc != 2) {
+        print_locked(handle, "ERR USAGE IBUS_MODE [IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
+        return;
+    }
+
+    if (argc == 1) {
+        ibus_receiver_status_t status;
+        esp_err_t err = ibus_receiver_get_status(handle->config.ibus_receiver, &status);
+        if (err == ESP_OK) {
+            print_locked(handle, "DATA IBUS_MODE MODE:%s\n", ibus_receiver_mode_to_string(status.mode));
+        } else {
+            print_locked(handle, "ERR IBUS_MODE_FAILED 0x%x\n", err);
+        }
+        return;
+    }
+
+    ibus_receiver_mode_t mode = IBUS_RECEIVER_MODE_IBUS;
+    if (!parse_ibus_mode_arg(argv[1], &mode)) {
+        print_locked(handle, "ERR USAGE IBUS_MODE [IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
+        return;
+    }
+
+    esp_err_t err = ibus_receiver_set_mode(handle->config.ibus_receiver, mode);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK IBUS_MODE MODE:%s\n", ibus_receiver_mode_to_string(mode));
+    } else {
+        print_locked(handle, "ERR IBUS_MODE_FAILED 0x%x MODE:%s\n", err, ibus_receiver_mode_to_string(mode));
+    }
+}
+
+static void handle_ibus_channels(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE IBUS_CHANNELS\n");
+        return;
+    }
+    print_ibus_status(handle, true);
+}
+
+static void handle_ibus_raw(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE IBUS_RAW\n");
+        return;
+    }
+    if (!handle->config.ibus_receiver) {
+        print_locked(handle, "ERR IBUS_UNAVAILABLE\n");
+        return;
+    }
+
+    ibus_receiver_status_t status;
+    esp_err_t err = ibus_receiver_get_status(handle->config.ibus_receiver, &status);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR IBUS_RAW_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA IBUS_RAW COUNT:%u BYTES:%lu HEX:",
+                 status.raw_sample_count,
+                 (unsigned long)status.bytes_received);
+    for (uint8_t i = 0; i < status.raw_sample_count; i++) {
+        print_locked(handle, "%s%02X", i == 0 ? "" : " ", status.raw_sample[i]);
+    }
+    print_locked(handle, "\n");
+}
+
+static void handle_ibus_pin(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE IBUS_PIN\n");
+        return;
+    }
+    if (!handle->config.ibus_receiver) {
+        print_locked(handle, "ERR IBUS_UNAVAILABLE\n");
+        return;
+    }
+
+    ibus_receiver_pin_sample_t sample;
+    esp_err_t err = ibus_receiver_sample_pin(handle->config.ibus_receiver, 2000, 50, &sample);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR IBUS_PIN_FAILED 0x%x\n", err);
+        return;
+    }
+
+    uint32_t high_permille = sample.samples == 0 ? 0 : (sample.high_count * 1000UL) / sample.samples;
+    print_locked(handle,
+                 "DATA IBUS_PIN RX_GPIO:%d SAMPLES:%lu HIGH:%lu LOW:%lu HIGH_PERMILLE:%lu TRANSITIONS:%lu LAST:%d\n",
+                 sample.rx_pin,
+                 (unsigned long)sample.samples,
+                 (unsigned long)sample.high_count,
+                 (unsigned long)sample.low_count,
+                 (unsigned long)high_permille,
+                 (unsigned long)sample.transitions,
+                 sample.last_level);
+}
+
+static void handle_ppm_capture(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc > 3) {
+        print_locked(handle, "ERR USAGE PPM_CAPTURE [duration_ms] [interval_us]\n");
+        return;
+    }
+    if (!handle->config.ibus_receiver) {
+        print_locked(handle, "ERR PPM_UNAVAILABLE\n");
+        return;
+    }
+
+    uint32_t duration_ms = 120;
+    uint32_t interval_us = 20;
+    if (argc >= 2 && (!parse_u32_any_arg(argv[1], &duration_ms) || duration_ms == 0 || duration_ms > 1000)) {
+        print_locked(handle, "ERR USAGE PPM_CAPTURE [duration_ms<=1000] [interval_us]\n");
+        return;
+    }
+    if (argc >= 3 && (!parse_u32_any_arg(argv[2], &interval_us) || interval_us > 1000)) {
+        print_locked(handle, "ERR USAGE PPM_CAPTURE [duration_ms] [interval_us<=1000]\n");
+        return;
+    }
+
+    ibus_receiver_ppm_capture_t capture;
+    esp_err_t err = ibus_receiver_capture_ppm(handle->config.ibus_receiver,
+                                              duration_ms * 1000UL,
+                                              interval_us,
+                                              &capture);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR PPM_CAPTURE_FAILED 0x%x\n", err);
+        return;
+    }
+
+    uint32_t high_permille = capture.samples == 0 ? 0 : (capture.high_count * 1000UL) / capture.samples;
+    print_locked(handle,
+                 "DATA PPM_CAPTURE RX_GPIO:%d REQUEST_US:%lu ELAPSED_US:%lu INTERVAL_US:%lu SAMPLES:%lu HIGH:%lu LOW:%lu HIGH_PERMILLE:%lu TRANSITIONS:%lu RISES:%lu FALLS:%lu INITIAL:%d LAST:%d EDGES:%u OVERFLOW:%u\n",
+                 capture.rx_pin,
+                 (unsigned long)capture.requested_duration_us,
+                 (unsigned long)capture.elapsed_us,
+                 (unsigned long)capture.interval_us,
+                 (unsigned long)capture.samples,
+                 (unsigned long)capture.high_count,
+                 (unsigned long)capture.low_count,
+                 (unsigned long)high_permille,
+                 (unsigned long)capture.transitions,
+                 (unsigned long)capture.rising_edges,
+                 (unsigned long)capture.falling_edges,
+                 capture.initial_level,
+                 capture.last_level,
+                 capture.edge_count,
+                 capture.edge_overflow ? 1 : 0);
+
+    print_locked(handle, "DATA PPM_EDGES FORMAT:time_us:level:since_prev_us VALUES:");
+    for (uint8_t i = 0; i < capture.edge_count; i++) {
+        const ibus_receiver_pin_edge_t *edge = &capture.edges[i];
+        print_locked(handle,
+                     "%s%lu:%d:%lu",
+                     i == 0 ? "" : ",",
+                     (unsigned long)edge->time_us,
+                     edge->level,
+                     (unsigned long)edge->duration_since_previous_us);
+    }
+    print_locked(handle, "\n");
+
+    uint32_t last_rise_us = 0;
+    uint16_t frame_channels[12] = { 0 };
+    uint16_t current_channels[12] = { 0 };
+    uint8_t frame_channel_count = 0;
+    uint8_t current_channel_count = 0;
+    uint32_t decoded_frames = 0;
+    uint32_t sync_gaps = 0;
+    print_locked(handle, "DATA PPM_RISE_DELTAS_US VALUES:");
+    bool first_delta = true;
+    for (uint8_t i = 0; i < capture.edge_count; i++) {
+        const ibus_receiver_pin_edge_t *edge = &capture.edges[i];
+        if (edge->level != 1) {
+            continue;
+        }
+        if (last_rise_us != 0) {
+            uint32_t delta_us = edge->time_us - last_rise_us;
+            print_locked(handle, "%s%lu", first_delta ? "" : ",", (unsigned long)delta_us);
+            first_delta = false;
+            if (delta_us > 3000) {
+                sync_gaps++;
+                if (current_channel_count > 0) {
+                    memcpy(frame_channels, current_channels, sizeof(frame_channels));
+                    frame_channel_count = current_channel_count;
+                    decoded_frames++;
+                }
+                memset(current_channels, 0, sizeof(current_channels));
+                current_channel_count = 0;
+            } else if (delta_us >= 800 && delta_us <= 2200 && current_channel_count < 12) {
+                current_channels[current_channel_count++] = (uint16_t)delta_us;
+            }
+        }
+        last_rise_us = edge->time_us;
+    }
+    print_locked(handle, "\n");
+
+    print_locked(handle,
+                 "DATA PPM_DECODE SYNC_GAPS:%lu FRAMES:%lu CHANNELS:%u",
+                 (unsigned long)sync_gaps,
+                 (unsigned long)decoded_frames,
+                 frame_channel_count);
+    for (uint8_t i = 0; i < frame_channel_count; i++) {
+        print_locked(handle, " CH%u:%u", i + 1, frame_channels[i]);
+    }
+    print_locked(handle, "\n");
 }
 
 static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *target, esp_err_t (*fn)(robot_control_handle_t, uint8_t))
@@ -1344,6 +1872,10 @@ static void print_pc_rx_trace(serial_gateway_handle_t handle, const char *origin
         }
         return;
     }
+    if (argc > 0 && strcasecmp(argv[0], "OTA_ANNOUNCE_TOKEN_SET") == 0) {
+        print_locked(handle, "TRACE PC_RX ASCII:\"OTA_ANNOUNCE_TOKEN_SET <redacted>\"\n");
+        return;
+    }
 
     print_locked(handle, "TRACE PC_RX ASCII:\"%s\"\n", original);
 }
@@ -1375,6 +1907,10 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
             return;
         }
         handle_version(handle);
+    } else if (strcasecmp(argv[0], "PLATFORM_STATUS") == 0) {
+        handle_platform_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SAFETY_STATUS") == 0) {
+        handle_safety_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "CONFIG_STATUS") == 0) {
         handle_config_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "CONFIG_CLEAR") == 0) {
@@ -1395,6 +1931,12 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_set_manifest(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_CONFIG") == 0) {
         handle_ota_config(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_ANNOUNCE_TOKEN_SET") == 0) {
+        handle_ota_announce_token_set(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_ANNOUNCE_TOKEN_CLEAR") == 0) {
+        handle_ota_announce_token_clear(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "OTA_ANNOUNCE_STATUS") == 0) {
+        handle_ota_announce_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_CHECK") == 0) {
         handle_ota_check(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_DOWNLOAD_TEST") == 0) {
@@ -1417,6 +1959,18 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_ota_auto_update(handle, argc, argv);
     } else if (strcasecmp(argv[0], "HELP") == 0) {
         print_help(handle);
+    } else if (strcasecmp(argv[0], "IBUS_STATUS") == 0) {
+        handle_ibus_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "IBUS_MODE") == 0) {
+        handle_ibus_mode(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "IBUS_CHANNELS") == 0) {
+        handle_ibus_channels(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "IBUS_RAW") == 0) {
+        handle_ibus_raw(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "IBUS_PIN") == 0) {
+        handle_ibus_pin(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "PPM_CAPTURE") == 0) {
+        handle_ppm_capture(handle, argc, argv);
     } else if (strcasecmp(argv[0], "TRACE") == 0) {
         if (argc != 2) {
             print_locked(handle, "ERR USAGE TRACE ON|OFF|STATUS\n");
