@@ -2,25 +2,28 @@
 
 Fecha: 2026-07-19
 
-Estado: `IN_PROGRESS`. El modelo puro de estados, su suite determinista y la
-transacción interna SVD48 FC `0x10` existen. Todavía faltan integración runtime,
-árbitro de fuentes, catálogo tipado, operación de mantenimiento, perfil JSON y
-writes públicos seguros.
+Estado: `IN_PROGRESS`. El modelo/servicio de estados, el árbitro puro de fuentes,
+la cinemática differential y la transacción interna SVD48 FC `0x10` existen.
+Todavía faltan coordinador/gate runtime, adaptadores de fuentes, catálogo tipado,
+operación de mantenimiento, perfil JSON y writes públicos seguros.
 
 ## Avance Verificado
 
 - `components/robot_state/robot_state_model.c` implementa seis estados, inhibits,
   fault latch, revisión monotónica y políticas separadas de movimiento,
   configuración y OTA.
+- `robot_state_service`, `command_authority` y `robot_kinematics` compilan; no
+  están instanciados por `main` ni son todavía la ruta de actuadores.
 - `tests/` aporta CMake/CTest, fake clock y event sink.
 - `svd48_write_registers_by_id()` valida FC `0x10` y hace un solo intento para no
   repetir a ciegas un write cuyo ACK se perdió.
-- `./tools/run_host_tests.sh` pasa 4/4 y ESP-IDF 5.4.1 compila build 12 para
+- `./tools/run_host_tests.sh` pasa 6/6 y ESP-IDF 5.4.1 compila build 13 para
   `esp32s3`.
 
 Esto no autoriza movimiento ni configuración física: el modelo aún no está
 conectado a `robot_control`, `robot_safety`, serial o LAN. El raw USB `WRITE_REG`
-conserva su riesgo histórico.
+ya rechaza registros conocidos de actuación, pero el resto conserva su riesgo
+histórico por falta de estado detenido, catálogo, old value y readback.
 
 ## Objetivo MVP
 

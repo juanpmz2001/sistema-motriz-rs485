@@ -2,7 +2,8 @@
 
 Fecha: 2026-07-19
 
-Estado: `PLANNED`. Diseño normativo actualizado; implementación no iniciada.
+Estado: `IN_PROGRESS`. Fundaciones puras de autoridad y cinemática diferencial
+implementadas con evidencia `E1`; integración runtime/perfiles/hardware pendiente.
 
 Referencias:
 
@@ -24,8 +25,29 @@ El firmware todavía contiene estas decisiones en compilación:
   deshabilitados;
 - comandos USB/LAN/RC sin un árbitro único de autoridad runtime.
 
-La presencia de `robot_state_model` no corrige esto todavía: el modelo puro no
-está instanciado por `main` ni consultado inmediatamente antes del I/O.
+La presencia de `robot_state_model`, su servicio mutex, `command_authority` y
+`robot_kinematics` no corrige esto todavía: todos compilan, pero `main` no los
+instancia como ruta de movimiento ni existe aún un coordinador único que haga el
+gate inmediatamente antes del I/O.
+
+## Implementación Disponible En Build 13
+
+- `command_authority_model` implementa prioridad `RC > LAN > Bluetooth`, TTL,
+  dead-man, secuencia, historial acotado fail-closed de streams retirados,
+  stop-before-switch, barrera temporal fresh-after-switch y fault-stop por pérdida
+  de una fuente que estaba moviendo.
+- `robot_kinematics_differential_inverse` acepta arreglos variables con uno o más
+  motores por lado y aplica radio, relación, signo, límite RPM y saturación global.
+- `robot_state_service` serializa transiciones y snapshots sin ejecutar callbacks
+  externos, pero no expone un supuesto permit check/use: ese gate debe vivir
+  dentro del coordinador de
+  actuadores para no crear una carrera entre validación y write.
+- `control_lan` valida un protocolo UDP compacto en `32322`, versión, token,
+  tamaño, stream/sequence y límites de velocidad; solo emite eventos tipados. El
+  componente está compilado pero no se inicia hasta conectar gate, autoridad,
+  perfil y coordinador.
+- `main`, USB `MOVE_VEL`, `robot_control`, RC y Bluetooth siguen en la ruta
+  heredada. Por tanto no hay autorización de movimiento LAN ni `GATE-SAFE`.
 
 ## Inventario Físico
 
@@ -306,15 +328,17 @@ inhibición y parada best effort con latencia medida.
 
 ### Autoridad
 
-- `SAFE-003A`: mailbox común y adaptadores RC/LAN/BT.
-- `SAFE-003B`: árbitro determinista y epoch de autoridad.
-- `SAFE-003C`: stop-before-switch y fresh-after-switch.
-- `SAFE-003D`: TTL/fault por fuente y métricas de latencia.
+- `SAFE-003A`: modelo de mailbox completo; adaptadores RC/LAN/BT pendientes.
+- `SAFE-003B`: árbitro determinista y epoch implementados/probados en host.
+- `SAFE-003C`: stop-before-switch, stream retirement y fresh-after-switch
+  implementados/probados en host.
+- `SAFE-003D`: TTL/fault implementados en el modelo; métricas/runtime pendientes.
 
 ### Cinemática
 
-- `KIN-001`: interfaz de estrategia pura y target array genérico.
-- `KIN-002`: differential con listas variables por lado.
+- `KIN-001`: target array genérico implementado para differential; selector de
+  estrategias/perfil pendiente.
+- `KIN-002`: differential con listas variables por lado implementado/probado.
 - `KIN-003`: fixtures de uno/dos/cuatro controladores sin estrategia distinta.
 - `KIN-004`: Ackermann linkage/per-wheel.
 - `KIN-005`: independent steer/crab y servo calibration.
@@ -333,6 +357,9 @@ Perfiles (`E1/E3`):
 
 Autoridad (`E1/E5`):
 
+Evidencia actual: las cinco primeras propiedades pasan en host (`E1`), pero sus
+checkboxes permanecen abiertos hasta medir integración/latencia elevada (`E5`).
+
 - [ ] RC preempta LAN y BT dentro del bound medido.
 - [ ] RC neutral/sin dead-man produce cero y bloquea fuentes inferiores.
 - [ ] LAN preempta BT.
@@ -341,6 +368,9 @@ Autoridad (`E1/E5`):
 - [ ] Todas las entradas de movimiento, incluido USB legado, pasan por el gate.
 
 Cinemática (`E1/E5`):
+
+Evidencia actual: differential 1..N, rechazo de `vy`/NaN, radio/relación/signo y
+saturación pasan en host (`E1`). Ackermann, crab, perfiles y `E5` siguen abiertos.
 
 - [ ] Differential soporta 1..N motores por lado según capabilities.
 - [ ] Ackermann produce diferencias interior/exterior coherentes con poses.

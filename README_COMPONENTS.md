@@ -13,7 +13,9 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 - `components/svd48`: SVD48V50A/SVD48B50A RS485 driver with read/write transactions, telemetry polling, logical motor mapping, and UU Motor CRC byte order.
 - `components/robot_control`: four-wheel robot abstraction, independent steering kinematics for `MOVE_VEL`, and PWM steering servo outputs.
 - `components/robot_safety`: high-priority RC/motor-fault safety supervisor. It never performs Wi-Fi, HTTP, JSON, OTA or NVS work.
-- `components/robot_state`: pure operational state/inhibit/fault-latch model. It is compiled and host-tested, but runtime services do not enforce it yet.
+- `components/robot_state`: pure operational state model plus a mutex-protected runtime service with single-owner inhibit slots and gate epochs. It compiles, but `main` does not instantiate it and actuator APIs do not enforce it yet.
+- `components/command_authority`: pure host-tested `RC > LAN > Bluetooth` mailbox/arbiter model with TTL, dead-man, sequence validation, authority epochs and stop/fault outcomes. Runtime source adapters remain pending.
+- `components/robot_kinematics`: pure generic differential strategy with variable motor arrays and proportional RPM saturation. Robot-profile and actuator integration remain pending.
 - `components/ibus_receiver`: FlySky i-BUS/SBUS receiver input and diagnostics.
 - `components/serial_gateway`: ASCII PC gateway over the ESP-IDF console/USB serial stream, plus the shared command dispatcher used by LAN maintenance.
 - `components/config_manager`: NVS-backed Wi-Fi, OTA and LAN maintenance configuration store.
@@ -21,8 +23,9 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 - `components/ota_manager`: OTA manifest validation, inactive-slot download verification, manual update, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: authenticated UDP LAN announce listener for no-USB OTA server discovery.
 - `components/maintenance_lan`: authenticated UDP LAN maintenance listener for diagnostics, telemetry and `STOP ALL` without USB. Movement/write/config mutation commands are blocked in v1.
+- `components/control_lan`: separate bounded UDP ingress on port `32322` for typed arm/command/disarm/stop events. It is compiled but deliberately not started or connected to movement yet.
 
-The root `CMakeLists.txt` explicitly includes the project component tree. The active dependency graph is rooted in `main/CMakeLists.txt`, which requires `svd48`, `robot_control`, `robot_safety`, `robot_state`, `serial_gateway`, `ibus_receiver`, `config_manager`, Wi-Fi/OTA services, and `maintenance_lan`.
+The root `CMakeLists.txt` explicitly includes the project component tree, including the compiled-but-disabled authority, kinematics and control-ingress foundations. The active runtime dependency graph is rooted in `main/CMakeLists.txt`, which requires `svd48`, `robot_control`, `robot_safety`, `robot_state`, `serial_gateway`, `ibus_receiver`, `config_manager`, Wi-Fi/OTA services, and `maintenance_lan`.
 
 ## Legacy Components
 

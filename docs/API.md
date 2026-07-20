@@ -8,6 +8,7 @@ Read `docs/skills/SVD48B50A_SKILL.md` before changing any RS485 register behavio
 
 - Default transport: USB serial console exposed by the ESP32-S3.
 - Optional maintenance transport: authenticated UDP JSON on port `32321` through `maintenance_lan`.
+- Reserved motion ingress: `control_lan` UDP `32322` is compiled but not started by `main`; it is not an operational API yet.
 - Baud rate: `115200` when using a UART bridge.
 - Commands are case-insensitive.
 - Motor indices are zero-based: `MOTOR_0`..`MOTOR_3`.
@@ -129,6 +130,20 @@ If the command dispatcher emits an `ERR` line, the envelope is also an error. `d
 ```
 
 `packets_accepted` means that authentication and request validation succeeded; a valid command packet can be accepted while its command result is `status:"err"`. This compatibility adapter still infers results from ASCII output; `TRANS-002` will replace that inference with a typed management result.
+
+### Compiled, Inactive `control_lan` Contract
+
+Build 13 contains a separate parser for the future LAN motion path. It requires
+`type:"botfarms_control_command"`, `protocol_version:"1.0"`, `request_id`, the
+maintenance token, `stream_id`, an exact increasing integer `sequence`, and one
+of `arm`, `command`, `disarm`, or `stop`. A command also requires bounded finite
+`vx_mps`, `vy_mps`, `wz_radps`, and boolean `deadman`.
+
+This component only emits a typed event and has no motor calls. `main` does not
+start it, so sending UDP to `32322` currently produces no response or movement.
+Activation is blocked until the state gate and one actuator coordinator own all
+movement APIs, a validated robot profile supplies limits/TTL, and RC/LAN/BT
+adapters use the common authority model.
 
 ```text
 WIFI_SET "ssid" "password"
@@ -271,7 +286,7 @@ READ_REG drive_id reg [count]
 WRITE_REG drive_id reg value
 ```
 
-Reads or writes raw 16-bit SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, `reg`, and `value` accept decimal or `0x` hex. This is engineering access, not an SV-Config-equivalent parameter workflow: it has no typed float/32-bit codec, public management command for function `0x10`, access/range enforcement, stopped-motor interlock, old-value capture, readback, rollback, or controller-flash save. The driver now has an internal tested `svd48_write_registers_by_id()` transaction, but it is not reachable from serial/LAN and is not a safe configuration workflow by itself. Do not use `WRITE_REG` as a production configuration API.
+Reads or writes raw 16-bit SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, `reg`, and `value` accept decimal or `0x` hex. Raw writes that touch known runtime actuation registers `0x5300`, `0x5301`, `0x5304`, `0x5305`, `0x5308`, or `0x5309` are rejected; serial reports `ERR WRITE_REG_ACTUATION_BLOCKED`. This is containment, not a safe parameter service: other raw configuration writes still have no typed float/32-bit codec, catalog/range policy, stopped-motor interlock, old-value capture, readback, rollback, or controller-flash save. The internal tested `svd48_write_registers_by_id()` transaction is not reachable from serial/LAN. Do not use `WRITE_REG` as a production configuration API.
 
 ```text
 GET_SVD48_CONFIG drive_id [M1|M2|ALL]

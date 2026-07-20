@@ -36,7 +36,9 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 ## Firmware Architecture
 
 - `components/svd48`: serialized RS485 driver for two SVD48 drives / four logical motors. Implements reads, single-register writes, telemetry polling, UU Motor CRC byte order, high-bit exception diagnostics, and stale/fault state. Its internal `0x10` transaction validates the echoed register/count and does not retry an ambiguous write, but it is not exposed as a serial/LAN configuration command.
-- `components/robot_state`: pure, deterministic operational-state model for `BOOTING`, `DISARMED`, `ARMED`, `FAULTED`, `MAINTENANCE`, and `OTA`, including active inhibits, fault latches, transition actions, and motion/configuration/OTA policies. It is covered by host tests but is not yet wired into runtime movement entry points.
+- `components/robot_state`: pure operational-state model plus a mutex-protected ESP-IDF service for single-owner inhibit slots, fault latches, direct transition results, snapshots, and gate epochs. It deliberately exposes neither external callbacks nor a check/use motion permit; both layers compile, but `main` does not instantiate the service and movement entry points do not enforce it yet.
+- `components/command_authority`: pure deterministic mailbox/arbiter model for simultaneous `RC > LAN > Bluetooth` inputs, TTL, dead-man, sequence checks, authority epochs, stop-before-switch, and fresh-after-switch. It is host-tested but has no runtime adapters or actuator ownership yet.
+- `components/robot_kinematics`: pure generic differential kinematics for one or more motors per side, with per-motor radius, transmission ratio, sign, RPM limit, and proportional saturation. Profile parsing and runtime actuation integration remain pending; Ackermann and crab strategies are not implemented.
 - `components/robot_control`: maps four logical motors into robot commands. Implements `MOVE_VEL vx vy wz` as independent steering kinematics and controls four PWM steering servos.
 - `components/robot_safety`: high-priority safety supervisor. It watches RC/i-BUS signal loss after a valid signal is seen and online motor fault telemetry, then requests `STOP ALL` without doing Wi-Fi, HTTP, JSON, OTA or NVS work.
 - `components/ibus_receiver`: low-latency FlySky i-BUS/SBUS receiver input used by the safety supervisor and diagnostics.
@@ -46,12 +48,19 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 - `components/ota_manager`: manifest validation, inactive-slot download/verification, manual boot-slot switch, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: low-priority authenticated UDP listener for LAN OTA announcements from developer laptops.
 - `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for safe diagnostics and telemetry without USB. It uses a separate maintenance token and blocks movement/write commands in v1.
-- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, telemetry polling, robot control, i-BUS, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services.
+- `components/control_lan`: bounded UDP control-ingress component on port `32322`. It validates the maintenance token and parses arm/command/disarm/stop events without touching motors. It is compiled but intentionally not started until authority adapters, the runtime safety gate, a single actuator coordinator, and a valid robot profile exist.
+- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, telemetry polling, the current fixed robot control, i-BUS, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services. It does not yet start `control_lan` or the new state/authority/kinematics path.
 
 Run the CMake/CTest host suite before every firmware build or hardware session:
 
 ```bash
 ./tools/run_host_tests.sh
+```
+
+Run the same suite with AddressSanitizer and UndefinedBehaviorSanitizer using:
+
+```bash
+BOTFARMS_HOST_TEST_SANITIZERS=ON ./tools/run_host_tests.sh
 ```
 
 The old Arduino sketches and previous ESP-IDF Bluetooth/PPM components are kept as historical reference, but the active firmware path is the SVD48 framework above.

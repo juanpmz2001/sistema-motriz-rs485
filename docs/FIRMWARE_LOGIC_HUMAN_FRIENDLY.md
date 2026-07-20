@@ -48,7 +48,7 @@ PC / navegador / control RC
        controladores y motores
 ```
 
-Wi-Fi, OTA y mantenimiento LAN corren como servicios secundarios. No deberían calcular movimiento ni apoderarse del bus de seguridad.
+Wi-Fi, OTA y mantenimiento LAN corren como servicios secundarios. No deberían calcular movimiento ni apoderarse del bus de seguridad. El nuevo `control_lan` compila, pero está apagado en `main` hasta que exista una ruta segura completa.
 
 ## Qué Sucede al Encender Hoy
 
@@ -135,7 +135,7 @@ cada 20ms:
 
 Limitaciones importantes:
 
-- no existe un estado `ARMED/DISARMED/FAULTED` real;
+- existe el modelo/servicio de `ARMED/DISARMED/FAULTED`, pero la ruta actual de movimiento no lo instancia ni lo consulta;
 - el fallo no queda enclavado;
 - si nunca llegó una trama RC, no se considera pérdida;
 - un motor offline/stale se ignora en vez de bloquear movimiento;
@@ -319,6 +319,8 @@ Pseudocódigo de `WRITE_REG`:
 
 ```text
 recibir drive_id, registro, valor
+si el registro es una consigna/START/STOP conocida:
+    rechazar WRITE_REG_ACTUATION_BLOCKED
 llamar robot_control_write_svd48_register
 llamar svd48_write_register_by_id
 construir frame 0x06
@@ -327,7 +329,7 @@ si eco exacto: OK
 si no: ERROR
 ```
 
-No comprueba estado detenido, sesión, rango, old value, readback ni persistencia. Por eso debe seguir siendo acceso de laboratorio USB y no convertirse directamente en un formulario web.
+El bloqueo de registros de actuación evita el bypass más directo, pero las demás escrituras raw no comprueban estado detenido, sesión, rango, old value, readback ni persistencia. Por eso debe seguir siendo acceso de laboratorio USB y no convertirse directamente en un formulario web.
 
 ## Movimiento Actual Simplificado
 
@@ -412,6 +414,10 @@ real por accidente.
 
 ## Nuevo Contrato: RC, LAN y Bluetooth Simultaneos
 
+Estado build 13: el árbitro puro ya implementa y prueba esta prioridad, TTL,
+dead-man, streams retirados, epoch y no-fallback. Todavía no recibe datos reales
+de RC/LAN/Bluetooth ni controla `robot_control`.
+
 Las tres entradas se siguen leyendo, pero ninguna escribe directamente a los
 motores:
 
@@ -469,7 +475,7 @@ bloquean el loop de safety/control.
 
 ## Máquina de Estados Objetivo
 
-Estado de implementacion al 2026-07-19: la logica pura de esta tabla ya existe en `components/robot_state/robot_state_model.c` y se prueba en la laptop. Todavia no esta conectada a `main`, `robot_control`, `robot_safety` ni a los comandos USB/LAN. Por eso el firmware actual aun no puede afirmar que todo movimiento pase por este gate; esa integracion es el siguiente paso de seguridad.
+Estado de implementacion al 2026-07-19: la logica pura y un servicio mutex de transiciones/snapshots ya existen y compilan. El servicio no ofrece un "permiso" separado del write porque eso crea una carrera check/use; el gate real debe vivir dentro del coordinador que sea dueño único de los actuadores. Todavia no está conectado a `main`, `robot_control`, `robot_safety` ni a los comandos USB/LAN. Por eso el firmware actual aun no puede afirmar que todo movimiento pase por este gate.
 
 Pseudocódigo conceptual:
 

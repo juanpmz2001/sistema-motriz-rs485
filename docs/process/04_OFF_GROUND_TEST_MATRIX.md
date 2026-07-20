@@ -59,7 +59,7 @@ Stop immediately on unexpected motion, wrong wheel/servo mapping, inability to s
 | `TEST-HOST-001` | Firmware clean build | Build with supported ESP-IDF/toolchain | Success; sizes within OTA slots | `E2` | `PASS 2026-07-19` |
 | `TEST-HOST-002` | SVD48 protocol suite | Run CRC/frame/parser/codec/catalog tests | All golden and malformed cases pass | `E1` | `IN_PROGRESS` |
 | `TEST-HOST-003` | Profile validation suite | Run every valid/invalid/migration/corruption fixture | Stable exact results | `E1` | `NOT_STARTED` |
-| `TEST-HOST-004` | Kinematic suite | Run all strategy/sign/saturation/NaN fixtures | Targets match independently calculated fixtures | `E1` | `NOT_STARTED` |
+| `TEST-HOST-004` | Kinematic suite | Run all strategy/sign/saturation/NaN fixtures | Targets match independently calculated fixtures | `E1` | `IN_PROGRESS` (differential passes) |
 | `TEST-HOST-005` | Safety state suite | Run all legal/illegal transition and lease/fault cases | No movement accepted while inhibited | `E1` | `IN_PROGRESS` |
 | `TEST-HOST-006` | Transport shared fixtures | Run serial/LAN/version/auth/correlation/size fixtures | C/Python/Node agree | `E1/E2` | `IN_PROGRESS` |
 | `TEST-HOST-007` | Web unit/API suite | Run schemas, auth, policy, profiles, mocked transports | All pass with stable error contract | `E2` | `NOT_STARTED` |
@@ -83,6 +83,13 @@ Incremental evidence from firmware build 12 (2026-07-19):
 - State fixtures cover boot-to-disarmed, arm blockers, stale fault latch, explicit ACK, lease-expiry recovery policy, maintenance/write gates and OTA/maintenance exclusion. Runtime movement APIs are not connected yet, so `TEST-HOST-005` remains `IN_PROGRESS`.
 - FC `0x10` fixtures validate request limits and ACK slave/function/start/count/length/CRC. The internal driver transaction makes one attempt and remains inaccessible from USB/LAN; restrained-controller evidence is pending.
 - ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`), target `esp32s3`, build 12 binary `0xfe600`, smallest app slot `0x600000`, 83% free.
+
+Incremental evidence from firmware build 13 (2026-07-19):
+
+- `./tools/run_host_tests.sh`: `PASS`, 6/6 CTest tests (`E1`). Authority has 14 cases and differential kinematics has 12 cases, including regressions found by independent review for dead-man invalidation, retired/full stream history, temporal epoch barriers, numeric underflow and final RPM clamping.
+- `BOTFARMS_HOST_TEST_SANITIZERS=ON ./tools/run_host_tests.sh`: `PASS`, 6/6 with ASan/UBSan; LeakSanitizer remains disabled in this supervised environment.
+- ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`), target `esp32s3`, build 13 binary `0xfe6a0`, smallest app slot `0x600000`, 83% free. `robot_state_service`, `command_authority`, `robot_kinematics` and `control_lan` compiled in the graph.
+- No `E3..E5` row was executed. The new state/authority/kinematics/control-LAN path is not started by `main` and does not authorize movement.
 
 ## C. ESP Without SVD48/Motors
 

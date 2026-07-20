@@ -2,7 +2,7 @@
 
 Fecha: 2026-07-19
 
-Estado: `IN_PROGRESS`. Complementa `04_OFF_GROUND_TEST_MATRIX.md`: ya existe el arnes CMake/CTest, fake clock/event sink y la primera suite pura de estados. Faltan arbitraje simultaneo `RC > LAN > Bluetooth`, fake SVD48/bus, change sets, perfil JSON canonico, fuzzing y las capas ESP/backend/HIL.
+Estado: `IN_PROGRESS`. Complementa `04_OFF_GROUND_TEST_MATRIX.md`: ya existe el arnes CMake/CTest, fake clock/event sink y suites puras de estado, autoridad simultanea `RC > LAN > Bluetooth` y cinemática diferencial. Faltan integración del coordinador/gate, fake SVD48/bus, change sets, perfil JSON canonico, fuzzing y las capas ESP/backend/HIL.
 
 ## Objetivo
 
@@ -45,6 +45,8 @@ tests/
     host_test.c/.h
     host_test_support_test.c
     robot_state_model_test.c
+    command_authority_model_test.c
+    robot_kinematics_test.c
   fakes/
     fake_clock.c/.h
     fake_event_sink.c/.h
@@ -52,14 +54,15 @@ cmake/host_tests/BotfarmsHostTest.cmake
 tools/run_host_tests.sh
 ```
 
-`./tools/run_host_tests.sh` configura un build temporal, compila con `-Wall -Wextra -Wpedantic -Werror`, ejecuta CTest y conserva el oraculo Python independiente de frames SVD48. La ejecucion 2026-07-19 paso 4/4 pruebas normal y 4/4 con ASan/UBSan (`detect_leaks=0` por restriccion `ptrace` del entorno).
+`./tools/run_host_tests.sh` configura un build temporal, compila con `-Wall -Wextra -Wpedantic -Werror`, ejecuta CTest y conserva el oraculo Python independiente de frames SVD48. La ejecucion build 13 del 2026-07-19 paso 6/6 pruebas normal y 6/6 con ASan/UBSan (`detect_leaks=0` por restriccion `ptrace` del entorno).
 
 Cobertura parcial actual:
 
 - `QA-STATE-001`, `003`, `005`, `009`, `010`, `011`, `012` y `013` tienen casos puros del modelo.
-- `QA-STATE-006` prueba la politica posterior a lease expirada, pero aun no su vencimiento automatico mediante `command_authority` + fake clock.
+- `command_authority_model_test` cubre prioridad triple, dead-man RC, preempción LAN/BT, TTL en movimiento, no stale fallback, streams retirados, secuencia, barrera temporal y stop explícito. Aún falta conectarlo al fake clock/coordinador runtime.
+- `robot_kinematics_test` cubre dos/cuatro motores, giro puro, radio/ratio/signo por actuador, rechazo de `vy`/NaN/config inválida y saturación proporcional acotada. Ackermann/crab/perfiles aún no existen.
 - `QA-SVD-011` cubre ACK `0x10` valido y rechazo por start/count/slave/function/CRC/longitud; aun falta fake UART para timeout post-TX y readback.
-- Ninguna prueba actual demuestra que las APIs runtime de movimiento consulten el modelo; eso corresponde a `SAFE-002` y mantiene `INV-001/002/003` abiertos.
+- Ninguna prueba actual demuestra que las APIs runtime de movimiento consulten el modelo. Se eliminó el API de permit check/use del servicio por su carrera inherente; `SAFE-002` debe resolverse dentro de un único coordinador de actuadores y mantiene `INV-001/002/003` abiertos.
 
 ## Capas de QA
 
@@ -119,7 +122,7 @@ Comandos objetivo, a implementar en `TEST-001/003`:
 ./tools/run_qa.sh all
 ```
 
-Estos comandos siguen siendo el objetivo del runner integral. Actualmente `./tools/run_host_tests.sh` ya ejecuta el proyecto CTest para contratos, estados y fakes; `tools/run_qa.sh` y los modos firmware/web todavia no existen.
+Estos comandos siguen siendo el objetivo del runner integral. Actualmente `./tools/run_host_tests.sh` ya ejecuta el proyecto CTest para contratos, estados, autoridad, differential y fakes; `tools/run_qa.sh` y los modos firmware/web todavia no existen.
 
 ## Modelo del Fake SVD48
 

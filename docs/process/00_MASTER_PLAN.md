@@ -13,14 +13,18 @@ contracts are stable. Normative details are in
 `05_SAFE_CONFIGURATION_WRITE_PLAN.md` and
 `06_SIMULATED_QA_FAULT_INJECTION_PLAN.md`.
 
-Current implementation slice (2026-07-19, firmware build 12):
+Current implementation slice (2026-07-19, firmware build 13):
 
 - LAN compatibility responses now map captured `ERR` lines to `status:"err"` (`TRANS-001`, hardware/web verification pending).
 - Serial overlength input drains through the delimiter before accepting another command (`TRANS-007`; explicit response completion is still pending).
 - Motor targets are prepared before `START`; partial prepare/start failures request a fail-stop (`SAFE-005/009`; elevated HIL evidence pending).
-- A pure `robot_state` model now defines all six operational states, active inhibits, fault latches, transition actions and separate motion/configuration/OTA authorization policies. Runtime service integration and movement gates remain pending (`SAFE-001/002`).
-- The host QA project now uses CMake/CTest with strict C11 warnings, a fake monotonic clock and bounded event sink. State, protocol, framing and reference-vector tests pass normally and with ASan/UBSan (`TEST-001/007`).
+- A mutex-protected `robot_state_service` now aggregates single-owner inhibit slots, preserves faults and serializes direct transition results/snapshots with a gate epoch. External callbacks and the reviewed check/use permit API were removed; the real gate must be inside the future actuator coordinator. The service is compiled but not instantiated by `main` (`SAFE-001/002`).
+- A pure `command_authority` model implements simultaneous `RC > LAN > Bluetooth`, bounded mailboxes, TTL/dead-man/sequence validation, stop-before-switch, fresh-after-switch, epochs and moving-source-loss fault-stop. Runtime source adapters and actuator ownership remain pending (`SAFE-003/004`).
+- Pure `robot_kinematics` differential mapping now supports one or more motors per side with per-motor radius, ratio, sign, RPM ceiling and proportional global saturation. Profile parsing/runtime integration and Ackermann/crab strategies remain pending (`KIN-001..005`).
+- A bounded token-authenticated `control_lan` UDP ingress exists on port `32322` and emits typed events only. It is compiled but intentionally not started or connected to movement until the runtime gate, authority adapters, valid profile and actuator coordinator exist (`TRANS-009`).
+- The host QA project uses CMake/CTest with strict C11 warnings, a fake monotonic clock and bounded event sink. Six state, authority, differential-kinematics, protocol, framing and reference-vector tests pass normally and with ASan/UBSan (`TEST-001/007`).
 - SVD48 exceptions preserve matching high-bit function/code/time, and the internal `0x10` path now builds, transacts and validates echoed start/count without blind write retries. It remains unreachable from serial/LAN and has no maintenance/change-set semantics (`SVD-001/002/003`).
+- Raw single/multiple writes now reject ranges touching known runtime actuation registers, and a failed zero-target write still attempts `STOP`. Typed, stopped-state, readback-verified configuration writes remain pending (`SVD-008`, `SAFE-005/009`).
 
 ## Outcome
 
@@ -92,9 +96,9 @@ bounded/deduplicated. Production trust controls remain explicit deferred work.
 
 | ID | Work item | Status | Dependencies | MVP |
 | --- | --- | --- | --- | --- |
-| `SAFE-001` | Define states `BOOTING`, `DISARMED`, `ARMED`, `FAULTED`, `MAINTENANCE`, `OTA`; define legal transitions | `IN_PROGRESS` (pure model/tests complete; runtime service pending) | `OPS-001` | yes |
+| `SAFE-001` | Define states `BOOTING`, `DISARMED`, `ARMED`, `FAULTED`, `MAINTENANCE`, `OTA`; define legal transitions | `IN_PROGRESS` (model and thread-safe service complete/compiled; `main` wiring pending) | `OPS-001` | yes |
 | `SAFE-002` | Enforce latched inhibit in `robot_control`/actuator coordinator, not only in periodic safety task | `NOT_STARTED` | `SAFE-001` | yes |
-| `SAFE-003` | Add simultaneous RC/LAN/Bluetooth mailboxes, strict `RC > LAN > BT` arbitration, authority epochs, TTL and stop-before-switch | `NOT_STARTED` | `SAFE-001` | yes |
+| `SAFE-003` | Add simultaneous RC/LAN/Bluetooth mailboxes, strict `RC > LAN > BT` arbitration, authority epochs, TTL and stop-before-switch | `IN_PROGRESS` (pure model/tests complete; source adapters/control task pending) | `SAFE-001` | yes |
 | `SAFE-004` | Enforce per-source `availability_policy`; distinguish optional absence, invalid/stale data, selected-source loss and explicit disarm | `NOT_STARTED` | `SAFE-003`, `PROF-001` | yes |
 | `SAFE-005` | Make complete actuator updates fail-safe: precompute, validate, commit, and stop on partial failure | `IN_PROGRESS` | `SAFE-002` | yes |
 | `SAFE-006` | Add emergency-class bus scheduling or bounded preemption for stop commands | `NOT_STARTED` | `SAFE-002` | yes |
@@ -124,9 +128,9 @@ Exit: each known robot is representable, but only the profile matching current h
 
 | ID | Work item | Status | Dependencies | MVP |
 | --- | --- | --- | --- | --- |
-| `KIN-001` | Define pure strategy interface over variable actuator IDs/poses and complete target arrays | `NOT_STARTED` | `PROF-001` | yes |
-| `KIN-002` | Implement generic differential strategy with 1..N motors per left/right group | `NOT_STARTED` | `KIN-001` | yes |
-| `KIN-003` | Prove one-drive/two-motor, two-drive/four-motor and four-drive/four-motor fixtures use the same differential strategy | `NOT_STARTED` | `KIN-002` | yes |
+| `KIN-001` | Define pure strategy interface over variable actuator IDs/poses and complete target arrays | `IN_PROGRESS` (generic traction target API complete for differential; strategy/profile dispatch pending) | `PROF-001` | yes |
+| `KIN-002` | Implement generic differential strategy with 1..N motors per left/right group | `DONE` (pure implementation and host fixtures; runtime integration tracked separately) | `KIN-001` | yes |
+| `KIN-003` | Prove one-drive/two-motor, two-drive/four-motor and four-drive/four-motor fixtures use the same differential strategy | `IN_PROGRESS` (two- and four-motor pure fixtures pass; controller/profile mapping pending) | `KIN-002` | yes |
 | `KIN-004` | Implement Ackermann ICR geometry for single-linkage and per-wheel steering | `NOT_STARTED` | `KIN-001` | yes |
 | `KIN-005` | Implement independent-steer/crab modules plus per-servo calibration/limits | `NOT_STARTED` | `PROF-002`, `KIN-001` | yes |
 | `KIN-006` | Add acceleration/jerk limiting and steering hysteresis | `DEFERRED` | baseline deterministic motion | revisit before performance tuning |
@@ -146,7 +150,7 @@ Detailed ownership is in `01_SVD48_REGISTER_COVERAGE.md`.
 | `SVD-005` | Build parameter catalog with access, range, unit, scope, persistence, safety class, and confidence | `NOT_STARTED` | audit complete | yes |
 | `SVD-006` | Add typed single/group reads and controller inventory/capabilities | `NOT_STARTED` | `SVD-004`, `SVD-005` | yes |
 | `SVD-007` | Add expected-versus-live drift fingerprint without automatic boot writes | `NOT_STARTED` | `SVD-006`, `PROF-001` | yes |
-| `SVD-008` | Deprecate direct raw maintenance access from normal builds/policies | `NOT_STARTED` | typed diagnostics available | yes |
+| `SVD-008` | Deprecate direct raw maintenance access from normal builds/policies | `IN_PROGRESS` (known runtime actuation registers denied; other raw configuration access remains) | typed diagnostics available | yes |
 
 Exit: browser and CLI can inspect all verified fields read-only over USB and LAN.
 
@@ -161,7 +165,7 @@ Exit: browser and CLI can inspect all verified fields read-only over USB and LAN
 | `TRANS-006` | Implement a backend-owned telemetry scheduler and typed samples; browsers subscribe instead of independently polling | `NOT_STARTED` | `TRANS-005` | yes |
 | `TRANS-007` | Make serial framing recover safely from overlong/malformed input by draining to a delimiter; add explicit completion framing | `IN_PROGRESS` | `TRANS-002` | yes |
 | `TRANS-008` | Add idempotency/deduplication for retried requests and jobs; same ID with different body is an error | `NOT_STARTED` | `TRANS-003` | yes |
-| `TRANS-009` | Add compact `control_lan` ingress on a separate port; validate stream/sequence/TTL and publish only the LAN mailbox | `NOT_STARTED` | `SAFE-003`, `TRANS-003` | yes |
+| `TRANS-009` | Add compact `control_lan` ingress on a separate port; validate stream/sequence/TTL and publish only the LAN mailbox | `IN_PROGRESS` (bounded authenticated parser/event ingress compiles; mailbox/runtime/HIL pending) | `SAFE-003`, `TRANS-003` | yes |
 | `AUTH-003` | Replace local bearer token with identity/HMAC/nonce/timestamp/replay security | `DEFERRED` | before hostile/shared network or production | no for local prototype |
 | `AUTH-004` | Evaluate authenticated TCP/TLS for large configuration payloads | `DEFERRED` | measured UDP/chunking constraints | future architecture decision |
 | `AUTH-005` | Add signed firmware trust policy and evaluate Secure Boot, flash encryption, and NVS encryption against recovery/manufacturing needs | `NOT_STARTED` | threat model and key-provisioning procedure | yes before production deployment |
@@ -210,7 +214,7 @@ Exit: the UI cannot invent register semantics and cannot offer unsupported/unsaf
 | `TEST-004` | Execute all USB and LAN-only tests with ESP and no motor bus | `NOT_STARTED` | transport implementation | yes |
 | `TEST-005` | Execute SVD48 tests with motor power isolated or wheels removed | `NOT_STARTED` | typed read/write slices | yes |
 | `TEST-006` | Execute complete elevated-robot matrix with physical cutoff operator | `NOT_STARTED` | all MVP gates | yes |
-| `TEST-007` | Automate deterministic state/authority/change-set tests with virtual clock, fake SVD48/bus and communication fault injection | `IN_PROGRESS` (harness/state tests complete; authority/bus/change-set pending) | `SAFE-001`, `SVD-003`, test harness | yes |
+| `TEST-007` | Automate deterministic state/authority/change-set tests with virtual clock, fake SVD48/bus and communication fault injection | `IN_PROGRESS` (harness/state/authority tests complete; bus/change-set pending) | `SAFE-001`, `SVD-003`, test harness | yes |
 | `TEST-008` | Add frontend Playwright/accessibility tests only after backend B0-B5 | `DEFERRED` | `WEB-101/102` | frontend phase |
 | `OPS-010` | Sign firmware/artifacts and define compatibility/rollback matrix | `NOT_STARTED` | transport/release baseline | yes before production |
 
@@ -220,12 +224,14 @@ Exit: `GATE-BENCH` passes and a separate approved floor-test plan is created. Fl
 
 Keep pull requests independently reviewable while prioritizing a usable configuration vertical:
 
-1. Finish runtime state service, gate every output, latch faults and prioritize
-   emergency stop: `SAFE-001/002/005/006/009`, `TEST-001/003/007`.
-2. Implement simultaneous source mailboxes/arbiter and compact LAN control ingress:
-   `SAFE-003/004`, `TRANS-009`.
-3. Implement canonical JSON validation/capabilities/runtime snapshot and generic
-   differential 2WD: `PROF-001/002/004/007`, `KIN-001/002`.
+1. Instantiate the completed state service, feed real health producers, add one
+   actuator coordinator and gate/revalidate every output immediately before I/O:
+   `SAFE-001/002/005/006/009`, `TEST-001/003/007`.
+2. Implement canonical JSON validation/capabilities/runtime snapshot and a
+   measured factory profile before replacing the current fixed topology:
+   `PROF-001/002/004/007`.
+3. Connect RC/LAN/Bluetooth adapters to the completed authority model and only
+   then start the existing `control_lan` ingress: `SAFE-003/004`, `TRANS-009`.
 4. Finish `0x10`, typed codecs, parameter catalog, inventory and compare:
    `SVD-003..007`.
 5. Add JSON A/B persistence/upload plus typed management/change-set jobs with no

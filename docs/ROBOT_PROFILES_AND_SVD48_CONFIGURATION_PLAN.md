@@ -2,8 +2,10 @@
 
 Fecha: 2026-07-19
 
-Estado: `PLANNED`. Este documento reemplaza el diseño anterior basado en una
-estructura C de cuatro motores. El contrato normativo del perfil está en
+Estado: `IN_PROGRESS`. El schema/fixture, autoridad pura y cinemática
+differential ya existen; parser/persistencia/runtime del perfil y las demás
+estrategias siguen pendientes. Este documento reemplaza el diseño anterior basado
+en una estructura C de cuatro motores. El contrato normativo del perfil está en
 `docs/schemas/robot-profile.schema.json` y el primer fixture físico en
 `docs/examples/robot-profile-differential-2wd-one-svd48.json`.
 
@@ -238,18 +240,21 @@ un servicio separado, por defecto UDP `32322`, con mensajes compactos:
 {
   "type": "botfarms_control_command",
   "protocol_version": "1.0",
+  "request_id": "request-uuid",
   "stream_id": "backend-random-id",
   "sequence": 42,
   "token": "...",
   "action": "command",
-  "command": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_radps": 0.2}
+  "command": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_radps": 0.2, "deadman": true}
 }
 ```
 
-El ESP usa su hora de recepción para TTL, rechaza secuencias repetidas o
-regresivas y publica el comando en el mailbox LAN. Un `stream_id` nuevo empieza
-sin autoridad, fuerza stop/cambio de epoch y necesita un comando/arm fresco. El
-task de socket no calcula cinemática ni toca actuadores.
+El ESP captura su hora de recepción antes de autenticar/parsear para que ese
+trabajo no rejuvenezca el paquete. Rechaza secuencias repetidas o regresivas,
+comandos fuera de los límites configurados y streams no armados. Un `stream_id`
+nuevo empieza sin autoridad mediante `arm`, fuerza stop/cambio de epoch y luego
+necesita un comando fresco. El task de socket no calcula cinemática ni toca
+actuadores.
 
 Las únicas acciones son `arm`, `command`, `disarm` y `stop`. `arm` sigue sujeto a
 todos los guards del estado; `disarm` y `stop` solo reducen autoridad/movimiento.

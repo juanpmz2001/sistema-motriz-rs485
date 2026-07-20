@@ -223,11 +223,12 @@ configured port (draft default `32322`). It accepts only a compact fixed action:
 {
   "type": "botfarms_control_command",
   "protocol_version": "1.0",
+  "request_id": "request-uuid",
   "stream_id": "random-per-backend-control-stream",
   "sequence": 42,
   "token": "local-maintenance-token",
   "action": "command",
-  "command": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_radps": 0.2}
+  "command": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_radps": 0.2, "deadman": true}
 }
 ```
 
@@ -235,8 +236,10 @@ Rules:
 
 - receive timestamp on the ESP defines freshness; laptop wall time is not trusted;
 - accepted actions are only `arm`, `command`, `disarm` and `stop`;
-- sequence must increase within a stream; duplicate/regressive packets are ignored;
-- a new stream starts with no authority and triggers the normal stop/new-epoch path;
+- sequence must be an exact JSON integer and increase within a stream;
+  duplicate/regressive packets are rejected;
+- a new stream must first send `arm`, starts with no authority and triggers the
+  normal stop/new-epoch path; a retired stream cannot be resumed in the same boot;
 - finite/range validation happens before publishing the LAN mailbox;
 - socket code never calls kinematics, `robot_control` or SVD48;
 - backend refreshes commands while control is active; firmware TTL is the

@@ -257,3 +257,87 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
 
 - Revert this documentation/schema/ADR slice together. Do not retain the old
   fixed-capacity plan while keeping only the generic schema, or vice versa.
+
+## 2026-07-19 - Authority, Differential Kinematics and Inactive Control Ingress
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`; `origin/main` remained at `d932792` during
+  this slice and no push was performed.
+- Hardware state: no USB, ESP32, SVD48, servo or robot hardware used; no firmware
+  was flashed and no `E3..E6` evidence is claimed.
+- Work items advanced: `SAFE-001/003/005/009`, `KIN-001/002/003`, `SVD-008`,
+  `TRANS-009`, `TEST-001/007`.
+
+### Organized Commits
+
+| Commit | Scope |
+| --- | --- |
+| `e1da543` | Preserve the pre-existing LAN maintenance, state-model and host-test foundation |
+| `9903a69` | Preserve the canonical multi-robot JSON/process roadmap |
+| `cc59e74` | Attempt controller `STOP` even when writing a zero target fails |
+| `32bd261` | Reject raw single/multiple writes touching known SVD48 runtime-actuation registers |
+| `ece1785` | Add deterministic command authority, generic differential kinematics and host regressions |
+| `83a3fef` | Add the mutex state service and compiled-but-inactive guarded `control_lan` ingress; bump build 13 |
+
+### Subagents
+
+| Agent | Session ID | Ownership/result |
+| --- | --- | --- |
+| Popper | `019f7dbc-7c7b-73c1-a2ad-e33ea4780364` | Audited movement entry points, bypasses and concurrency |
+| Tesla | `019f7dbc-82aa-7c70-a5f3-184610f3c632` | Audited runtime state, safety and OTA interactions |
+| Boole | `019f7dbc-7f72-7d23-81d1-c7c202c2335f` | Audited the P0 host/elevated test matrix |
+| Ptolemy | `019f7dc3-ae1c-74f2-8d2d-e797e8b127d4` | Implemented the first state-service wrapper |
+| Goodall | `019f7dc3-abaa-71c3-88c9-95ba08245f36` | Implemented the pure authority model and tests |
+| Cicero | `019f7dc3-b0e8-70b2-a241-c994f147c458` | Implemented the first `control_lan` component |
+| Lovelace | `019f7dd7-9f64-72c1-9bae-b5fc1c2c10fb` | Implemented generic differential kinematics and tests |
+| Halley | `019f7de2-8739-7441-bacc-81762503740a` | Found authority replay/dead-man and numeric saturation defects; cleared the final fixes |
+| Volta | `019f7fa4-7988-7182-ab55-432a655f2667` | Found state permit/callback races and control-ingress lifecycle/protocol defects; fixes were applied before commit |
+| Poincare | `019f7fc3-cd72-7382-abc2-78261d9b48e5` | Extra final review was interrupted after exceeding the bounded wait; no review result is claimed |
+
+### Implemented
+
+- Added a pure `RC > LAN > Bluetooth` authority model with bounded commands,
+  TTL/dead-man/velocity validation, monotonic sequence, retired-stream defense,
+  stop-before-switch, temporal/revision epoch barriers and fail-safe handling of
+  rejected reducing commands.
+- Added pure differential inverse kinematics for variable left/right motor arrays,
+  per-actuator radius/ratio/sign/RPM limits, proportional saturation and numeric
+  overflow/final-clamp defenses.
+- Added a mutex-protected state service for single-owner inhibit slots, fault
+  transitions, direct transition results, snapshots and gate epochs. Unsafe
+  check/use permits and external callbacks were removed after review.
+- Added `control_lan` UDP `32322` parsing for protocol `1.0`, token, request ID,
+  exact sequence, stream, bounded float velocities and dead-man. Stream handover
+  emits STOP before ARM; queued bursts share the first dequeue timestamp; start
+  and deinit are serialized. It emits typed events only.
+- Added containment around raw SVD48 actuation writes and strengthened best-effort
+  stop behavior without exposing public multi-register configuration writes.
+
+### Verified
+
+- `./tools/run_host_tests.sh`: `PASS`, 6/6 CTest tests (`E1`). Authority has 14
+  cases and differential kinematics has 12 cases.
+- `BOTFARMS_HOST_TEST_SANITIZERS=ON ./tools/run_host_tests.sh`: `PASS`, 6/6 with
+  ASan/UBSan (`E1`); LeakSanitizer remains disabled by the runner in this
+  supervised environment.
+- ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`), target `esp32s3`, build 13 binary
+  `0xfe6a0`, smallest app partition `0x600000`, 83% free.
+- The ESP-IDF graph compiled `command_authority`, `robot_kinematics`,
+  `robot_state_service` and `control_lan`.
+
+### Safety Boundary and Next Slice
+
+- `main` does not instantiate the state service, authority model, differential
+  strategy or `control_lan`; USB movement and current `robot_control` remain on
+  the fixed four-motor path. This slice does not satisfy `GATE-SAFE`.
+- There is still no single actuator owner. A permit checked before I/O cannot
+  close the check/use race, so the next slice must introduce an actuator
+  coordinator that owns every SVD48/servo motion write, serializes emergency
+  stop, and evaluates the gate at that ownership boundary.
+- A validated factory robot JSON/runtime snapshot must replace fixed topology
+  before enabling differential output or starting `control_lan`.
+- RC and Bluetooth still lack mailbox adapters; serial movement remains a direct
+  legacy path. Ackermann, independent steer/crab, typed SVD48 configuration,
+  backend integration and all elevated/hardware tests remain open.
+- Raw writes to known actuation registers are blocked, but other raw configuration
+  writes and `APPLY_PY6514_CONFIG` remain hazardous legacy bench surfaces.
