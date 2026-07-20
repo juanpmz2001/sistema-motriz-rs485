@@ -36,6 +36,26 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME command_authority_model_test
+    SOURCES
+        host/command_authority_model_test.c
+        ../components/command_authority/command_authority_model.c
+    INCLUDE_DIRS
+        ../components/command_authority/include
+)
+
+botfarms_add_host_test(
+    NAME robot_kinematics_test
+    SOURCES
+        host/robot_kinematics_test.c
+        ../components/robot_kinematics/robot_kinematics.c
+    INCLUDE_DIRS
+        ../components/robot_kinematics/include
+    LINK_LIBRARIES
+        m
+)
+
+botfarms_add_host_test(
     NAME firmware_contracts_test
     SOURCES
         host/firmware_contracts_test.c
