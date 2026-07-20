@@ -5,20 +5,24 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 - `README.md`
 - `docs/API.md`
 - `docs/skills/SVD48B50A_SKILL.md`
+- `docs/ROBOT_PROFILES_AND_SVD48_CONFIGURATION_PLAN.md`
+- `docs/schemas/robot-profile.schema.json`
 
 ## Active Components
 
 - `components/svd48`: SVD48V50A/SVD48B50A RS485 driver with read/write transactions, telemetry polling, logical motor mapping, and UU Motor CRC byte order.
 - `components/robot_control`: four-wheel robot abstraction, independent steering kinematics for `MOVE_VEL`, and PWM steering servo outputs.
 - `components/robot_safety`: high-priority RC/motor-fault safety supervisor. It never performs Wi-Fi, HTTP, JSON, OTA or NVS work.
+- `components/robot_state`: pure operational state/inhibit/fault-latch model. It is compiled and host-tested, but runtime services do not enforce it yet.
 - `components/ibus_receiver`: FlySky i-BUS/SBUS receiver input and diagnostics.
-- `components/serial_gateway`: ASCII PC gateway over the ESP-IDF console/USB serial stream.
-- `components/config_manager`: NVS-backed Wi-Fi and OTA configuration store.
+- `components/serial_gateway`: ASCII PC gateway over the ESP-IDF console/USB serial stream, plus the shared command dispatcher used by LAN maintenance.
+- `components/config_manager`: NVS-backed Wi-Fi, OTA and LAN maintenance configuration store.
 - `components/wifi_manager`: Wi-Fi station manager used by manual OTA, automatic manifest checks, and low-priority auto-connect/reconnect.
 - `components/ota_manager`: OTA manifest validation, inactive-slot download verification, manual update, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: authenticated UDP LAN announce listener for no-USB OTA server discovery.
+- `components/maintenance_lan`: authenticated UDP LAN maintenance listener for diagnostics, telemetry and `STOP ALL` without USB. Movement/write/config mutation commands are blocked in v1.
 
-The root `CMakeLists.txt` explicitly includes `main`, `svd48`, `robot_control`, `robot_safety`, `serial_gateway`, `ibus_receiver`, and `ota_announce`. `config_manager`, `wifi_manager`, and `ota_manager` are also active through ESP-IDF component `REQUIRES`.
+The root `CMakeLists.txt` explicitly includes the project component tree. The active dependency graph is rooted in `main/CMakeLists.txt`, which requires `svd48`, `robot_control`, `robot_safety`, `robot_state`, `serial_gateway`, `ibus_receiver`, `config_manager`, Wi-Fi/OTA services, and `maintenance_lan`.
 
 ## Legacy Components
 

@@ -1,0 +1,259 @@
+# Firmware Session Log
+
+Entries are append-only. Corrections should add a dated note rather than rewriting prior evidence.
+
+## 2026-07-17 - Cross-Repository Architecture Audit and Process Setup
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`, base commit `d932792`
+- Web repository: branch `main`, base commit `0d55f8b`
+- Dirty worktree before work: yes in both repositories; pre-existing maintenance LAN and web transport changes were preserved.
+- Hardware state: not used during this documentation audit.
+- Claimed work items: planning and evidence collection only.
+
+### Subagents
+
+| Agent | Session ID | Audit scope | Result |
+| --- | --- | --- | --- |
+| Ptolemy | `019f721f-fa93-7e02-a1d6-0d42c5f3fc12` | SVD48 protocol, manuals, register coverage, and tests | Completed read-only audit |
+| Lovelace | `019f721f-fc7b-7831-9c38-08b8dae7a055` | Firmware runtime, profiles, kinematics, RC, safety, OTA, and task lifecycle | Completed read-only audit |
+| Archimedes | `019f721f-fedd-7f80-963b-1bad953d9f4f` | Web frontend/backend, serial/LAN transport, security, and test architecture | Completed read-only audit |
+| Descartes | `019f7220-01a3-7a10-8188-db3aa84c0b86` | Cross-repository protocol, correlation, authentication, concurrency, and deployment | Completed read-only audit |
+| Pasteur | `019f7221-5495-7462-9ab4-a55cb96657da` | Independent full SVD48 manual/register review | Completed; extracted/reviewed all 81 manual pages and contrasted code/docs |
+| Huygens | `019f7221-5688-7f62-a8d4-ec056fafe1f1` | Independent maintenance LAN/gateway contract review | Completed read-only audit and build/tool verification |
+
+### Confirmed Findings
+
+- SVD48 support is strong for telemetry and basic speed/current commands, but lacks typed parameter metadata, `0x10` multi-register writes, float codecs, access/range enforcement, readback transactions, persistence workflow, and calibration state machines.
+- Current start/enable ordering can reuse a previous nonzero controller setpoint because `START` precedes the new RPM; this is an MVP safety blocker.
+- The robot topology, drive IDs, four-motor arrays, servo resources, geometry, and kinematics are compile-time assumptions.
+- Safety stop is repeatedly requested but not latched below every movement API. Serial movement can be reissued while the safety task is trying to stop.
+- Multi-wheel commands are not application-level transactions; a mid-command failure can leave mixed actuator state.
+- RC is parsed diagnostically but does not yet own motion, implement a dead-man, or fail closed when absent at boot.
+- Maintenance LAN can report transport-level `status:"ok"` while captured command output contains `ERR`.
+- Current UDP payload sizing can exceed a reliable non-fragmented datagram, and request correlation does not survive through HTTP/WebSocket to the browser.
+- Serial overflow can resynchronize unsafely and execute a rejected line's suffix; current CLI response completion is also ambiguous.
+- LAN/OTA retries are not idempotently deduplicated, and invalid OTA announce input can mutate NVS before full action validation.
+- The web backend binds broadly and has no operator authentication/origin/CSRF boundary. Its generic command endpoint relies primarily on firmware policy.
+- Existing tests are sparse: protocol request-vector tests exist, but there is no broad ESP-IDF unit/integration/HIL suite and no web automated test suite.
+
+### Changed
+
+- Added the firmware `docs/process/` program plan, SVD48 inventory, profile/safety plan, transport contract, compatibility matrix, ADR, off-ground tests, templates, and session log.
+- Linked the process from `README.md` and linked the earlier profile design to the process source of truth.
+- Corrected `docs/API.md` and `docs/skills/SVD48B50A_SKILL.md` where they overstated raw-write equivalence, exception handling, retry behavior, 32-bit ordering confidence, current bench topology, pole-pair certainty, and legacy apply safety.
+- Restricted local `.env` permissions from `0755` to `0600` without reading or printing secrets.
+
+### Verified
+
+- Parent planning work used source/manual inspection and no hardware (`E0`); subagents additionally supplied the `E1/E2` evidence below.
+- Ptolemy reported `python3 tools/test_svd48_protocol.py`: 3 tests passed (`E1`); this parent session will independently retain verification in the final process check.
+- Parent session independently ran `PYTHONDONTWRITEBYTECODE=1 python3 tools/test_svd48_protocol.py`: 3 tests passed (`E1`).
+- Huygens ran an ESP-IDF 5.4 build successfully and reported a `0xfe070` firmware binary with substantial OTA-slot headroom (`E2`); no hardware was exercised.
+- Pasteur extracted both bundled manuals completely (45-page controller manual and 36-page SV-Config manual) and independently ran the 3 protocol request-vector tests successfully (`E0/E1`); no hardware was exercised.
+- Local `.env` permissions were found at `0755` and restricted to owner-only `0600` without reading or printing its contents. This partially advances `OPS-003`; deployment/key/NVS checks remain.
+
+### Remaining
+
+- Execute the master plan in dependency order.
+- Gather physical robot variant and motor datasheets.
+- Perform the read-only controller inventory before enabling any new write path.
+- Complete the remaining `OPS-003` secret-handling and deployment permission checks.
+
+### Deferred
+
+- No runtime feature was implemented in this session. The purpose was complete planning and traceability.
+
+### Rollback
+
+- Revert only the new `docs/process/` files, planning links, and documentation-coherence corrections in `docs/API.md` and `docs/skills/SVD48B50A_SKILL.md`. Do not revert pre-existing dirty worktree changes.
+
+## 2026-07-17 - First Firmware Hardening Slice
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`, base commit `d932792`, dirty pre-existing worktree preserved.
+- Hardware state: no USB, SVD48, servo, or robot-elevated evidence used in this slice.
+- Claimed work items: `TRANS-001`, `TRANS-007`, `SAFE-005`, `SAFE-009`, `SVD-001`, `SVD-002`, `SVD-003`, `TEST-001`.
+
+### Changed
+
+- Added pure serial framing and result helpers. Overlong input now drains to a delimiter, and maintenance LAN maps captured `ERR` output to an error JSON envelope.
+- Extracted pure SVD48 protocol helpers, added bounded `0x10` request construction, recognized matching high-bit exceptions, and preserved last exception function/code/time in telemetry and `GET_MOTOR`.
+- Changed motor command ordering to prepare RPM before `START`; `ENABLE ALL` prepares zero targets and partial prepare/start failures request a best-effort stop.
+- Added the initial host firmware contract test and `tools/run_host_tests.sh`; bumped firmware build from 10 to 11. The test source was later moved to `tests/host/firmware_contracts_test.c` when CTest was introduced.
+
+### Files
+
+- Runtime/protocol: `components/maintenance_lan/maintenance_lan.c`, `components/robot_control/robot_control.c`, `components/serial_gateway/{CMakeLists.txt,serial_gateway.c,serial_gateway_framing.c,serial_gateway_result.c,include/*}`, `components/svd48/{CMakeLists.txt,svd48.c,svd48_protocol.c,include/*}`, `main/app_version.h`.
+- Tests: the original contract test (now `tests/host/firmware_contracts_test.c`) and `tools/run_host_tests.sh`.
+- Contract/process docs: `README.md`, `docs/API.md`, `docs/skills/SVD48B50A_SKILL.md`, `docs/process/00_MASTER_PLAN.md`, `01_SVD48_REGISTER_COVERAGE.md`, `03_TRANSPORT_AND_API_CONTRACT.md`, `04_OFF_GROUND_TEST_MATRIX.md`, and this log.
+
+### Verified
+
+- `./tools/run_host_tests.sh`: `PASS` (`E1`). Native C contracts passed; existing Python suite reported 3/3 passing.
+- ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`) for `esp32s3`; binary size `0xfe480`, smallest app partition `0x600000`, 83% free.
+- No firmware was flashed and no hardware behavior is claimed.
+
+### Remaining
+
+- Run `TEST-ESP-014/015` over real USB/LAN and confirm the existing Node backend rejects firmware `status:"err"`.
+- Run `TEST-SVD-007` against a restrained/backed-up controller to capture real `0x83/0x86` behavior.
+- Run `TEST-SAFE-015/017/018` on the elevated Toño platform; measure frame order, residual motion, partial-start fail-stop, and stop latency.
+- Complete typed management results, response completion framing, the `0x10` response/transaction path, a latched inhibit, command arbitration, and an emergency-class bus scheduler.
+
+### Known Limitations
+
+- Fail-stop is best effort on the same serialized RS485 bus; it is not atomic and has no measured deadline.
+- Updating targets on motors that are already running remains sequential. The planned actuator coordinator and latched safety state are still required.
+- Exception fields preserve the latest historical exception; `COMM_ERR` and age must be considered together.
+- The `0x10` builder is intentionally not reachable from serial or LAN.
+
+### Rollback
+
+- Revert this slice's protocol/framing helpers and call-site changes together; reverting only the call sites or only the CMake source lists will break the build. Restore build number 10 only if the complete behavior slice is removed.
+
+## 2026-07-19 - Safe Write, Pin Configuration, QA and Human Guide Planning
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`, base commit `d932792`; existing dirty runtime/documentation work preserved.
+- Web repository: existing dirty runtime work preserved; only `docs/process/00_WEB_IMPLEMENTATION_PLAN.md`, `01_WEB_TEST_MATRIX.md`, and `SESSION_LOG.md` were updated.
+- Hardware state: not used.
+- Claimed work: planning/documentation only; no runtime behavior implemented.
+
+### Confirmed
+
+- Current firmware has no exclusive operational state machine or latched movement gate; `robot_safety` periodically requests stop.
+- Current raw USB write reaches SVD48 `0x06` without maintenance state, catalog/range, baseline/readback or audit; LAN blocks writes.
+- RS485, i-BUS and servo pins remain compile-time values in `main/main.c`.
+- Current web app has serial/LAN prototype transports and generic command routes, but no auth/test runner/typed configuration service.
+- Typed reads are a direct prerequisite for safe writes because the same descriptor owns decode, validation, encode and readback.
+
+### Changed
+
+- Added `05_SAFE_CONFIGURATION_WRITE_PLAN.md` with the normative state protocol, write/change-set flow, frontend/USB-to-LAN delivery path, engineering raw boundary and staged pin recovery design.
+- Added `06_SIMULATED_QA_FAULT_INJECTION_PLAN.md` with pure host architecture, fake clock/SVD48/bus, invariants and detailed state/motion/communication/write/pin fault suites.
+- Added `docs/FIRMWARE_LOGIC_HUMAN_FRIENDLY.md` explaining current and target behavior in Spanish pseudocode, including typed reads and stale semantics.
+- Reprioritized `00_MASTER_PLAN.md`, added `PROF-008`, `SVD-028`, `TEST-007`, expanded `04_OFF_GROUND_TEST_MATRIX.md` for state/lease/pin/ambiguous-write evidence, indexed the new docs, and corrected the outdated target-before-`START` limitation.
+- Aligned the web process plan/test matrix with the USB-first guarded write vertical, secure LAN follow-up, board-profile routes, ambiguous-write jobs and pin activation/rollback tests; no web runtime code changed.
+
+### Verification
+
+- Source and existing firmware/web plans were inspected (`E0`).
+- Documentation-only change: no build, host test, ESP, SVD48 or motor test was required or claimed.
+
+### Next Implementation Slice
+
+- Implement QA scaffold/fake clock/event sink and pure `robot_state` transitions/invariants before exposing any new write.
+- In parallel complete SVD48 `0x10` response/transaction and typed integer catalog fixtures.
+- Do not relax `LAN_SAFE` or add frontend raw writes during that slice.
+
+## 2026-07-19 - State Model, Host QA Harness and Internal FC 0x10
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`, base commit `d932792`; pre-existing dirty worktree preserved.
+- Hardware state: no USB, SVD48, servo or robot hardware used; no firmware was flashed.
+- Claimed work items: `SAFE-001`, `SVD-003`, `TEST-001`, and partial `TEST-007`.
+
+### Subagents
+
+| Agent | Session ID | Ownership | Result |
+| --- | --- | --- | --- |
+| Franklin | `019f7b21-ecfe-71b3-b203-26262aa93c9c` | `components/svd48/**` and protocol contract tests | Implemented internal FC `0x10` request/transaction/ACK validation; no USB/LAN exposure |
+| Copernicus | `019f7b22-3759-7a00-8243-70b11b4e5ff6` | `tests/**` and `cmake/host_tests/**` infrastructure | Implemented CMake/CTest harness, strict warnings, fake clock and bounded event sink |
+
+### Changed
+
+- Added `components/robot_state/` as a pure C model for `BOOTING`, `DISARMED`, `ARMED`, `FAULTED`, `MAINTENANCE`, and `OTA`, with active inhibits, fault latches, monotonic revision, stop/revoke actions and separate motion/configuration/OTA authorization queries.
+- Added deterministic state tests for boot, arm blockers, stale faulting, explicit fault ACK, expired authority recovery, disarm, maintenance write guards and maintenance/OTA exclusion.
+- Added the standalone host-test project under `tests/` and `cmake/host_tests/`, including a reusable test runner, monotonic fake clock and bounded event recorder.
+- Consolidated host execution through `tools/run_host_tests.sh`; CTest now runs support/fake tests, state tests, firmware protocol/framing contracts and the independent Python SVD48 vectors.
+- Completed internal FC `0x10` request/response support through `svd48_write_registers_by_id()`, including bounds/overflow checks, response slave/function/start/count/CRC validation and preserved Modbus exceptions.
+- Changed FC `0x10` to one transport attempt. A lost ACK is intentionally left for future readback/outcome classification instead of a blind retry.
+- Added `robot_state` to the ESP-IDF component graph, bumped firmware build 11 to 12, and updated README/API/skill/process documentation to distinguish implemented foundations from runtime and hardware evidence.
+
+### Verified
+
+- `./tools/run_host_tests.sh`: `PASS`, 4/4 CTest tests (`E1`).
+- CMake host suite with `BOTFARMS_HOST_TEST_SANITIZERS=ON`: `PASS`, 4/4 with ASan/UBSan (`E1`); `ASAN_OPTIONS=detect_leaks=0` was required because the supervised environment restricts `ptrace`.
+- ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`) for target `esp32s3`; build 12 binary `0xfe600`, smallest app partition `0x600000`, 83% free.
+- `robot_state_model.c` was present in the regenerated ESP-IDF component graph and compiled for the target.
+- No E3-E6 hardware behavior is claimed.
+
+### Safety Boundary and Remaining Work
+
+- The state model is not yet instantiated by `main` and is not consulted by `robot_control`, `robot_safety`, serial or LAN. It therefore does not yet enforce `INV-001..003` in runtime firmware.
+- Existing raw USB `WRITE_REG` remains unguarded by maintenance/catalog/readback. LAN writes remain blocked and must not be enabled by changing an allowlist.
+- FC `0x10` has no TX-phase result, readback, `OUTCOME_UNKNOWN`, rollback or audit service yet and remains internal.
+- Next critical slice: add a lock/service wrapper, fail-safe initial health snapshot, command authority/lease, gate every movement entry point at I/O, and feed RC/controller faults into the latch. Only then add maintenance sessions and typed writes.
+- Physical test pending: execute FC `0x10` only on a backed-up, restrained SVD48 using approved low-risk registers and capture real ACK/exception/readback behavior.
+
+### Rollback
+
+- Remove `robot_state` from `main/CMakeLists.txt` before removing `components/robot_state/`.
+- Revert the FC `0x10` driver/protocol/header/test changes as one unit; do not leave a public declaration without its parser/implementation.
+- Revert `tests/`, `cmake/host_tests/` and `tools/run_host_tests.sh` together if restoring the previous direct-compiler runner.
+
+## 2026-07-19 - Canonical Robot JSON and Multi-Source Replanning
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `main`, base commit `d932792`; existing dirty
+  firmware/documentation changes preserved.
+- Claimed work items: design update for `PROF-001..009`, `KIN-001..005`,
+  `SAFE-003A..003D`, `SVD-020/025`, `TRANS-003/004/008`, `WEB-001..004`.
+- Hardware state: none used; documentation/schema work only.
+
+### Decisions
+
+- The robot is one versioned, self-contained canonical JSON persisted and
+  transported to the ESP. Runtime C structures are derived immutable snapshots.
+- Variable controller/channel/actuator lists replace the planned four-motor/four-
+  servo topology assumption. Firmware capabilities bound resources without
+  changing schema meaning.
+- The same profile represents one SVD48 using M1/M2, two SVD48 using four
+  channels, four SVD48, Ackermann linkage/per-wheel steering and independent
+  steer/crab combinations.
+- RC, LAN and Bluetooth are received simultaneously and arbitrated strictly as
+  `RC > LAN > Bluetooth`, with TTL, authority epochs, stop-before-switch and no
+  stale fallback.
+- Local MVP keeps the provisioned LAN token and firmware-owned exclusive jobs;
+  accounts, user sessions, HMAC/TLS and replay security are deferred to
+  production exposure.
+- Firmware and backend are completed/tested before frontend implementation.
+
+### Changed
+
+- Rewrote the robot profile/kinematics plan and process plan around canonical JSON
+  and generic composition.
+- Added `docs/schemas/robot-profile.schema.json` and a non-activatable topology
+  draft for one SVD48 M1/M2, two driven wheels and two casters.
+- Added ADR-0002 for canonical JSON and ADR-0003 for simultaneous source
+  arbitration; updated ADR-0001 where superseded.
+- Reprioritized master, safe-write, transport, QA and elevated-test plans; moved
+  production auth out of the local MVP and frontend after backend.
+- Kept `maintenance_lan` as the management plane and specified separate compact
+  `control_lan` ingress/port for the LAN movement mailbox.
+- Updated the sibling web repository process plan/test matrix/index/session log
+  to backend slices B0-B5 first, with frontend and production auth deferred.
+- Updated human-friendly pseudocode for JSON normalization and RC/LAN/BT
+  preemption/loss behavior.
+
+### Verified
+
+- `jq empty` passed for schema and example JSON.
+- `python3 -m jsonschema -i <example> <schema>` passed.
+- `git diff --check` passed.
+- No firmware build/test was rerun because no runtime source changed in this
+  planning slice; previous E1/E2 evidence is unchanged.
+
+### Remaining
+
+- Measure dimensions, wheel radii, gear ratio, signs, pinout, battery ceilings and
+  SVD48 parameters before setting `activation_allowed:true` on the 2WD profile.
+- Implement P0 runtime state/gates and command arbiter before profile activation
+  or any public SVD48 write.
+- Define measured firmware capacity values from heap/stack/UART/LEDC/RS485 timing.
+
+### Rollback
+
+- Revert this documentation/schema/ADR slice together. Do not retain the old
+  fixed-capacity plan while keeping only the generic schema, or vice versa.

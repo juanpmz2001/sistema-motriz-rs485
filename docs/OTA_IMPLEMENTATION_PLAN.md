@@ -4,7 +4,7 @@ Date: 2026-05-09
 Firmware repo: `/mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485`  
 Web/backend repo: `/home/jp/Documents/botfarms/web_controll_esp_svd48`
 
-Status note: this is a historical implementation plan. The current firmware in this repo has progressed beyond Iteration 10.5: `FW_BUILD_NUMBER` is `8`, the active target is `esp32s3`, the active partition table is `partitions_ota_16mb.csv`, rollback is enabled, Wi-Fi reconnect/OTA announce run as low-priority maintenance services, and automatic OTA is limited to manifest-only checks plus `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, and `OTA_AUTO_INTERVAL`. Earlier sections that say "current" preserve the state observed during that iteration; Section 16 summarizes the current next decision.
+Status note: this is a historical implementation plan. The current firmware in this repo has progressed beyond Iteration 10.5: `FW_BUILD_NUMBER` is `10`, the active target is `esp32s3`, the active partition table is `partitions_ota_16mb.csv`, rollback is enabled, Wi-Fi reconnect, OTA announce and LAN maintenance run as low-priority maintenance services, and automatic OTA is limited to manifest-only checks plus `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, and `OTA_AUTO_INTERVAL`. Earlier sections that say "current" preserve the state observed during that iteration; Section 16 summarizes the current next decision.
 
 ## 1. Executive Summary
 

@@ -1,0 +1,305 @@
+{
+  "schema_version": "1.0.0",
+  "profile_id": "differential-2wd-one-svd48-draft",
+  "revision": 1,
+  "name": "Differential 2WD with one SVD48 - measurement draft",
+  "description": "Topology fixture only. Channel mapping, dimensions, signs, limits, pins and controller parameters must be measured before activation.",
+  "lifecycle": {
+    "status": "draft",
+    "activation_allowed": false,
+    "evidence": [
+      "Confirmed topology: one SVD48 uses M1 and M2",
+      "Confirmed topology: two driven wheels and two passive casters",
+      "Channel-to-side mapping and all numeric physical values require measurement"
+    ]
+  },
+  "board": {
+    "target": "esp32s3",
+    "variant": "tono-motherboard",
+    "revision": "unverified",
+    "emergency_stop": {
+      "enabled": false
+    }
+  },
+  "io": {
+    "rs485_buses": [
+      {
+        "id": "rs485-main",
+        "uart_port": 2,
+        "tx_gpio": 17,
+        "rx_gpio": 16,
+        "direction_control": {
+          "type": "auto"
+        },
+        "baud_rate": 115200,
+        "duplex": "half",
+        "response_timeout_ms": 100
+      }
+    ],
+    "rc_receivers": [
+      {
+        "id": "rc-primary",
+        "protocol": "ibus",
+        "uart_port": 1,
+        "rx_gpio": 18,
+        "baud_rate": 115200,
+        "inverted": false,
+        "stale_timeout_ms": 100,
+        "channels": {
+          "linear": {
+            "index": 1,
+            "min": 1000,
+            "center": 1500,
+            "max": 2000,
+            "deadband": 20,
+            "inverted": false
+          },
+          "angular": {
+            "index": 0,
+            "min": 1000,
+            "center": 1500,
+            "max": 2000,
+            "deadband": 20,
+            "inverted": false
+          },
+          "deadman": {
+            "index": 4,
+            "min": 1000,
+            "center": 1500,
+            "max": 2000,
+            "deadband": 20,
+            "inverted": false,
+            "active_min": 1700
+          }
+        }
+      }
+    ]
+  },
+  "controllers": [
+    {
+      "id": "drive-main",
+      "driver": "svd48",
+      "bus_id": "rs485-main",
+      "address": 1,
+      "required_for_motion": true,
+      "channels": [
+        {
+          "id": "M1",
+          "actuator_id": "traction-left"
+        },
+        {
+          "id": "M2",
+          "actuator_id": "traction-right"
+        }
+      ],
+      "configuration": {
+        "apply_policy": "explicit_only",
+        "shared_parameters": {},
+        "channel_parameters": {
+          "M1": {},
+          "M2": {}
+        }
+      }
+    }
+  ],
+  "actuators": {
+    "traction_motors": [
+      {
+        "id": "traction-left",
+        "pose": {
+          "x_m": 0.0,
+          "y_m": 0.2,
+          "z_m": 0.0,
+          "yaw_rad": 0.0
+        },
+        "controller_binding": {
+          "controller_id": "drive-main",
+          "channel": "M1"
+        },
+        "wheel": {
+          "radius_m": 0.1,
+          "width_m": 0.05
+        },
+        "drivetrain": {
+          "motor_revolutions_per_wheel_revolution": 1.0
+        },
+        "direction": {
+          "command_sign": 1,
+          "telemetry_sign": 1
+        },
+        "limits": {
+          "max_motor_rpm": 50.0,
+          "max_current_a": 2.0
+        },
+        "required_for_motion": true
+      },
+      {
+        "id": "traction-right",
+        "pose": {
+          "x_m": 0.0,
+          "y_m": -0.2,
+          "z_m": 0.0,
+          "yaw_rad": 0.0
+        },
+        "controller_binding": {
+          "controller_id": "drive-main",
+          "channel": "M2"
+        },
+        "wheel": {
+          "radius_m": 0.1,
+          "width_m": 0.05
+        },
+        "drivetrain": {
+          "motor_revolutions_per_wheel_revolution": 1.0
+        },
+        "direction": {
+          "command_sign": -1,
+          "telemetry_sign": -1
+        },
+        "limits": {
+          "max_motor_rpm": 50.0,
+          "max_current_a": 2.0
+        },
+        "required_for_motion": true
+      }
+    ],
+    "steering": []
+  },
+  "passive_wheels": [
+    {
+      "id": "caster-front",
+      "type": "caster",
+      "pose": {
+        "x_m": 0.2,
+        "y_m": 0.0,
+        "z_m": 0.0,
+        "yaw_rad": 0.0
+      },
+      "radius_m": 0.05
+    },
+    {
+      "id": "caster-rear",
+      "type": "caster",
+      "pose": {
+        "x_m": -0.2,
+        "y_m": 0.0,
+        "z_m": 0.0,
+        "yaw_rad": 0.0
+      },
+      "radius_m": 0.05
+    }
+  ],
+  "geometry": {
+    "frame": {
+      "x_positive": "forward",
+      "y_positive": "left",
+      "z_positive": "up",
+      "yaw_positive": "counterclockwise"
+    },
+    "body": {
+      "length_m": 0.5,
+      "width_m": 0.4,
+      "height_m": 0.2
+    }
+  },
+  "kinematics": {
+    "type": "differential",
+    "left_motors": [
+      "traction-left"
+    ],
+    "right_motors": [
+      "traction-right"
+    ],
+    "track_width_m": 0.4,
+    "lateral_deadband_mps": 0.001
+  },
+  "control_sources": {
+    "arbitration": {
+      "precedence": [
+        "rc",
+        "lan",
+        "bluetooth"
+      ],
+      "control_period_ms": 10,
+      "switch_policy": "stop_then_switch",
+      "fresh_command_after_switch": true,
+      "rc_fresh_blocks_lower_sources": true
+    },
+    "sources": [
+      {
+        "id": "source-rc",
+        "type": "rc",
+        "enabled": true,
+        "priority": 300,
+        "availability_policy": "optional",
+        "command_timeout_ms": 100,
+        "adapter": {
+          "receiver_id": "rc-primary"
+        }
+      },
+      {
+        "id": "source-lan",
+        "type": "lan",
+        "enabled": true,
+        "priority": 200,
+        "availability_policy": "optional",
+        "command_timeout_ms": 300,
+        "adapter": {
+          "service": "control_lan"
+        }
+      },
+      {
+        "id": "source-bluetooth",
+        "type": "bluetooth",
+        "enabled": true,
+        "priority": 100,
+        "availability_policy": "optional",
+        "command_timeout_ms": 300,
+        "adapter": {
+          "controller": "ble-gamepad"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "boot_state": "disarmed",
+    "source_loss_while_moving": "fault_and_stop",
+    "controller_stale_timeout_ms": 250,
+    "stop_command_repeat_ms": 100,
+    "zero_rpm_threshold": 1.0,
+    "limits": {
+      "max_linear_mps": 0.1,
+      "max_lateral_mps": 0.0,
+      "max_angular_radps": 0.2,
+      "max_bus_voltage_v": 48.0,
+      "min_bus_voltage_v": 20.0,
+      "max_motor_current_a": 2.0
+    }
+  },
+  "services": {
+    "wifi": {
+      "enabled": true,
+      "auto_connect": true,
+      "credential_ref": "nvs:wifi_credentials"
+    },
+    "maintenance_lan": {
+      "enabled": true,
+      "port": 32321,
+      "token_ref": "nvs:maintenance_lan_token"
+    },
+    "control_lan": {
+      "enabled": true,
+      "port": 32322,
+      "token_ref": "nvs:maintenance_lan_token"
+    },
+    "bluetooth": {
+      "enabled": true
+    },
+    "ota": {
+      "enabled": true,
+      "auto_check": true,
+      "auto_update": false,
+      "token_ref": "nvs:ota_announce_token"
+    }
+  }
+}

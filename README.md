@@ -21,24 +21,46 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 - OTA agent skill: `docs/skills/OTA_UPDATE_SKILL.md`
 - Downloaded controller sources: `docs/controllers/SVD48B50A/`
 - Python CLI: `tools/robotctl.py`
-- Host protocol tests: `tools/test_svd48_protocol.py`
+- LAN maintenance CLI: `tools/esp_lanctl.py`
+- Host firmware contract tests: `tools/run_host_tests.sh`
+- Multi-robot implementation process: `docs/process/README.md`
+- Cross-repository master plan: `docs/process/00_MASTER_PLAN.md`
+- Canonical robot JSON target design: `docs/ROBOT_PROFILES_AND_SVD48_CONFIGURATION_PLAN.md`
+- Target Robot JSON Schema (not implemented in firmware yet): `docs/schemas/robot-profile.schema.json`
+- Non-activatable differential 2WD topology draft: `docs/examples/robot-profile-differential-2wd-one-svd48.json`
+- Off-ground acceptance matrix: `docs/process/04_OFF_GROUND_TEST_MATRIX.md`
+- Safe configuration/write plan: `docs/process/05_SAFE_CONFIGURATION_WRITE_PLAN.md`
+- Simulated QA and fault-injection plan: `docs/process/06_SIMULATED_QA_FAULT_INJECTION_PLAN.md`
+- Human-friendly firmware pseudocode: `docs/FIRMWARE_LOGIC_HUMAN_FRIENDLY.md`
 
 ## Firmware Architecture
 
-- `components/svd48`: serialized RS485 driver for two SVD48 drives / four logical motors. Implements reads, writes, telemetry polling, UU Motor CRC byte order, and stale/fault state.
+- `components/svd48`: serialized RS485 driver for two SVD48 drives / four logical motors. Implements reads, single-register writes, telemetry polling, UU Motor CRC byte order, high-bit exception diagnostics, and stale/fault state. Its internal `0x10` transaction validates the echoed register/count and does not retry an ambiguous write, but it is not exposed as a serial/LAN configuration command.
+- `components/robot_state`: pure, deterministic operational-state model for `BOOTING`, `DISARMED`, `ARMED`, `FAULTED`, `MAINTENANCE`, and `OTA`, including active inhibits, fault latches, transition actions, and motion/configuration/OTA policies. It is covered by host tests but is not yet wired into runtime movement entry points.
 - `components/robot_control`: maps four logical motors into robot commands. Implements `MOVE_VEL vx vy wz` as independent steering kinematics and controls four PWM steering servos.
 - `components/robot_safety`: high-priority safety supervisor. It watches RC/i-BUS signal loss after a valid signal is seen and online motor fault telemetry, then requests `STOP ALL` without doing Wi-Fi, HTTP, JSON, OTA or NVS work.
 - `components/ibus_receiver`: low-latency FlySky i-BUS/SBUS receiver input used by the safety supervisor and diagnostics.
-- `components/serial_gateway`: ASCII gateway over the ESP-IDF console/USB serial stream. Emits `OK`, `ERR`, and `DATA` responses.
+- `components/serial_gateway`: ASCII gateway over the ESP-IDF console/USB serial stream. Emits `OK`, `ERR`, and `DATA` responses. It also exposes the shared command dispatcher used by LAN maintenance.
 - `components/config_manager`: persists Wi-Fi and OTA settings in NVS.
 - `components/wifi_manager`: Wi-Fi station mode used by manual OTA and background OTA checks. A low-priority supervisor auto-connects on boot and reconnects with backoff when credentials are saved.
 - `components/ota_manager`: manifest validation, inactive-slot download/verification, manual boot-slot switch, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: low-priority authenticated UDP listener for LAN OTA announcements from developer laptops.
-- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, telemetry polling, robot control, i-BUS, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA services.
+- `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for safe diagnostics and telemetry without USB. It uses a separate maintenance token and blocks movement/write commands in v1.
+- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, telemetry polling, robot control, i-BUS, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services.
+
+Run the CMake/CTest host suite before every firmware build or hardware session:
+
+```bash
+./tools/run_host_tests.sh
+```
 
 The old Arduino sketches and previous ESP-IDF Bluetooth/PPM components are kept as historical reference, but the active firmware path is the SVD48 framework above.
 
-## Default Hardware Assumptions
+## Current Compile-Time Limitations
+
+These values describe the firmware that runs today; they are not the target
+multi-robot configuration model. `PROF-001..009` will migrate them into the
+canonical robot JSON above and remove topology literals from `main.c`.
 
 - ESP32-S3.
 - UART2 RS485 TX/RX: GPIO 17 / GPIO 16.
@@ -50,7 +72,8 @@ The old Arduino sketches and previous ESP-IDF Bluetooth/PPM components are kept 
   - `MOTOR_3`: drive 2 M2, rear-right.
 - Steering servo GPIO defaults: 4, 5, 6, 7.
 
-Adjust these defaults in `main/main.c` before flashing if the harness differs.
+Until that migration is implemented, adjust these values in `main/main.c` before
+flashing if the harness differs. Do not treat them as a new robot profile.
 
 ## PC Usage
 
@@ -75,6 +98,30 @@ Install the only PC dependency with:
 ```bash
 python -m pip install pyserial
 ```
+
+## LAN Maintenance Without USB
+
+After Wi-Fi credentials are saved, provision a separate maintenance token once over USB serial:
+
+```bash
+python3 tools/robotctl.py --port /dev/ttyACM0 raw MAINT_TOKEN_SET "<long-random-maintenance-token>"
+python3 tools/robotctl.py --port /dev/ttyACM0 raw MAINT_LAN_STATUS
+```
+
+Then use the LAN client from any machine on the same network:
+
+```bash
+export BOTFARMS_MAINT_TOKEN="<long-random-maintenance-token>"
+python3 tools/esp_lanctl.py discover --broadcast 192.168.1.255
+python3 tools/esp_lanctl.py status --host 192.168.1.185
+python3 tools/esp_lanctl.py command --host 192.168.1.185 VERSION
+python3 tools/esp_lanctl.py motor --host 192.168.1.185 0
+python3 tools/esp_lanctl.py watch --host 192.168.1.185 --motor 0 --period-ms 100 --csv telemetry.csv
+```
+
+`maintenance_lan` is not OTA. OTA LAN announce remains on UDP `32320` with `BOTFARMS_OTA_TOKEN`; maintenance LAN uses UDP `32321` with `BOTFARMS_MAINT_TOKEN`.
+
+LAN maintenance v1 allows read/diagnostic commands and `STOP ALL`. It intentionally blocks movement, raw writes, sensitive configuration mutation and destructive OTA commands. Blocked commands return `ERR LAN_COMMAND_BLOCKED <command>`.
 
 ## Build
 

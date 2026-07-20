@@ -10,17 +10,17 @@ Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before cha
 - Drive ID 1: MOTOR_0=M1, MOTOR_1=M2.
 - Drive ID 2: MOTOR_2=M1, MOTOR_3=M2.
 - RS232 examples use fixed slave `0xEE`; RS485 uses configured slave IDs.
-- Current bench setup: only controller ID `0x02` is connected, and only its `M1` channel is configured. Timeouts on ID `0x01` and unused M2 readings are expected in this setup.
+- Historical observed bench setup: only controller ID `0x02` and its `M1` channel were configured during the run recorded in `docs/controllers/SVD48B50A/OBSERVED_TOÑO_CONFIG.md`. Do not assume that topology is still physically connected; query inventory/status before interpreting timeouts.
 
 ## Protocol
 
 - Function `0x03`: read holding registers.
 - Function `0x06`: write single register.
 - Function `0x10`: write multiple registers.
-- Exception response function: `0x90`; codes: `01` invalid function, `02` invalid register, `03` invalid value/length.
+- Exception response function is the requested function OR `0x80`: `0x83` for read `0x03`, `0x86` for write-single `0x06`, and `0x90` for write-multiple `0x10`. Documented codes are `01` invalid function, `02` invalid register, and `03` invalid value/length. The driver classifies matching high-bit responses and preserves function, code, and timestamp in motor telemetry; physical controller validation is still required by `TEST-SVD-007`.
 - CRC: Modbus CRC16, init `0xFFFF`, poly `0xA001`, calculated over slave through data bytes.
 - Important: UU Motor transmits CRC high byte then low byte, matching the manual examples and current repo. This is swapped versus normal Modbus RTU libraries.
-- Use 100 ms response timeout on this robot. Manual commands keep 2 retries; background telemetry uses 0 retries so one missing drive does not block the whole bus.
+- The current main configuration uses a 100 ms response timeout and 2 retries for manual reads and function `0x06` writes. Background telemetry explicitly passes `0` retries per register read, then backs a failed drive off between polling passes. The internal function `0x10` transaction makes one attempt because a missing ACK is ambiguous and must be classified by readback instead of a blind retry. A failed transaction and the serialized bus can still delay stop/other-drive work; see `SAFE-006` and do not claim bounded stop latency until it is measured.
 - Background telemetry reads position first on every fast poll, then speed/current. Status, temperature, bus voltage and error registers are slower polls.
 - When a telemetry position read times out, back off that drive for 250-1500 ms and keep polling the other drive.
 
@@ -31,7 +31,7 @@ Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before cha
 - Vehicle/wheel parameters used by SV-Config for geared motors: wheel diameter `0x2201` mm, motor teeth `0x2202`, wheel teeth `0x2203`. For PY6514 initial hypothesis use diameter `330`, motor teeth `1`, wheel teeth `5` for ratio `5:1`.
 - Observed on Toño hardware: drive ID `2` accepts `0x2200` and `0x2201`, but returns an invalid-register exception for `0x2202/0x2203`. Do not assume every SV-Config field is exposed on every controller firmware revision.
 - Hall installation/status: M1/M2 installation `0x5620/0x5621`; Hall status `0x5688/0x5689`; current Hall angle `0x568C/0x568D`.
-- Physical speed test: with configured pole pairs `48`, command `1 RPM`, measured wheel period `12.75 s/rev`; inferred actual pole pairs are about `10.2`. Treat the motor as `10` pole pairs unless later measurement contradicts it.
+- Historical physical speed test: with configured pole pairs `48`, command `1 RPM`, measured wheel period `12.75 s/rev`; inferred actual pole pairs are about `10.2`. This is a hypothesis, not a motor datasheet fact: observed configurations have also contained `24` and an experiment used `48`. Verify each robot/motor before staging a pole-pair change; never auto-apply `10` from this note.
 - Mode: M1 `0x5100`, M2 `0x5101`; `0=speed`, `1=position`, `2=torque`, `3=voltage`, `4=skateboard`, `5=kart`.
 - Accel/decel/smoothing: M1 `0x5108/0x510C/0x5110`; M2 `0x5109/0x510D/0x5111`.
 - Control command: M1 `0x5300`, M2 `0x5301`; `0=stop`, `1=start`, `2=clear alarm`. Do not call value `2` brake.
@@ -60,7 +60,8 @@ Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before cha
 
 - Keep RS485 as a single-master serialized queue. Never let command handlers and telemetry polling write the UART concurrently.
 - Validate response slave ID, function code, byte count, and UU Motor CRC before using data.
-- Treat `0x90` exception responses as driver errors and preserve the exception code in telemetry.
+- Treat every requested-function-plus-`0x80` response as a controller exception and preserve both exception function and code. The pure parser and `0x83/0x86/0x90` fixtures are in `svd48_protocol.c` and `tests/host/firmware_contracts_test.c`; retain those tests when extending transactions.
+- `svd48_write_registers_by_id()` is an internal bus primitive, not authorization. Do not expose it through USB/LAN until `robot_state`, maintenance ownership, typed catalog/ranges, old-value capture, readback, ambiguous-outcome handling, and audit are enforced by the configuration service.
 - Decode signed 16-bit values as two's complement.
-- Decode 32-bit registers from two 16-bit registers in register order: high register first, then low register.
+- Current position/error telemetry decoding assumes high register first, then low register. Do not generalize that assumption to `float`, position commands, CAN records, or other 32-bit parameters until SV-Config traffic/golden fixtures verify each wire type.
 - Publish stale telemetry when no valid sample has arrived within the configured stale timeout.

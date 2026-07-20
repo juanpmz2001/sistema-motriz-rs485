@@ -1,0 +1,1389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://botfarms.local/schemas/robot-profile.schema.json",
+  "title": "BotFarms Robot Profile",
+  "description": "Canonical, self-contained robot configuration consumed by backend and ESP32 firmware.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "revision",
+    "name",
+    "lifecycle",
+    "board",
+    "io",
+    "controllers",
+    "actuators",
+    "passive_wheels",
+    "geometry",
+    "kinematics",
+    "control_sources",
+    "safety",
+    "services"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "profile_id": {
+      "$ref": "#/$defs/id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/lifecycle"
+    },
+    "board": {
+      "$ref": "#/$defs/board"
+    },
+    "io": {
+      "$ref": "#/$defs/io"
+    },
+    "controllers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/controller"
+      }
+    },
+    "actuators": {
+      "$ref": "#/$defs/actuators"
+    },
+    "passive_wheels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/passiveWheel"
+      }
+    },
+    "geometry": {
+      "$ref": "#/$defs/geometry"
+    },
+    "kinematics": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/differentialKinematics"
+        },
+        {
+          "$ref": "#/$defs/ackermannKinematics"
+        },
+        {
+          "$ref": "#/$defs/independentSteerKinematics"
+        }
+      ]
+    },
+    "control_sources": {
+      "$ref": "#/$defs/controlSources"
+    },
+    "safety": {
+      "$ref": "#/$defs/safety"
+    },
+    "services": {
+      "$ref": "#/$defs/services"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,47}$"
+    },
+    "gpio": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 48
+    },
+    "parameterValue": {
+      "type": [
+        "number",
+        "string",
+        "boolean"
+      ]
+    },
+    "parameterMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]{1,95}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/parameterValue"
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "activation_allowed",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "measured",
+            "bench_validated",
+            "known_good"
+          ]
+        },
+        "activation_allowed": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "draft"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "activation_allowed": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "pose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x_m",
+        "y_m",
+        "z_m",
+        "yaw_rad"
+      ],
+      "properties": {
+        "x_m": {
+          "type": "number"
+        },
+        "y_m": {
+          "type": "number"
+        },
+        "z_m": {
+          "type": "number"
+        },
+        "yaw_rad": {
+          "type": "number"
+        }
+      }
+    },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "variant",
+        "revision"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "const": "esp32s3"
+        },
+        "variant": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "status_led_gpio": {
+          "$ref": "#/$defs/gpio"
+        },
+        "emergency_stop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "gpio": {
+              "$ref": "#/$defs/gpio"
+            },
+            "active_level": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ]
+            },
+            "pull": {
+              "type": "string",
+              "enum": [
+                "none",
+                "up",
+                "down"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gpio",
+                  "active_level",
+                  "pull"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rs485_buses",
+        "rc_receivers"
+      ],
+      "properties": {
+        "rs485_buses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/rs485Bus"
+          }
+        },
+        "rc_receivers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rcReceiver"
+          }
+        }
+      }
+    },
+    "rs485Bus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "uart_port",
+        "tx_gpio",
+        "rx_gpio",
+        "direction_control",
+        "baud_rate",
+        "duplex"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "uart_port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "tx_gpio": {
+          "$ref": "#/$defs/gpio"
+        },
+        "rx_gpio": {
+          "$ref": "#/$defs/gpio"
+        },
+        "direction_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "rts_gpio"
+              ]
+            },
+            "gpio": {
+              "$ref": "#/$defs/gpio"
+            },
+            "active_level": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "type": {
+                    "const": "rts_gpio"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gpio",
+                  "active_level"
+                ]
+              }
+            }
+          ]
+        },
+        "baud_rate": {
+          "type": "integer",
+          "minimum": 1200,
+          "maximum": 1000000
+        },
+        "duplex": {
+          "type": "string",
+          "enum": [
+            "half"
+          ]
+        },
+        "response_timeout_ms": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 2000
+        }
+      }
+    },
+    "rcReceiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "protocol",
+        "uart_port",
+        "rx_gpio",
+        "baud_rate",
+        "inverted",
+        "stale_timeout_ms",
+        "channels"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "ibus",
+            "sbus"
+          ]
+        },
+        "uart_port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "rx_gpio": {
+          "$ref": "#/$defs/gpio"
+        },
+        "baud_rate": {
+          "type": "integer",
+          "minimum": 9600,
+          "maximum": 1000000
+        },
+        "inverted": {
+          "type": "boolean"
+        },
+        "stale_timeout_ms": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 2000
+        },
+        "channels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "linear",
+            "angular",
+            "deadman"
+          ],
+          "properties": {
+            "linear": {
+              "$ref": "#/$defs/rcChannel"
+            },
+            "lateral": {
+              "$ref": "#/$defs/rcChannel"
+            },
+            "angular": {
+              "$ref": "#/$defs/rcChannel"
+            },
+            "deadman": {
+              "$ref": "#/$defs/rcChannel"
+            }
+          }
+        }
+      }
+    },
+    "rcChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "min",
+        "center",
+        "max",
+        "deadband"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "min": {
+          "type": "integer"
+        },
+        "center": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        },
+        "deadband": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inverted": {
+          "type": "boolean"
+        },
+        "active_min": {
+          "type": "integer"
+        }
+      }
+    },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "driver",
+        "bus_id",
+        "address",
+        "required_for_motion",
+        "channels",
+        "configuration"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "driver": {
+          "type": "string",
+          "enum": [
+            "svd48"
+          ]
+        },
+        "bus_id": {
+          "$ref": "#/$defs/id"
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 247
+        },
+        "required_for_motion": {
+          "type": "boolean"
+        },
+        "channels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/controllerChannel"
+          }
+        },
+        "configuration": {
+          "$ref": "#/$defs/controllerConfiguration"
+        }
+      }
+    },
+    "controllerChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "actuator_id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "M1",
+            "M2"
+          ]
+        },
+        "actuator_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "controllerConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apply_policy",
+        "shared_parameters",
+        "channel_parameters"
+      ],
+      "properties": {
+        "apply_policy": {
+          "type": "string",
+          "const": "explicit_only"
+        },
+        "shared_parameters": {
+          "$ref": "#/$defs/parameterMap"
+        },
+        "channel_parameters": {
+          "type": "object",
+          "maxProperties": 2,
+          "propertyNames": {
+            "enum": [
+              "M1",
+              "M2"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/parameterMap"
+          }
+        }
+      }
+    },
+    "actuators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "traction_motors",
+        "steering"
+      ],
+      "properties": {
+        "traction_motors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/tractionMotor"
+          }
+        },
+        "steering": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/steeringActuator"
+          }
+        }
+      }
+    },
+    "tractionMotor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "pose",
+        "controller_binding",
+        "wheel",
+        "drivetrain",
+        "direction",
+        "limits",
+        "required_for_motion"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "pose": {
+          "$ref": "#/$defs/pose"
+        },
+        "controller_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "controller_id",
+            "channel"
+          ],
+          "properties": {
+            "controller_id": {
+              "$ref": "#/$defs/id"
+            },
+            "channel": {
+              "type": "string",
+              "enum": [
+                "M1",
+                "M2"
+              ]
+            }
+          }
+        },
+        "wheel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "radius_m",
+            "width_m"
+          ],
+          "properties": {
+            "radius_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "width_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "drivetrain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "motor_revolutions_per_wheel_revolution"
+          ],
+          "properties": {
+            "motor_revolutions_per_wheel_revolution": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "direction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command_sign",
+            "telemetry_sign"
+          ],
+          "properties": {
+            "command_sign": {
+              "type": "integer",
+              "enum": [
+                -1,
+                1
+              ]
+            },
+            "telemetry_sign": {
+              "type": "integer",
+              "enum": [
+                -1,
+                1
+              ]
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_motor_rpm",
+            "max_current_a"
+          ],
+          "properties": {
+            "max_motor_rpm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_current_a": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "required_for_motion": {
+          "type": "boolean"
+        }
+      }
+    },
+    "steeringActuator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "pose",
+        "controls_wheels",
+        "driver",
+        "calibration",
+        "safe_angle_rad"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "pose": {
+          "$ref": "#/$defs/pose"
+        },
+        "controls_wheels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "driver": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "gpio",
+            "frequency_hz",
+            "timer",
+            "channel"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ledc_servo"
+            },
+            "gpio": {
+              "$ref": "#/$defs/gpio"
+            },
+            "frequency_hz": {
+              "type": "integer",
+              "minimum": 20,
+              "maximum": 400
+            },
+            "timer": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "channel": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            }
+          }
+        },
+        "calibration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min_pulse_us",
+            "center_pulse_us",
+            "max_pulse_us",
+            "min_angle_rad",
+            "max_angle_rad",
+            "trim_rad",
+            "inverted"
+          ],
+          "properties": {
+            "min_pulse_us": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 2600
+            },
+            "center_pulse_us": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 2600
+            },
+            "max_pulse_us": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 2600
+            },
+            "min_angle_rad": {
+              "type": "number"
+            },
+            "max_angle_rad": {
+              "type": "number"
+            },
+            "trim_rad": {
+              "type": "number"
+            },
+            "inverted": {
+              "type": "boolean"
+            }
+          }
+        },
+        "safe_angle_rad": {
+          "type": "number"
+        }
+      }
+    },
+    "passiveWheel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "pose",
+        "radius_m"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "caster",
+            "fixed",
+            "steered",
+            "omni"
+          ]
+        },
+        "pose": {
+          "$ref": "#/$defs/pose"
+        },
+        "radius_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "body"
+      ],
+      "properties": {
+        "frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "x_positive",
+            "y_positive",
+            "z_positive",
+            "yaw_positive"
+          ],
+          "properties": {
+            "x_positive": {
+              "type": "string",
+              "const": "forward"
+            },
+            "y_positive": {
+              "type": "string",
+              "const": "left"
+            },
+            "z_positive": {
+              "type": "string",
+              "const": "up"
+            },
+            "yaw_positive": {
+              "type": "string",
+              "const": "counterclockwise"
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "length_m",
+            "width_m",
+            "height_m"
+          ],
+          "properties": {
+            "length_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "width_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "height_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      }
+    },
+    "differentialKinematics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "left_motors",
+        "right_motors",
+        "track_width_m",
+        "lateral_deadband_mps"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "differential"
+        },
+        "left_motors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "right_motors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "track_width_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "lateral_deadband_mps": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "ackermannKinematics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "driven_motors",
+        "steered_wheels",
+        "steering_layout",
+        "steering_actuators",
+        "wheelbase_m",
+        "track_width_m",
+        "minimum_turn_radius_m"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ackermann"
+        },
+        "driven_motors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "steered_wheels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "steering_layout": {
+          "type": "string",
+          "enum": [
+            "single_linkage",
+            "per_wheel"
+          ]
+        },
+        "steering_actuators": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "wheelbase_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "track_width_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "minimum_turn_radius_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "independentSteerKinematics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "modules",
+        "allow_crab",
+        "reverse_optimization",
+        "steering_hysteresis_rad"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "independent_steer"
+        },
+        "modules": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "traction_motor_id",
+              "steering_actuator_id"
+            ],
+            "properties": {
+              "traction_motor_id": {
+                "$ref": "#/$defs/id"
+              },
+              "steering_actuator_id": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        },
+        "allow_crab": {
+          "type": "boolean"
+        },
+        "reverse_optimization": {
+          "type": "boolean"
+        },
+        "steering_hysteresis_rad": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "controlSources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arbitration",
+        "sources"
+      ],
+      "properties": {
+        "arbitration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "precedence",
+            "control_period_ms",
+            "switch_policy",
+            "fresh_command_after_switch",
+            "rc_fresh_blocks_lower_sources"
+          ],
+          "properties": {
+            "precedence": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "const": "rc"
+                },
+                {
+                  "const": "lan"
+                },
+                {
+                  "const": "bluetooth"
+                }
+              ],
+              "items": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "control_period_ms": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 50
+            },
+            "switch_policy": {
+              "type": "string",
+              "const": "stop_then_switch"
+            },
+            "fresh_command_after_switch": {
+              "type": "boolean",
+              "const": true
+            },
+            "rc_fresh_blocks_lower_sources": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "$ref": "#/$defs/controlSource"
+          }
+        }
+      }
+    },
+    "controlSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "enabled",
+        "priority",
+        "availability_policy",
+        "command_timeout_ms",
+        "adapter"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "rc",
+            "lan",
+            "bluetooth",
+            "usb"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "availability_policy": {
+          "type": "string",
+          "enum": [
+            "optional",
+            "required_for_arm",
+            "required_while_armed"
+          ]
+        },
+        "command_timeout_ms": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 2000
+        },
+        "adapter": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boot_state",
+        "source_loss_while_moving",
+        "controller_stale_timeout_ms",
+        "stop_command_repeat_ms",
+        "zero_rpm_threshold",
+        "limits"
+      ],
+      "properties": {
+        "boot_state": {
+          "type": "string",
+          "const": "disarmed"
+        },
+        "source_loss_while_moving": {
+          "type": "string",
+          "const": "fault_and_stop"
+        },
+        "controller_stale_timeout_ms": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 2000
+        },
+        "stop_command_repeat_ms": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 1000
+        },
+        "zero_rpm_threshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_linear_mps",
+            "max_lateral_mps",
+            "max_angular_radps",
+            "max_bus_voltage_v",
+            "min_bus_voltage_v",
+            "max_motor_current_a"
+          ],
+          "properties": {
+            "max_linear_mps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_lateral_mps": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max_angular_radps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_bus_voltage_v": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_bus_voltage_v": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max_motor_current_a": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wifi",
+        "maintenance_lan",
+        "control_lan",
+        "bluetooth",
+        "ota"
+      ],
+      "properties": {
+        "wifi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "auto_connect",
+            "credential_ref"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "auto_connect": {
+              "type": "boolean"
+            },
+            "credential_ref": {
+              "type": "string",
+              "const": "nvs:wifi_credentials"
+            }
+          }
+        },
+        "maintenance_lan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "port",
+            "token_ref"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            },
+            "token_ref": {
+              "type": "string",
+              "const": "nvs:maintenance_lan_token"
+            }
+          }
+        },
+        "control_lan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "port",
+            "token_ref"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            },
+            "token_ref": {
+              "type": "string",
+              "const": "nvs:maintenance_lan_token"
+            }
+          }
+        },
+        "bluetooth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "ota": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "auto_check",
+            "auto_update",
+            "token_ref"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "auto_check": {
+              "type": "boolean"
+            },
+            "auto_update": {
+              "type": "boolean",
+              "const": false
+            },
+            "token_ref": {
+              "type": "string",
+              "const": "nvs:ota_announce_token"
+            }
+          }
+        }
+      }
+    }
+  }
+}

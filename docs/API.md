@@ -7,10 +7,13 @@ Read `docs/skills/SVD48B50A_SKILL.md` before changing any RS485 register behavio
 ## Transport
 
 - Default transport: USB serial console exposed by the ESP32-S3.
+- Optional maintenance transport: authenticated UDP JSON on port `32321` through `maintenance_lan`.
 - Baud rate: `115200` when using a UART bridge.
 - Commands are case-insensitive.
 - Motor indices are zero-based: `MOTOR_0`..`MOTOR_3`.
 - Default mapping: drive ID 1 M1/M2 -> motors 0/1, drive ID 2 M1/M2 -> motors 2/3.
+
+LAN maintenance uses the same ASCII command strings inside JSON requests, but applies policy `LAN_SAFE`. It allows diagnostics/telemetry and `STOP ALL`; movement, direct writes, sensitive config mutation and destructive OTA commands return `ERR LAN_COMMAND_BLOCKED <command>`.
 
 ## Commands
 
@@ -91,6 +94,41 @@ Default values:
 - `OTA_AUTO_INTERVAL_MS:600000`
 - `OTA_AUTO_UPDATE:0`
 - `OTA_ANNOUNCE_TOKEN:<empty>`
+- `MAINT_LAN_TOKEN:<empty>`
+
+```text
+MAINT_LAN_STATUS
+MAINT_TOKEN_SET token
+MAINT_TOKEN_CLEAR
+```
+
+`MAINT_TOKEN_SET` stores the separate LAN maintenance token in NVS and never echoes the token. `MAINT_TOKEN_CLEAR` removes it. `TRACE` output redacts `MAINT_TOKEN_SET`.
+
+`MAINT_LAN_STATUS` reports the local maintenance listener contract:
+
+```text
+DATA MAINT_LAN PORT:32321 TOKEN:<set> POLICY:LAN_SAFE
+```
+
+The UDP request shape is:
+
+```json
+{"type":"botfarms_maintenance_request","request_id":"abc123","token":"<token>","action":"command","command":"VERSION"}
+```
+
+The UDP response shape is:
+
+```json
+{"type":"botfarms_maintenance_response","request_id":"abc123","status":"ok","detail":"OK","lines":["DATA VERSION ..."]}
+```
+
+If the command dispatcher emits an `ERR` line, the envelope is also an error. `detail` is the first stable error token and `lines` retains the diagnostic text:
+
+```json
+{"type":"botfarms_maintenance_response","request_id":"abc124","status":"err","detail":"LAN_COMMAND_BLOCKED","lines":["ERR LAN_COMMAND_BLOCKED MOVE_VEL"]}
+```
+
+`packets_accepted` means that authentication and request validation succeeded; a valid command packet can be accepted while its command result is `status:"err"`. This compatibility adapter still infers results from ASCII output; `TRANS-002` will replace that inference with a typed management result.
 
 ```text
 WIFI_SET "ssid" "password"
@@ -233,7 +271,7 @@ READ_REG drive_id reg [count]
 WRITE_REG drive_id reg value
 ```
 
-Reads or writes raw SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, `reg`, and `value` accept decimal or `0x` hex. Use this for SV-Config-equivalent inspection and changes.
+Reads or writes raw 16-bit SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, `reg`, and `value` accept decimal or `0x` hex. This is engineering access, not an SV-Config-equivalent parameter workflow: it has no typed float/32-bit codec, public management command for function `0x10`, access/range enforcement, stopped-motor interlock, old-value capture, readback, rollback, or controller-flash save. The driver now has an internal tested `svd48_write_registers_by_id()` transaction, but it is not reachable from serial/LAN and is not a safe configuration workflow by itself. Do not use `WRITE_REG` as a production configuration API.
 
 ```text
 GET_SVD48_CONFIG drive_id [M1|M2|ALL]
@@ -241,13 +279,15 @@ GET_SVD48_CONFIG drive_id [M1|M2|ALL]
 
 Reads the motor configuration registers used for PY6514/PYD6514 validation: `0x5018/0x5019` pole pairs, `0x502C/0x502D` sensor type, `0x2201` wheel diameter, `0x2202/0x2203` gear teeth, and Hall status/install registers.
 
+The command treats gear reads as optional and currently ignores Hall-read errors, so zero-valued Hall fields are not proof that the controller returned zero. Use trace/raw evidence for diagnosis until the typed parameter API represents unsupported/exception/unknown values explicitly (`SVD-006`).
+
 Use the optional channel argument when only one channel is physically configured, for example `GET_SVD48_CONFIG 0x02 M1`.
 
 ```text
 APPLY_PY6514_CONFIG drive_id [M1|M2|ALL] CONFIRM
 ```
 
-Writes the current Botfarms Toño hypothesis to one or both SVD48 channels: pole pairs `10`, sensor type `1/HALL`, wheel diameter `330 mm`, motor teeth `1`, wheel teeth `5`. Stop the motors before using it. For the current bench setup with only controller `0x02` M1 active, use `APPLY_PY6514_CONFIG 0x02 M1 CONFIRM`.
+Writes the current Botfarms Toño hypothesis to one or both SVD48 channels: pole pairs `10`, sensor type `1/HALL`, wheel diameter `330 mm`, motor teeth `1`, wheel teeth `5`. This command does not enforce a stopped state, capture old values, verify readback, save with `0x3100`, or roll back a partial failure; `0x2202/0x2203` are already known to be unsupported on one observed controller. Treat it as hazardous bench-only legacy access and keep motor power mechanically safe. It must be replaced by `SVD-020/021/023` before production configuration. For the historical bench setup with only controller `0x02` M1 active, the narrow form was `APPLY_PY6514_CONFIG 0x02 M1 CONFIRM`.
 
 ```text
 GET_SPEED n
@@ -266,7 +306,7 @@ DATA MOTOR_0 RPM:1450 STALE:0 ONLINE:1
 GET_MOTOR n
 ```
 
-Returns full telemetry for motor `n`: RPM, current in 0.1 A, status, bus voltage in 0.1 V, motor/MOS temperatures in 0.1 C, encoder position, error code, online flag, stale flag.
+Returns full telemetry for motor `n`: RPM, current in 0.1 A, status, bus voltage in 0.1 V, motor/MOS temperatures in 0.1 C, encoder position, controller error code, online flag and stale flag. It also reports `COMM_ERR` (the current `svd48_status_t`) and the last preserved controller exception as `EXC_FUNC`, `EXC_CODE`, and `EXC_AGE_MS`. Exception fields remain historical after communication recovers; use `COMM_ERR` and age to distinguish current from prior failure.
 
 The response also includes `STEER_DEG`, which is the last commanded steering angle for that logical wheel. It is not an independent steering sensor reading.
 
@@ -274,13 +314,15 @@ The response also includes `STEER_DEG`, which is the last commanded steering ang
 SET_SPEED n rpm
 ```
 
-Starts motor `n` and writes a signed RPM target.
+Writes the signed RPM target before sending `START`. If either operation fails, firmware attempts to stop that motor and returns an error.
 
 ```text
 ENABLE n|ALL
 STOP n|ALL
 CLEAR_FAULT n|ALL
 ```
+
+`ENABLE ALL` first writes a zero target to every motor, then sends `START`; it does not intentionally reuse an unknown controller setpoint. A partial prepare/start failure triggers a best-effort `STOP ALL`. This behavior still requires elevated hardware validation (`TEST-SAFE-015/017/018`) and is not a substitute for the planned latched inhibit/actuator coordinator.
 
 Controls one motor or all motors.
 
