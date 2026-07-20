@@ -1189,11 +1189,11 @@ esp_err_t svd48_enable_motor(svd48_handle_t handle, uint8_t logical_motor)
 
 esp_err_t svd48_stop_motor(svd48_handle_t handle, uint8_t logical_motor)
 {
-    esp_err_t err = svd48_set_motor_speed(handle, logical_motor, 0);
-    if (err != ESP_OK) {
-        return err;
-    }
-    return svd48_set_motor_command(handle, logical_motor, SVD48_MOTOR_CMD_STOP);
+    esp_err_t speed_err = svd48_set_motor_speed(handle, logical_motor, 0);
+    esp_err_t stop_err = svd48_set_motor_command(handle,
+                                                 logical_motor,
+                                                 SVD48_MOTOR_CMD_STOP);
+    return speed_err != ESP_OK ? speed_err : stop_err;
 }
 
 esp_err_t svd48_clear_motor_alarm(svd48_handle_t handle, uint8_t logical_motor)
