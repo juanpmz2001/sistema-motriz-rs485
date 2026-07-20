@@ -6,6 +6,7 @@
 #include "app_version.h"
 #include "config_manager.h"
 #include "ibus_receiver.h"
+#include "maintenance_lan.h"
 #include "nvs_flash.h"
 #include "ota_announce.h"
 #include "ota_manager.h"
@@ -40,6 +41,7 @@ static config_manager_handle_t config_manager = NULL;
 static wifi_manager_handle_t wifi_manager = NULL;
 static ota_manager_handle_t ota_manager = NULL;
 static ota_announce_handle_t ota_announce = NULL;
+static maintenance_lan_handle_t maintenance_lan = NULL;
 static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
 
@@ -326,6 +328,18 @@ void app_main(void)
         return;
     }
 
+    maintenance_lan_config_t maintenance_config = {
+        .config_manager = config_manager,
+        .wifi_manager = wifi_manager,
+        .gateway = gateway,
+        .listen_port = MAINTENANCE_LAN_DEFAULT_PORT,
+    };
+    err = maintenance_lan_init(&maintenance_config, &maintenance_lan);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Maintenance LAN listener unavailable, err=0x%x; robot startup continues", err);
+        maintenance_lan = NULL;
+    }
+
     if (pending_verify) {
         confirm_pending_app_after_self_test();
     }
@@ -348,6 +362,13 @@ void app_main(void)
         err = ota_announce_start(ota_announce);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "OTA LAN announce listener failed to start, err=0x%x", err);
+        }
+    }
+
+    if (maintenance_lan) {
+        err = maintenance_lan_start(maintenance_lan);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Maintenance LAN listener failed to start, err=0x%x", err);
         }
     }
 

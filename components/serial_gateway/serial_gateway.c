@@ -21,7 +21,7 @@
 
 static const char *TAG = "serial_gateway";
 
-#define GATEWAY_LINE_MAX 160
+#define GATEWAY_LINE_MAX SERIAL_GATEWAY_COMMAND_MAX
 #define GATEWAY_ARG_MAX 10
 #define GATEWAY_DEFAULT_STREAM_MS 200
 #define SVD48_PY6514_POLE_PAIRS 10
@@ -34,14 +34,21 @@ static const char *TAG = "serial_gateway";
 #define GATEWAY_RX_DRAIN_MAX 256
 #define GATEWAY_RX_TASK_STACK 12288
 #define GATEWAY_STREAM_TASK_STACK 4096
+#define GATEWAY_COMMAND_LOCK_TIMEOUT_MS 1000
+#define GATEWAY_OUTPUT_CHUNK_MAX 768
+#define MAINTENANCE_LAN_DEFAULT_PORT 32321
 #define PLATFORM_SAFE_RPM_THRESHOLD 5
 #define PLATFORM_SAFE_FLOAT_THRESHOLD 0.001f
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
     SemaphoreHandle_t print_lock;
+    SemaphoreHandle_t command_lock;
     TaskHandle_t rx_task;
     TaskHandle_t stream_task;
+    TaskHandle_t active_output_task;
+    serial_gateway_output_fn_t active_output;
+    void *active_output_ctx;
     bool running;
     bool stream_enabled;
     uint32_t stream_period_ms;
@@ -51,10 +58,22 @@ static void print_locked(serial_gateway_handle_t handle, const char *fmt, ...)
 {
     va_list args;
     xSemaphoreTake(handle->print_lock, portMAX_DELAY);
-    va_start(args, fmt);
-    vprintf(fmt, args);
-    va_end(args);
-    fflush(stdout);
+
+    bool use_callback = handle->active_output &&
+                        xTaskGetCurrentTaskHandle() == handle->active_output_task;
+    if (use_callback) {
+        char chunk[GATEWAY_OUTPUT_CHUNK_MAX];
+        va_start(args, fmt);
+        vsnprintf(chunk, sizeof(chunk), fmt, args);
+        va_end(args);
+        handle->active_output(handle->active_output_ctx, chunk);
+    } else {
+        va_start(args, fmt);
+        vprintf(fmt, args);
+        va_end(args);
+        fflush(stdout);
+    }
+
     xSemaphoreGive(handle->print_lock);
 }
 
@@ -136,6 +155,59 @@ static int split_args(char *line, char *argv[], int max_args)
     }
 
     return argc;
+}
+
+static bool arg_is_all(const char *value)
+{
+    return value && strcasecmp(value, "ALL") == 0;
+}
+
+static bool lan_safe_no_arg_command(const char *command)
+{
+    static const char *const allowed[] = {
+        "PING",
+        "VERSION",
+        "PLATFORM_STATUS",
+        "SAFETY_STATUS",
+        "CONFIG_STATUS",
+        "WIFI_STATUS",
+        "OTA_CONFIG",
+        "OTA_ANNOUNCE_STATUS",
+        "OTA_ROLLBACK_STATUS",
+        "OTA_AUTO_STATUS",
+        "IBUS_STATUS",
+        "IBUS_CHANNELS",
+        "POLL_ONCE",
+        "MAINT_LAN_STATUS",
+    };
+
+    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+        if (strcasecmp(command, allowed[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool command_allowed_for_policy(serial_gateway_command_policy_t policy, int argc, char *argv[])
+{
+    if (policy == SERIAL_GATEWAY_POLICY_FULL_SERIAL) {
+        return true;
+    }
+    if (policy != SERIAL_GATEWAY_POLICY_LAN_SAFE || argc <= 0 || !argv[0]) {
+        return false;
+    }
+
+    if (argc == 1 && lan_safe_no_arg_command(argv[0])) {
+        return true;
+    }
+    if ((strcasecmp(argv[0], "GET_SPEED") == 0 || strcasecmp(argv[0], "GET_MOTOR") == 0) && argc == 2) {
+        return true;
+    }
+    if (strcasecmp(argv[0], "STOP") == 0 && argc == 2 && arg_is_all(argv[1])) {
+        return true;
+    }
+    return false;
 }
 
 static bool parse_u8_arg(const char *text, uint8_t *value)
@@ -324,8 +396,12 @@ static void print_motor_full(serial_gateway_handle_t handle, uint8_t motor)
         steering_deg = cmd.steering_deg[motor];
     }
 
+    uint32_t exception_age_ms = t.last_exception_ms == 0
+                                    ? 0
+                                    : (uint32_t)(esp_timer_get_time() / 1000ULL) - t.last_exception_ms;
+
     print_locked(handle,
-                 "DATA MOTOR_%u RPM:%d CURRENT_DA:%d STEER_DEG:%.1f STATUS:%d BUS_DV:%d MOTOR_TEMP_DC:%d MOS_TEMP_DC:%d POS:%ld ERROR:0x%08lx ONLINE:%u STALE:%u\n",
+                 "DATA MOTOR_%u RPM:%d CURRENT_DA:%d STEER_DEG:%.1f STATUS:%d BUS_DV:%d MOTOR_TEMP_DC:%d MOS_TEMP_DC:%d POS:%ld ERROR:0x%08lx ONLINE:%u STALE:%u COMM_ERR:%u EXC_FUNC:0x%02X EXC_CODE:0x%02X EXC_AGE_MS:%lu\n",
                  motor,
                  t.actual_rpm,
                  t.current_deciamp,
@@ -337,7 +413,11 @@ static void print_motor_full(serial_gateway_handle_t handle, uint8_t motor)
                  (long)t.position_counts,
                  (unsigned long)t.error_code,
                  t.online ? 1 : 0,
-                 t.stale ? 1 : 0);
+                 t.stale ? 1 : 0,
+                 (unsigned)t.last_error,
+                 t.last_exception_function,
+                 t.last_exception_code,
+                 (unsigned long)exception_age_ms);
 }
 
 static const char *sensor_type_name(uint16_t sensor_type)
@@ -559,7 +639,7 @@ static void handle_config_status(serial_gateway_handle_t handle, int argc, char 
     }
 
     print_locked(handle,
-                 "DATA CONFIG WIFI_SSID:%s WIFI_PASSWORD:%s OTA_HOST:%s OTA_PORT:%u OTA_MANIFEST:%s OTA_AUTO_CHECK:%u OTA_AUTO_INTERVAL_MS:%lu OTA_AUTO_UPDATE:%u OTA_ANNOUNCE_TOKEN:%s\n",
+                 "DATA CONFIG WIFI_SSID:%s WIFI_PASSWORD:%s OTA_HOST:%s OTA_PORT:%u OTA_MANIFEST:%s OTA_AUTO_CHECK:%u OTA_AUTO_INTERVAL_MS:%lu OTA_AUTO_UPDATE:%u OTA_ANNOUNCE_TOKEN:%s MAINT_LAN_TOKEN:%s\n",
                  snapshot.wifi_ssid[0] ? snapshot.wifi_ssid : "<empty>",
                  snapshot.wifi_password_set ? "<set>" : "<empty>",
                  snapshot.ota_server_host,
@@ -568,7 +648,68 @@ static void handle_config_status(serial_gateway_handle_t handle, int argc, char 
                  snapshot.ota_auto_check_enabled ? 1 : 0,
                  (unsigned long)snapshot.ota_auto_check_interval_ms,
                  snapshot.ota_auto_update_enabled ? 1 : 0,
-                 snapshot.ota_announce_token_set ? "<set>" : "<empty>");
+                 snapshot.ota_announce_token_set ? "<set>" : "<empty>",
+                 snapshot.maintenance_lan_token_set ? "<set>" : "<empty>");
+}
+
+static void handle_maintenance_lan_status(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE MAINT_LAN_STATUS\n");
+        return;
+    }
+
+    config_manager_snapshot_t snapshot;
+    esp_err_t err = get_config_snapshot(handle, &snapshot);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR MAINT_LAN_STATUS_FAILED 0x%x\n", err);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA MAINT_LAN PORT:%u TOKEN:%s POLICY:LAN_SAFE\n",
+                 MAINTENANCE_LAN_DEFAULT_PORT,
+                 snapshot.maintenance_lan_token_set ? "<set>" : "<empty>");
+}
+
+static void handle_maintenance_lan_token_set(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    if (argc != 2) {
+        print_locked(handle, "ERR USAGE MAINT_TOKEN_SET token\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_set_maintenance_lan_token(handle->config.config_manager, argv[1]);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK MAINT_TOKEN_SET TOKEN:<set>\n");
+    } else {
+        print_locked(handle, "ERR MAINT_TOKEN_SET_FAILED 0x%x\n", err);
+    }
+}
+
+static void handle_maintenance_lan_token_clear(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE MAINT_TOKEN_CLEAR\n");
+        return;
+    }
+    if (!handle->config.config_manager) {
+        print_locked(handle, "ERR CONFIG_MANAGER_UNAVAILABLE\n");
+        return;
+    }
+
+    esp_err_t err = config_manager_clear_maintenance_lan_token(handle->config.config_manager);
+    if (err == ESP_OK) {
+        print_locked(handle, "OK MAINT_TOKEN_CLEAR\n");
+    } else {
+        print_locked(handle, "ERR MAINT_TOKEN_CLEAR_FAILED 0x%x\n", err);
+    }
 }
 
 static void handle_config_clear(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -1477,7 +1618,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
@@ -1876,11 +2017,15 @@ static void print_pc_rx_trace(serial_gateway_handle_t handle, const char *origin
         print_locked(handle, "TRACE PC_RX ASCII:\"OTA_ANNOUNCE_TOKEN_SET <redacted>\"\n");
         return;
     }
+    if (argc > 0 && strcasecmp(argv[0], "MAINT_TOKEN_SET") == 0) {
+        print_locked(handle, "TRACE PC_RX ASCII:\"MAINT_TOKEN_SET <redacted>\"\n");
+        return;
+    }
 
     print_locked(handle, "TRACE PC_RX ASCII:\"%s\"\n", original);
 }
 
-static void handle_command(serial_gateway_handle_t handle, char *line)
+static void handle_command(serial_gateway_handle_t handle, char *line, serial_gateway_command_policy_t policy)
 {
     char original[GATEWAY_LINE_MAX];
     snprintf(original, sizeof(original), "%s", line);
@@ -1892,6 +2037,11 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         return;
     }
     if (argc == 0) {
+        return;
+    }
+
+    if (!command_allowed_for_policy(policy, argc, argv)) {
+        print_locked(handle, "ERR LAN_COMMAND_BLOCKED %s\n", argv[0]);
         return;
     }
 
@@ -1925,6 +2075,12 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
         handle_wifi_connect(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WIFI_DISCONNECT") == 0) {
         handle_wifi_disconnect(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "MAINT_LAN_STATUS") == 0) {
+        handle_maintenance_lan_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "MAINT_TOKEN_SET") == 0) {
+        handle_maintenance_lan_token_set(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "MAINT_TOKEN_CLEAR") == 0) {
+        handle_maintenance_lan_token_clear(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_SET_SERVER") == 0) {
         handle_ota_set_server(handle, argc, argv);
     } else if (strcasecmp(argv[0], "OTA_SET_MANIFEST") == 0) {
@@ -2101,8 +2257,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line)
 static void gateway_rx_task(void *arg)
 {
     serial_gateway_handle_t handle = (serial_gateway_handle_t)arg;
-    char line[GATEWAY_LINE_MAX];
-    size_t line_len = 0;
+    serial_gateway_line_framer_t framer;
+    serial_gateway_line_framer_init(&framer);
 
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2129,26 +2285,21 @@ static void gateway_rx_task(void *arg)
             }
 
             had_input = true;
-            if (ch == '\r' || ch == '\n') {
-                if (line_len == 0) {
-                    continue;
-                }
-                line[line_len] = '\0';
-                char *clean = trim(line);
-                handle_command(handle, clean);
+            serial_gateway_frame_event_t event = serial_gateway_line_framer_feed(&framer, ch);
+            if (event == SERIAL_GATEWAY_FRAME_LINE_READY) {
+                char *clean = trim(framer.line);
+                (void)serial_gateway_execute_command(handle,
+                                                     clean,
+                                                     SERIAL_GATEWAY_POLICY_FULL_SERIAL,
+                                                     NULL,
+                                                     NULL);
                 print_prompt(handle);
-                line_len = 0;
                 continue;
             }
-
-            if (line_len >= sizeof(line) - 1) {
-                line_len = 0;
+            if (event == SERIAL_GATEWAY_FRAME_LINE_TOO_LONG) {
                 print_locked(handle, "ERR LINE_TOO_LONG\n");
                 print_prompt(handle);
-                continue;
             }
-
-            line[line_len++] = ch;
         }
 
         if (!had_input) {
@@ -2173,6 +2324,45 @@ static void gateway_stream_task(void *arg)
     vTaskDelete(NULL);
 }
 
+esp_err_t serial_gateway_execute_command(serial_gateway_handle_t handle,
+                                         const char *line,
+                                         serial_gateway_command_policy_t policy,
+                                         serial_gateway_output_fn_t output_fn,
+                                         void *output_ctx)
+{
+    if (!handle || !line) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (strnlen(line, GATEWAY_LINE_MAX) >= GATEWAY_LINE_MAX) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    char copy[GATEWAY_LINE_MAX];
+    snprintf(copy, sizeof(copy), "%s", line);
+    char *clean = trim(copy);
+    if (clean[0] == '\0') {
+        return ESP_OK;
+    }
+
+    if (xSemaphoreTake(handle->command_lock, pdMS_TO_TICKS(GATEWAY_COMMAND_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    handle->active_output = output_fn;
+    handle->active_output_ctx = output_ctx;
+    handle->active_output_task = output_fn ? xTaskGetCurrentTaskHandle() : NULL;
+
+    handle_command(handle, clean, policy);
+
+    handle->active_output = NULL;
+    handle->active_output_ctx = NULL;
+    handle->active_output_task = NULL;
+
+    xSemaphoreGive(handle->command_lock);
+    return ESP_OK;
+}
+
 serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *config)
 {
     if (!config || !config->robot) {
@@ -2192,6 +2382,12 @@ serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *confi
         free(handle);
         return NULL;
     }
+    handle->command_lock = xSemaphoreCreateMutex();
+    if (!handle->command_lock) {
+        vSemaphoreDelete(handle->print_lock);
+        free(handle);
+        return NULL;
+    }
 
     return handle;
 }
@@ -2205,6 +2401,9 @@ void serial_gateway_deinit(serial_gateway_handle_t handle)
     vTaskDelay(pdMS_TO_TICKS(20));
     if (handle->print_lock) {
         vSemaphoreDelete(handle->print_lock);
+    }
+    if (handle->command_lock) {
+        vSemaphoreDelete(handle->command_lock);
     }
     free(handle);
 }

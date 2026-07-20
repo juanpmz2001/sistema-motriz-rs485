@@ -14,6 +14,7 @@
 #define KEY_OTA_PORT "ota_port"
 #define KEY_OTA_MANIFEST "ota_path"
 #define KEY_OTA_ANNOUNCE_TOKEN "ota_ann_tok"
+#define KEY_MAINTENANCE_LAN_TOKEN "maint_lan_tok"
 #define KEY_AUTO_CHECK "auto_check"
 #define KEY_AUTO_UPDATE "auto_update"
 #define KEY_AUTO_INTERVAL "auto_int_ms"
@@ -199,6 +200,15 @@ esp_err_t config_manager_get_snapshot(config_manager_handle_t handle, config_man
             err = token_err;
         }
     }
+    if (err == ESP_OK) {
+        char token[CONFIG_MANAGER_MAINTENANCE_LAN_TOKEN_MAX] = { 0 };
+        esp_err_t token_err = read_string(handle->nvs, KEY_MAINTENANCE_LAN_TOKEN, token, sizeof(token));
+        if (token_err == ESP_OK) {
+            snapshot->maintenance_lan_token_set = token[0] != '\0';
+        } else {
+            err = token_err;
+        }
+    }
 
     xSemaphoreGive(handle->lock);
     return err;
@@ -250,6 +260,33 @@ esp_err_t config_manager_get_ota_announce_token(config_manager_handle_t handle,
         return err;
     }
     err = read_string(handle->nvs, KEY_OTA_ANNOUNCE_TOKEN, token, token_size);
+    xSemaphoreGive(handle->lock);
+
+    if (err == ESP_OK && token_set) {
+        *token_set = token[0] != '\0';
+    }
+    return err;
+}
+
+esp_err_t config_manager_get_maintenance_lan_token(config_manager_handle_t handle,
+                                                   char *token,
+                                                   size_t token_size,
+                                                   bool *token_set)
+{
+    if (!handle || !token || token_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    token[0] = '\0';
+    if (token_set) {
+        *token_set = false;
+    }
+
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = read_string(handle->nvs, KEY_MAINTENANCE_LAN_TOKEN, token, token_size);
     xSemaphoreGive(handle->lock);
 
     if (err == ESP_OK && token_set) {
@@ -373,6 +410,43 @@ esp_err_t config_manager_clear_ota_announce_token(config_manager_handle_t handle
         return err;
     }
     err = erase_key_if_present(handle->nvs, KEY_OTA_ANNOUNCE_TOKEN);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle->nvs);
+    }
+    xSemaphoreGive(handle->lock);
+    return err;
+}
+
+esp_err_t config_manager_set_maintenance_lan_token(config_manager_handle_t handle, const char *token)
+{
+    if (!handle || !valid_string_size(token, CONFIG_MANAGER_MAINTENANCE_LAN_TOKEN_MAX) ||
+        token[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(handle->nvs, KEY_MAINTENANCE_LAN_TOKEN, token);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle->nvs);
+    }
+    xSemaphoreGive(handle->lock);
+    return err;
+}
+
+esp_err_t config_manager_clear_maintenance_lan_token(config_manager_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = take_lock(handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = erase_key_if_present(handle->nvs, KEY_MAINTENANCE_LAN_TOKEN);
     if (err == ESP_OK) {
         err = nvs_commit(handle->nvs);
     }

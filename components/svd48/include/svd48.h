@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "driver/uart.h"
 #include "esp_err.h"
+#include "svd48_protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,6 +57,9 @@ typedef struct {
     bool stale;
     svd48_status_t last_error;
     uint32_t last_update_ms;
+    uint8_t last_exception_function;
+    uint8_t last_exception_code;
+    uint32_t last_exception_ms;
 
     int16_t status;              // 0=stop, 1=running
     int16_t actual_rpm;
@@ -88,10 +92,11 @@ bool svd48_get_motor_telemetry(svd48_handle_t handle, uint8_t logical_motor, svd
 bool svd48_resolve_motor(svd48_handle_t handle, uint8_t logical_motor, uint8_t *drive_id, uint8_t *channel);
 esp_err_t svd48_read_registers_by_id(svd48_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t quantity, uint16_t *out_regs);
 esp_err_t svd48_write_register_by_id(svd48_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t value);
-
-uint16_t svd48_crc16_uumotor(const uint8_t *data, size_t length);
-size_t svd48_build_read_request(uint8_t slave_id, uint16_t reg, uint16_t quantity, uint8_t frame[8]);
-size_t svd48_build_write_single_request(uint8_t slave_id, uint16_t reg, uint16_t value, uint8_t frame[8]);
+esp_err_t svd48_write_registers_by_id(svd48_handle_t handle,
+                                      uint8_t drive_id,
+                                      uint16_t start_reg,
+                                      const uint16_t *values,
+                                      uint16_t quantity);
 
 #ifdef __cplusplus
 }

@@ -97,6 +97,35 @@ static void record_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, 
     record_last_command(handle, &command);
 }
 
+static esp_err_t stop_all_after_failure(robot_control_handle_t handle,
+                                        esp_err_t cause,
+                                        const char *stage,
+                                        uint8_t motor)
+{
+    esp_err_t stop_err = svd48_stop_all(handle->config.svd48);
+    if (stop_err == ESP_OK) {
+        record_stop_command(handle);
+    }
+    ESP_LOGE(TAG,
+             "%s failed at motor %u: %s; fail-stop: %s",
+             stage,
+             motor,
+             esp_err_to_name(cause),
+             esp_err_to_name(stop_err));
+    return cause;
+}
+
+static esp_err_t enable_prepared_targets(robot_control_handle_t handle)
+{
+    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        esp_err_t err = svd48_enable_motor(handle->config.svd48, motor);
+        if (err != ESP_OK) {
+            return stop_all_after_failure(handle, err, "enable prepared target", motor);
+        }
+    }
+    return ESP_OK;
+}
+
 static esp_err_t steering_set_angle(robot_control_handle_t handle, uint8_t motor, float angle_deg)
 {
     if (!handle || motor >= SVD48_MOTOR_COUNT || !handle->config.enable_steering_servos) {
@@ -228,14 +257,18 @@ esp_err_t robot_control_enable_all(robot_control_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_err_t first_error = ESP_OK;
     for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
-        esp_err_t err = svd48_enable_motor(handle->config.svd48, motor);
-        if (err != ESP_OK && first_error == ESP_OK) {
-            first_error = err;
+        esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, 0);
+        if (err != ESP_OK) {
+            return stop_all_after_failure(handle, err, "prepare zero target", motor);
         }
     }
-    return first_error;
+
+    esp_err_t err = enable_prepared_targets(handle);
+    if (err == ESP_OK) {
+        record_stop_command(handle);
+    }
+    return err;
 }
 
 esp_err_t robot_control_stop_all(robot_control_handle_t handle)
@@ -277,12 +310,30 @@ esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t m
         return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_RETURN_ON_ERROR(svd48_enable_motor(handle->config.svd48, motor), TAG, "enable motor failed");
     esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, rpm);
-    if (err == ESP_OK) {
-        record_last_motor_rpm(handle, motor, rpm);
+    if (err != ESP_OK) {
+        esp_err_t stop_err = svd48_stop_motor(handle->config.svd48, motor);
+        ESP_LOGE(TAG,
+                 "set target failed at motor %u: %s; motor stop: %s",
+                 motor,
+                 esp_err_to_name(err),
+                 esp_err_to_name(stop_err));
+        return err;
     }
-    return err;
+
+    err = svd48_enable_motor(handle->config.svd48, motor);
+    if (err != ESP_OK) {
+        esp_err_t stop_err = svd48_stop_motor(handle->config.svd48, motor);
+        ESP_LOGE(TAG,
+                 "enable target failed at motor %u: %s; motor stop: %s",
+                 motor,
+                 esp_err_to_name(err),
+                 esp_err_to_name(stop_err));
+        return err;
+    }
+
+    record_last_motor_rpm(handle, motor, rpm);
+    return ESP_OK;
 }
 
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps)
@@ -339,13 +390,27 @@ esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, fl
         .wz_radps = wz_radps,
     };
 
-    ESP_RETURN_ON_ERROR(robot_control_enable_all(handle), TAG, "enable all failed");
-
     for (uint8_t i = 0; i < SVD48_MOTOR_COUNT; i++) {
         command.wheel_rpm[i] = clamp_rpm(wheel_rpm[i] * scale, handle->config.max_wheel_rpm);
         command.steering_deg[i] = steering_deg[i];
-        ESP_RETURN_ON_ERROR(steering_set_angle(handle, i, command.steering_deg[i]), TAG, "steering failed");
-        ESP_RETURN_ON_ERROR(svd48_set_motor_speed(handle->config.svd48, i, command.wheel_rpm[i]), TAG, "set speed failed");
+    }
+
+    for (uint8_t i = 0; i < SVD48_MOTOR_COUNT; i++) {
+        esp_err_t err = steering_set_angle(handle, i, command.steering_deg[i]);
+        if (err != ESP_OK) {
+            return stop_all_after_failure(handle, err, "set steering target", i);
+        }
+    }
+    for (uint8_t i = 0; i < SVD48_MOTOR_COUNT; i++) {
+        esp_err_t err = svd48_set_motor_speed(handle->config.svd48, i, command.wheel_rpm[i]);
+        if (err != ESP_OK) {
+            return stop_all_after_failure(handle, err, "set wheel target", i);
+        }
+    }
+
+    esp_err_t err = enable_prepared_targets(handle);
+    if (err != ESP_OK) {
+        return err;
     }
 
     record_last_command(handle, &command);

@@ -25,11 +25,6 @@ static const char *TAG = "svd48";
 #define SVD48_POLL_BACKOFF_BASE_MS 250
 #define SVD48_POLL_BACKOFF_MAX_MS 1500
 
-#define SVD48_FUNC_READ_HOLDING 0x03
-#define SVD48_FUNC_WRITE_SINGLE 0x06
-#define SVD48_FUNC_WRITE_MULTI 0x10
-#define SVD48_FUNC_EXCEPTION 0x90
-
 #define REG_M1_STATUS 0x5400
 #define REG_M1_MOTOR_TEMP 0x5404
 #define REG_M1_BUS_VOLTAGE 0x5408
@@ -306,6 +301,9 @@ static void trace_request(svd48_handle_t handle, uint32_t seq, uint8_t attempt, 
         } else {
             printf("VALUE:%u RAW:0x%04X ", field, field);
         }
+    } else if (function == SVD48_FUNC_WRITE_MULTI) {
+        uint8_t byte_count = request_len > 6 ? request[6] : 0;
+        printf("QTY:%u BYTE_COUNT:%u ", field, byte_count);
     }
 
     printf("CRC:0x%04X CRC_ORDER:HIGH_LOW HEX:", crc);
@@ -384,7 +382,7 @@ static void trace_response(svd48_handle_t handle,
                request_function,
                request_reg,
                register_name(request_reg));
-    } else if (response_len >= 5 && response && (response[1] == SVD48_FUNC_EXCEPTION || (response[1] & 0x80))) {
+    } else if (response_len >= 5 && response && (response[1] & 0x80U)) {
         printf("EXCEPTION FUNC:0x%02X CODE:%u REQUEST_REG:0x%04X REG_NAME:%s",
                response[1],
                response[2],
@@ -413,6 +411,23 @@ static void trace_response(svd48_handle_t handle,
             printf("VALUE:%d RAW:0x%04X", (int16_t)value, value);
         } else {
             printf("VALUE:%u RAW:0x%04X", value, value);
+        }
+    } else if (response && request_function == SVD48_FUNC_WRITE_MULTI) {
+        svd48_write_multiple_response_t ack;
+        if (svd48_parse_write_multiple_response(response,
+                                                response_len,
+                                                slave_id,
+                                                request_reg,
+                                                request_field,
+                                                &ack)) {
+            printf("WRITE_MULTI_ACK REG:0x%04X REG_NAME:%s COUNT:%u",
+                   ack.start_register,
+                   register_name(ack.start_register),
+                   ack.quantity);
+        } else {
+            printf("ERROR:BAD_WRITE_MULTI_ACK REQUEST_REG:0x%04X REQUEST_COUNT:%u",
+                   request_reg,
+                   request_field);
         }
     } else {
         printf("UNDECODED REQUEST_FUNC:0x%02X REQUEST_REG:0x%04X REQUEST_FIELD:%u",
@@ -446,67 +461,6 @@ static void trace_bus_lock_timeout(svd48_handle_t handle, uint32_t seq, const ui
     xSemaphoreGive(handle->trace_lock);
 }
 
-uint16_t svd48_crc16_uumotor(const uint8_t *data, size_t length)
-{
-    uint16_t crc = 0xFFFF;
-    for (size_t pos = 0; pos < length; pos++) {
-        crc ^= (uint16_t)data[pos];
-        for (int i = 0; i < 8; i++) {
-            if (crc & 0x0001) {
-                crc >>= 1;
-                crc ^= 0xA001;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    return crc;
-}
-
-size_t svd48_build_read_request(uint8_t slave_id, uint16_t reg, uint16_t quantity, uint8_t frame[8])
-{
-    if (!frame) {
-        return 0;
-    }
-    frame[0] = slave_id;
-    frame[1] = SVD48_FUNC_READ_HOLDING;
-    frame[2] = (uint8_t)(reg >> 8);
-    frame[3] = (uint8_t)(reg & 0xFF);
-    frame[4] = (uint8_t)(quantity >> 8);
-    frame[5] = (uint8_t)(quantity & 0xFF);
-    uint16_t crc = svd48_crc16_uumotor(frame, 6);
-    frame[6] = (uint8_t)(crc >> 8);
-    frame[7] = (uint8_t)(crc & 0xFF);
-    return 8;
-}
-
-size_t svd48_build_write_single_request(uint8_t slave_id, uint16_t reg, uint16_t value, uint8_t frame[8])
-{
-    if (!frame) {
-        return 0;
-    }
-    frame[0] = slave_id;
-    frame[1] = SVD48_FUNC_WRITE_SINGLE;
-    frame[2] = (uint8_t)(reg >> 8);
-    frame[3] = (uint8_t)(reg & 0xFF);
-    frame[4] = (uint8_t)(value >> 8);
-    frame[5] = (uint8_t)(value & 0xFF);
-    uint16_t crc = svd48_crc16_uumotor(frame, 6);
-    frame[6] = (uint8_t)(crc >> 8);
-    frame[7] = (uint8_t)(crc & 0xFF);
-    return 8;
-}
-
-static bool validate_crc(const uint8_t *frame, size_t length)
-{
-    if (!frame || length < 4) {
-        return false;
-    }
-    uint16_t expected = svd48_crc16_uumotor(frame, length - 2);
-    return frame[length - 2] == (uint8_t)(expected >> 8) &&
-           frame[length - 1] == (uint8_t)(expected & 0xFF);
-}
-
 static esp_err_t read_frame(svd48_handle_t handle, uint8_t *buffer, size_t max_length, size_t *out_length)
 {
     const int64_t start = esp_timer_get_time() / 1000;
@@ -533,7 +487,7 @@ static esp_err_t read_frame(svd48_handle_t handle, uint8_t *buffer, size_t max_l
                 expected = 5U + buffer[2];
             } else if (buffer[1] == SVD48_FUNC_WRITE_SINGLE || buffer[1] == SVD48_FUNC_WRITE_MULTI) {
                 expected = 8;
-            } else if (buffer[1] == SVD48_FUNC_EXCEPTION || (buffer[1] & 0x80)) {
+            } else if (buffer[1] & 0x80U) {
                 expected = 5;
             } else {
                 expected = 5;
@@ -597,7 +551,7 @@ static esp_err_t transact(svd48_handle_t handle,
         }
         trace_request(handle, trace_seq, attempt + 1, request, request_len);
         last_err = send_request_and_read_response(handle, request, request_len, response, response_max, response_len);
-        bool crc_ok = last_err == ESP_OK && validate_crc(response, *response_len);
+        bool crc_ok = last_err == ESP_OK && svd48_frame_has_valid_crc(response, *response_len);
         trace_response(handle, trace_seq, attempt + 1, request, request_len, response, response_len ? *response_len : 0, last_err, crc_ok);
         if (last_err == ESP_OK && crc_ok) {
             xSemaphoreGive(handle->bus_lock);
@@ -625,6 +579,55 @@ static void set_drive_error(svd48_handle_t handle, uint8_t drive_index, svd48_st
         handle->motors[motor].last_error = error;
     }
     xSemaphoreGive(handle->state_lock);
+}
+
+static void set_drive_exception(svd48_handle_t handle,
+                                uint8_t drive_index,
+                                const svd48_exception_response_t *exception)
+{
+    if (drive_index >= SVD48_DRIVE_COUNT || !exception) {
+        return;
+    }
+
+    uint32_t timestamp = now_ms();
+    xSemaphoreTake(handle->state_lock, portMAX_DELAY);
+    for (uint8_t channel = 0; channel < SVD48_MOTORS_PER_DRIVE; channel++) {
+        uint8_t motor = drive_index * SVD48_MOTORS_PER_DRIVE + channel;
+        handle->motors[motor].last_error = SVD48_ERR_EXCEPTION;
+        handle->motors[motor].last_exception_function = exception->function;
+        handle->motors[motor].last_exception_code = exception->code;
+        handle->motors[motor].last_exception_ms = timestamp;
+    }
+    xSemaphoreGive(handle->state_lock);
+}
+
+static bool record_modbus_exception(svd48_handle_t handle,
+                                    uint8_t drive_index,
+                                    const uint8_t *response,
+                                    size_t response_len,
+                                    uint8_t slave_id,
+                                    uint8_t request_function,
+                                    const char *operation,
+                                    uint16_t reg)
+{
+    svd48_exception_response_t exception;
+    if (!svd48_parse_exception_response(response,
+                                        response_len,
+                                        slave_id,
+                                        request_function,
+                                        &exception)) {
+        return false;
+    }
+
+    ESP_LOGW(TAG,
+             "Drive %u exception func=0x%02X code=0x%02X %s 0x%04X",
+             slave_id,
+             exception.function,
+             exception.code,
+             operation,
+             reg);
+    set_drive_exception(handle, drive_index, &exception);
+    return true;
 }
 
 static void update_pair_i16(svd48_handle_t handle, uint8_t drive_index, pair_field_t field, const uint16_t regs[2])
@@ -739,13 +742,19 @@ static esp_err_t read_registers(svd48_handle_t handle,
         return err;
     }
 
-    if (response_len >= 5 && response[1] == SVD48_FUNC_EXCEPTION) {
-        ESP_LOGW(TAG, "Drive %u exception %u reading 0x%04X", slave_id, response[2], reg);
-        set_drive_error(handle, drive_index, SVD48_ERR_EXCEPTION);
+    if (record_modbus_exception(handle,
+                                drive_index,
+                                response,
+                                response_len,
+                                slave_id,
+                                SVD48_FUNC_READ_HOLDING,
+                                "reading",
+                                reg)) {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    if (response[0] != slave_id || response[1] != SVD48_FUNC_READ_HOLDING || response[2] != quantity * 2) {
+    if (response_len != 5U + (size_t)quantity * 2U || response[0] != slave_id ||
+        response[1] != SVD48_FUNC_READ_HOLDING || response[2] != quantity * 2U) {
         set_drive_error(handle, drive_index, SVD48_ERR_BAD_RESPONSE);
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -775,13 +784,82 @@ static esp_err_t write_register(svd48_handle_t handle, uint8_t drive_index, uint
         return err;
     }
 
-    if (response_len >= 5 && response[1] == SVD48_FUNC_EXCEPTION) {
-        ESP_LOGW(TAG, "Drive %u exception %u writing 0x%04X", slave_id, response[2], reg);
-        set_drive_error(handle, drive_index, SVD48_ERR_EXCEPTION);
+    if (record_modbus_exception(handle,
+                                drive_index,
+                                response,
+                                response_len,
+                                slave_id,
+                                SVD48_FUNC_WRITE_SINGLE,
+                                "writing",
+                                reg)) {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     if (response_len != 8 || memcmp(request, response, 8) != 0) {
+        set_drive_error(handle, drive_index, SVD48_ERR_BAD_RESPONSE);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    return ESP_OK;
+}
+
+static esp_err_t write_registers(svd48_handle_t handle,
+                                 uint8_t drive_index,
+                                 uint16_t start_reg,
+                                 const uint16_t *values,
+                                 uint16_t quantity)
+{
+    if (!handle || drive_index >= SVD48_DRIVE_COUNT || !values ||
+        !svd48_write_multiple_range_is_valid(start_reg, quantity)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t request[SVD48_WRITE_MULTIPLE_REQUEST_MAX_SIZE];
+    uint8_t response[SVD48_WRITE_MULTIPLE_RESPONSE_SIZE];
+    uint8_t slave_id = handle->config.drive_ids[drive_index];
+    size_t request_len = svd48_build_write_multiple_request(slave_id,
+                                                           start_reg,
+                                                           values,
+                                                           quantity,
+                                                           request,
+                                                           sizeof(request));
+    if (request_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t response_len = 0;
+    // A missing ACK makes a configuration write ambiguous. Readback must classify it;
+    // retransmitting here could apply a non-idempotent register twice.
+    esp_err_t err = transact(handle,
+                             request,
+                             request_len,
+                             response,
+                             sizeof(response),
+                             &response_len,
+                             0);
+    if (err != ESP_OK) {
+        set_drive_error(handle, drive_index, esp_to_svd48_status(err));
+        return err;
+    }
+
+    if (record_modbus_exception(handle,
+                                drive_index,
+                                response,
+                                response_len,
+                                slave_id,
+                                SVD48_FUNC_WRITE_MULTI,
+                                "writing multiple from",
+                                start_reg)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    svd48_write_multiple_response_t ack;
+    if (!svd48_parse_write_multiple_response(response,
+                                             response_len,
+                                             slave_id,
+                                             start_reg,
+                                             quantity,
+                                             &ack)) {
         set_drive_error(handle, drive_index, SVD48_ERR_BAD_RESPONSE);
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -1061,6 +1139,20 @@ esp_err_t svd48_write_register_by_id(svd48_handle_t handle, uint8_t drive_id, ui
         return ESP_ERR_INVALID_ARG;
     }
     return write_register(handle, drive_index, reg, value);
+}
+
+esp_err_t svd48_write_registers_by_id(svd48_handle_t handle,
+                                      uint8_t drive_id,
+                                      uint16_t start_reg,
+                                      const uint16_t *values,
+                                      uint16_t quantity)
+{
+    uint8_t drive_index = 0;
+    if (!values || !svd48_write_multiple_range_is_valid(start_reg, quantity) ||
+        !drive_index_from_id(handle, drive_id, &drive_index)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return write_registers(handle, drive_index, start_reg, values, quantity);
 }
 
 esp_err_t svd48_set_motor_command(svd48_handle_t handle, uint8_t logical_motor, svd48_motor_command_t command)

@@ -10,6 +10,7 @@
 #include "ota_manager.h"
 #include "robot_control.h"
 #include "robot_safety.h"
+#include "serial_gateway_framing.h"
 #include "wifi_manager.h"
 
 #ifdef __cplusplus
@@ -17,6 +18,13 @@ extern "C" {
 #endif
 
 typedef struct serial_gateway_t *serial_gateway_handle_t;
+
+typedef enum {
+    SERIAL_GATEWAY_POLICY_FULL_SERIAL = 0,
+    SERIAL_GATEWAY_POLICY_LAN_SAFE,
+} serial_gateway_command_policy_t;
+
+typedef void (*serial_gateway_output_fn_t)(void *ctx, const char *chunk);
 
 typedef struct {
     robot_control_handle_t robot;
@@ -37,6 +45,11 @@ typedef struct {
 serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *config);
 void serial_gateway_deinit(serial_gateway_handle_t handle);
 esp_err_t serial_gateway_start(serial_gateway_handle_t handle);
+esp_err_t serial_gateway_execute_command(serial_gateway_handle_t handle,
+                                         const char *line,
+                                         serial_gateway_command_policy_t policy,
+                                         serial_gateway_output_fn_t output_fn,
+                                         void *output_ctx);
 
 #ifdef __cplusplus
 }
