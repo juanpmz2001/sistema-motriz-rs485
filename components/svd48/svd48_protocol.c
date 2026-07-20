@@ -43,6 +43,36 @@ bool svd48_write_multiple_range_is_valid(uint16_t start_reg, uint16_t quantity)
     return (uint32_t)start_reg + (uint32_t)quantity - 1U <= UINT16_MAX;
 }
 
+bool svd48_register_is_runtime_actuation(uint16_t reg)
+{
+    switch (reg) {
+    case 0x5300U:
+    case 0x5301U:
+    case 0x5304U:
+    case 0x5305U:
+    case 0x5308U:
+    case 0x5309U:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool svd48_register_range_has_runtime_actuation(uint16_t start_reg, uint16_t quantity)
+{
+    if (!svd48_write_multiple_range_is_valid(start_reg, quantity)) {
+        return false;
+    }
+
+    uint32_t end_reg = (uint32_t)start_reg + (uint32_t)quantity - 1U;
+    for (uint32_t reg = start_reg; reg <= end_reg; ++reg) {
+        if (svd48_register_is_runtime_actuation((uint16_t)reg)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 size_t svd48_build_read_request(uint8_t slave_id, uint16_t reg, uint16_t quantity, uint8_t frame[8])
 {
     if (!frame || quantity == 0) {

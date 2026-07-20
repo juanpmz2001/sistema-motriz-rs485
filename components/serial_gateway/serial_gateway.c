@@ -1448,6 +1448,13 @@ static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *arg
         return;
     }
 
+    if (svd48_register_is_runtime_actuation(reg)) {
+        print_locked(handle,
+                     "ERR WRITE_REG_ACTUATION_BLOCKED REG:0x%04x\n",
+                     reg);
+        return;
+    }
+
     esp_err_t err = robot_control_write_svd48_register(handle->config.robot, drive_id, reg, value);
     if (err == ESP_OK) {
         print_locked(handle, "OK WRITE_REG DRIVE:%u REG:0x%04x VALUE:0x%04x/%u\n", drive_id, reg, value, value);

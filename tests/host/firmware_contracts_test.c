@@ -205,6 +205,30 @@ static bool test_svd48_exceptions(void)
     return true;
 }
 
+static bool test_svd48_runtime_actuation_register_classification(void)
+{
+    const uint16_t blocked[] = {
+        0x5300U, 0x5301U, 0x5304U, 0x5305U, 0x5308U, 0x5309U,
+    };
+    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); ++i) {
+        HOST_TEST_CHECK(svd48_register_is_runtime_actuation(blocked[i]));
+    }
+
+    HOST_TEST_CHECK(!svd48_register_is_runtime_actuation(0x5018U));
+    HOST_TEST_CHECK(!svd48_register_is_runtime_actuation(0x5100U));
+    HOST_TEST_CHECK(!svd48_register_is_runtime_actuation(0x5200U));
+    HOST_TEST_CHECK(!svd48_register_is_runtime_actuation(0x5302U));
+    HOST_TEST_CHECK(!svd48_register_is_runtime_actuation(0x5400U));
+    HOST_TEST_CHECK(svd48_register_range_has_runtime_actuation(0x52FFU, 2U));
+    HOST_TEST_CHECK(svd48_register_range_has_runtime_actuation(0x5302U, 3U));
+    HOST_TEST_CHECK(svd48_register_range_has_runtime_actuation(0x5306U, 4U));
+    HOST_TEST_CHECK(!svd48_register_range_has_runtime_actuation(0x5100U, 16U));
+    HOST_TEST_CHECK(!svd48_register_range_has_runtime_actuation(0x5302U, 2U));
+    HOST_TEST_CHECK(!svd48_register_range_has_runtime_actuation(0x530AU, 1U));
+    HOST_TEST_CHECK(!svd48_register_range_has_runtime_actuation(0xFFFFU, 2U));
+    return true;
+}
+
 static bool test_serial_framing(void)
 {
     serial_gateway_line_framer_t framer;
@@ -255,6 +279,7 @@ int main(void)
         HOST_TEST_CASE(test_svd48_request_builders),
         HOST_TEST_CASE(test_svd48_write_multiple_response),
         HOST_TEST_CASE(test_svd48_exceptions),
+        HOST_TEST_CASE(test_svd48_runtime_actuation_register_classification),
         HOST_TEST_CASE(test_serial_framing),
         HOST_TEST_CASE(test_gateway_error_result),
     };

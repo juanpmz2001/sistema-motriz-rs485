@@ -1138,6 +1138,9 @@ esp_err_t svd48_write_register_by_id(svd48_handle_t handle, uint8_t drive_id, ui
     if (!drive_index_from_id(handle, drive_id, &drive_index)) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (svd48_register_is_runtime_actuation(reg)) {
+        return ESP_ERR_NOT_ALLOWED;
+    }
     return write_register(handle, drive_index, reg, value);
 }
 
@@ -1151,6 +1154,9 @@ esp_err_t svd48_write_registers_by_id(svd48_handle_t handle,
     if (!values || !svd48_write_multiple_range_is_valid(start_reg, quantity) ||
         !drive_index_from_id(handle, drive_id, &drive_index)) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (svd48_register_range_has_runtime_actuation(start_reg, quantity)) {
+        return ESP_ERR_NOT_ALLOWED;
     }
     return write_registers(handle, drive_index, start_reg, values, quantity);
 }

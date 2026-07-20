@@ -92,9 +92,10 @@ static void record_stop_command(robot_control_handle_t handle)
 
 static void record_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
 {
-    robot_motion_command_t command = {0};
-    command.wheel_rpm[motor] = rpm;
-    record_last_command(handle, &command);
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    handle->last_command.wheel_rpm[motor] = rpm;
+    stamp_command(handle, &handle->last_command);
+    xSemaphoreGive(handle->lock);
 }
 
 static esp_err_t stop_all_after_failure(robot_control_handle_t handle,

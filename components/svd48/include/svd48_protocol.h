@@ -39,6 +39,8 @@ size_t svd48_build_write_multiple_request(uint8_t slave_id,
                                           uint8_t *frame,
                                           size_t frame_size);
 bool svd48_write_multiple_range_is_valid(uint16_t start_reg, uint16_t quantity);
+bool svd48_register_is_runtime_actuation(uint16_t reg);
+bool svd48_register_range_has_runtime_actuation(uint16_t start_reg, uint16_t quantity);
 bool svd48_parse_write_multiple_response(const uint8_t *frame,
                                          size_t length,
                                          uint8_t expected_slave_id,
