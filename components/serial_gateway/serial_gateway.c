@@ -344,6 +344,10 @@ static bool parse_ibus_mode_arg(const char *text, ibus_receiver_mode_t *mode)
         *mode = IBUS_RECEIVER_MODE_SBUS_NON_INVERTED;
         return true;
     }
+    if (strcasecmp(text, "PPM") == 0) {
+        *mode = IBUS_RECEIVER_MODE_PPM;
+        return true;
+    }
     return false;
 }
 
@@ -1444,7 +1448,12 @@ static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *arg
 
     err = robot_control_write_svd48_register(handle->config.robot, drive_id, reg, value);
     if (err != ESP_OK) {
-        print_locked(handle, "ERR WRITE_REG_FAILED DRIVE:%u REG:0x%04x VALUE:0x%04x ERR:0x%x\n", drive_id, reg, value, err);
+        print_locked(handle,
+                     "ERR WRITE_REG_FAILED DRIVE:%u REG:0x%04x VALUE:0x%04x OUTCOME:UNKNOWN ERR:0x%x\n",
+                     drive_id,
+                     reg,
+                     value,
+                     err);
         return;
     }
 
@@ -1553,7 +1562,7 @@ static void handle_write_regs(serial_gateway_handle_t handle, int argc, char *ar
                                               quantity);
     if (err != ESP_OK) {
         print_locked(handle,
-                     "ERR WRITE_REGS_FAILED DRIVE:%u START:0x%04x COUNT:%u ERR:0x%x\n",
+                     "ERR WRITE_REGS_FAILED DRIVE:%u START:0x%04x COUNT:%u OUTCOME:UNKNOWN ERR:0x%x\n",
                      drive_id,
                      start_reg,
                      quantity,
@@ -1788,7 +1797,7 @@ static void print_ibus_status(serial_gateway_handle_t handle, bool include_chann
     }
 
     print_locked(handle,
-                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu LAST_AGE_MS:%lu BYTES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu",
+                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu LAST_AGE_MS:%lu BYTES_OR_EDGES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu FRAME_CHANNELS:%u INVALID_PULSES:%lu INCOMPLETE:%lu OVERFLOW:%lu",
                  status.signal_valid ? "OK" : "NO_SIGNAL",
                  ibus_receiver_mode_to_string(status.mode),
                  status.uart_port,
@@ -1800,7 +1809,11 @@ static void print_ibus_status(serial_gateway_handle_t handle, bool include_chann
                  (unsigned long)status.frames_seen,
                  (unsigned long)status.valid_frames,
                  (unsigned long)status.bad_header_frames,
-                 (unsigned long)status.bad_checksum_frames);
+                 (unsigned long)status.bad_checksum_frames,
+                 status.frame_channel_count,
+                 (unsigned long)status.invalid_pulses,
+                 (unsigned long)status.incomplete_frames,
+                 (unsigned long)status.overflow_pulses);
     if (include_channels) {
         for (uint8_t i = 0; i < IBUS_RECEIVER_CHANNELS; i++) {
             print_locked(handle, " CH%u:%u", i + 1, status.channels[i]);
@@ -1826,7 +1839,7 @@ static void handle_ibus_mode(serial_gateway_handle_t handle, int argc, char *arg
         return;
     }
     if (argc != 1 && argc != 2) {
-        print_locked(handle, "ERR USAGE IBUS_MODE [IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
+        print_locked(handle, "ERR USAGE IBUS_MODE [PPM|IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
         return;
     }
 
@@ -1843,7 +1856,7 @@ static void handle_ibus_mode(serial_gateway_handle_t handle, int argc, char *arg
 
     ibus_receiver_mode_t mode = IBUS_RECEIVER_MODE_IBUS;
     if (!parse_ibus_mode_arg(argv[1], &mode)) {
-        print_locked(handle, "ERR USAGE IBUS_MODE [IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
+        print_locked(handle, "ERR USAGE IBUS_MODE [PPM|IBUS|IBUS_INV|IBUS_8N2|IBUS_INV_8N2|SBUS|SBUS_NOINV]\n");
         return;
     }
 

@@ -1,188 +1,167 @@
 #include "ppm_decoder.h"
+
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include "esp_log.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "ppm_decoder_model.h"
 
 static const char *TAG = "ppm_decoder";
 
-// Estructura interna del decodificador
 struct ppm_decoder_t {
-    int ppm_pin;
-    uint8_t num_channels;
-    uint32_t sync_threshold_us;
-    volatile uint16_t channel_values[PPM_MAX_CHANNELS];
-    volatile uint8_t current_channel;
-    volatile uint64_t last_rise_time;
-    volatile uint64_t last_valid_frame_time;
+    ppm_decoder_config_t config;
+    ppm_decoder_model_t model;
+    portMUX_TYPE mux;
     bool initialized;
 };
 
-// Variable global para acceder desde la ISR
-static ppm_decoder_handle_t g_ppm_handle = NULL;
+static void ppm_isr_handler(void *arg)
+{
+    ppm_decoder_handle_t handle = (ppm_decoder_handle_t)arg;
+    if (!handle) {
+        return;
+    }
 
-// Prototipo de la ISR
-static void IRAM_ATTR ppm_isr_handler(void *arg);
+    const uint32_t now_us = (uint32_t)esp_timer_get_time();
+    portENTER_CRITICAL_ISR(&handle->mux);
+    (void)ppm_decoder_model_feed_rising_edge(&handle->model, now_us);
+    portEXIT_CRITICAL_ISR(&handle->mux);
+}
 
 ppm_decoder_handle_t ppm_decoder_init(const ppm_decoder_config_t *config)
 {
-    if (!config || config->num_channels > PPM_MAX_CHANNELS) {
-        ESP_LOGE(TAG, "Invalid configuration");
+    if (!config || !GPIO_IS_VALID_GPIO(config->ppm_pin) || config->stale_timeout_ms == 0) {
         return NULL;
     }
 
-    if (g_ppm_handle != NULL) {
-        ESP_LOGE(TAG, "PPM decoder already initialized");
-        return NULL;
-    }
-
-    ppm_decoder_handle_t handle = malloc(sizeof(struct ppm_decoder_t));
+    ppm_decoder_handle_t handle = calloc(1, sizeof(struct ppm_decoder_t));
     if (!handle) {
-        ESP_LOGE(TAG, "Failed to allocate memory for PPM decoder");
         return NULL;
     }
 
-    handle->ppm_pin = config->ppm_pin;
-    handle->num_channels = config->num_channels;
-    handle->sync_threshold_us = config->sync_threshold_us;
-    handle->current_channel = 0;
-    handle->last_rise_time = 0;
-    handle->last_valid_frame_time = 0;
-    handle->initialized = false;
-
-    // Inicializar valores de canales con valores neutros (1500 us)
-    for (int i = 0; i < PPM_MAX_CHANNELS; i++) {
-        handle->channel_values[i] = 1500;
-    }
-
-    // Configurar GPIO
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_POSEDGE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << config->ppm_pin),
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_ENABLE
+    handle->config = *config;
+    handle->mux = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+    const ppm_decoder_model_config_t model_config = {
+        .channel_count = config->channel_count,
+        .min_frame_channels = config->min_frame_channels,
+        .sync_threshold_us = config->sync_threshold_us,
+        .min_pulse_us = config->min_pulse_us,
+        .max_pulse_us = config->max_pulse_us,
     };
-
-    esp_err_t ret = gpio_config(&io_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure GPIO: %s", esp_err_to_name(ret));
+    if (!ppm_decoder_model_init(&handle->model, &model_config)) {
         free(handle);
         return NULL;
     }
 
-    // Instalar ISR
-    ret = gpio_install_isr_service(0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "Failed to install ISR service: %s", esp_err_to_name(ret));
+    const gpio_config_t io_config = {
+        .pin_bit_mask = 1ULL << config->ppm_pin,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE,
+    };
+    esp_err_t err = gpio_config(&io_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "GPIO%d configuration failed: %s", config->ppm_pin, esp_err_to_name(err));
         free(handle);
         return NULL;
     }
 
-    // Asignar handle global para la ISR
-    g_ppm_handle = handle;
-
-    ret = gpio_isr_handler_add(config->ppm_pin, ppm_isr_handler, handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add ISR handler: %s", esp_err_to_name(ret));
-        g_ppm_handle = NULL;
+    err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "GPIO ISR service failed: %s", esp_err_to_name(err));
+        free(handle);
+        return NULL;
+    }
+    err = gpio_isr_handler_add((gpio_num_t)config->ppm_pin, ppm_isr_handler, handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "GPIO%d ISR handler failed: %s", config->ppm_pin, esp_err_to_name(err));
         free(handle);
         return NULL;
     }
 
     handle->initialized = true;
-    ESP_LOGI(TAG, "PPM decoder initialized on pin %d with %d channels", config->ppm_pin, config->num_channels);
-
+    ESP_LOGI(TAG,
+             "PPM ready GPIO%d channels=%u sync=%luus pulse=%u..%uus stale=%lums",
+             config->ppm_pin,
+             config->channel_count,
+             (unsigned long)config->sync_threshold_us,
+             config->min_pulse_us,
+             config->max_pulse_us,
+             (unsigned long)config->stale_timeout_ms);
     return handle;
 }
 
 void ppm_decoder_deinit(ppm_decoder_handle_t handle)
 {
-    if (!handle) return;
-
+    if (!handle) {
+        return;
+    }
     if (handle->initialized) {
-        gpio_isr_handler_remove(handle->ppm_pin);
-        g_ppm_handle = NULL;
+        (void)gpio_isr_handler_remove((gpio_num_t)handle->config.ppm_pin);
+    }
+    free(handle);
+}
+
+bool ppm_decoder_get_status(ppm_decoder_handle_t handle, ppm_decoder_status_t *status)
+{
+    if (!handle || !handle->initialized || !status) {
+        return false;
     }
 
-    free(handle);
-    ESP_LOGI(TAG, "PPM decoder deinitialized");
+    ppm_decoder_model_status_t model_status;
+    const uint32_t now_us = (uint32_t)esp_timer_get_time();
+    portENTER_CRITICAL(&handle->mux);
+    const bool ok = ppm_decoder_model_snapshot(&handle->model, now_us, &model_status);
+    portEXIT_CRITICAL(&handle->mux);
+    if (!ok) {
+        return false;
+    }
+
+    memset(status, 0, sizeof(*status));
+    status->last_frame_age_ms = model_status.last_frame_age_us == UINT32_MAX
+                                  ? UINT32_MAX
+                                  : model_status.last_frame_age_us / 1000U;
+    status->signal_valid = status->last_frame_age_ms != UINT32_MAX &&
+                           status->last_frame_age_ms <= handle->config.stale_timeout_ms;
+    status->edges_seen = model_status.edges_seen;
+    status->sync_gaps = model_status.sync_gaps;
+    status->valid_frames = model_status.valid_frames;
+    status->incomplete_frames = model_status.incomplete_frames;
+    status->invalid_pulses = model_status.invalid_pulses;
+    status->overflow_pulses = model_status.overflow_pulses;
+    status->channel_count = model_status.channel_count;
+    memcpy(status->channels, model_status.channels, sizeof(status->channels));
+    return true;
 }
 
 bool ppm_decoder_get_channel(ppm_decoder_handle_t handle, uint8_t channel, uint16_t *value)
 {
-    if (!handle || !handle->initialized || !value || channel >= handle->num_channels) {
-        ESP_LOGE(TAG, "Invalid parameters");
+    ppm_decoder_status_t status;
+    if (!value || !ppm_decoder_get_status(handle, &status) || channel >= status.channel_count) {
         return false;
     }
-
-    // Deshabilitar interrupciones temporalmente para leer el valor
-    portDISABLE_INTERRUPTS();
-    *value = handle->channel_values[channel];
-    portENABLE_INTERRUPTS();
-
+    *value = status.channels[channel];
     return true;
 }
 
-bool ppm_decoder_get_all_channels(ppm_decoder_handle_t handle, uint16_t *values, uint8_t num_channels)
+bool ppm_decoder_get_all_channels(ppm_decoder_handle_t handle,
+                                  uint16_t *values,
+                                  uint8_t channel_count)
 {
-    if (!handle || !handle->initialized || !values || num_channels > handle->num_channels) {
-        ESP_LOGE(TAG, "Invalid parameters");
+    ppm_decoder_status_t status;
+    if (!values || !ppm_decoder_get_status(handle, &status) || channel_count > status.channel_count) {
         return false;
     }
-
-    // Deshabilitar interrupciones temporalmente para leer todos los valores
-    portDISABLE_INTERRUPTS();
-    for (uint8_t i = 0; i < num_channels; i++) {
-        values[i] = handle->channel_values[i];
-    }
-    portENABLE_INTERRUPTS();
-
+    memcpy(values, status.channels, (size_t)channel_count * sizeof(values[0]));
     return true;
 }
 
 bool ppm_decoder_is_signal_valid(ppm_decoder_handle_t handle)
 {
-    if (!handle || !handle->initialized) {
-        return false;
-    }
-
-    uint64_t current_time = esp_timer_get_time();
-    uint64_t last_frame_time;
-
-    portDISABLE_INTERRUPTS();
-    last_frame_time = handle->last_valid_frame_time;
-    portENABLE_INTERRUPTS();
-
-    // Considerar señal válida si hemos recibido un frame en los últimos 100ms
-    return (current_time - last_frame_time) < 100000; // 100ms en microsegundos
+    ppm_decoder_status_t status;
+    return ppm_decoder_get_status(handle, &status) && status.signal_valid;
 }
-
-// ISR para manejar las interrupciones PPM
-static void IRAM_ATTR ppm_isr_handler(void *arg)
-{
-    ppm_decoder_handle_t handle = (ppm_decoder_handle_t)arg;
-    if (!handle) return;
-
-    uint64_t now = esp_timer_get_time();
-    uint64_t pulse_width = now - handle->last_rise_time;
-    handle->last_rise_time = now;
-
-    if (pulse_width > handle->sync_threshold_us) {
-        // Pulso largo detectado - reiniciar secuencia de canales
-        handle->current_channel = 0;
-        handle->last_valid_frame_time = now;
-    } else {
-        // Pulso de canal normal
-        if (handle->current_channel < handle->num_channels) {
-            // Limitar valores a rango típico de PPM (800-2200 us)
-            if (pulse_width >= 800 && pulse_width <= 2200) {
-                handle->channel_values[handle->current_channel] = (uint16_t)pulse_width;
-            }
-            handle->current_channel++;
-        }
-    }
-} 

@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ibus-status").set_defaults(func=cmd_ibus_status)
 
     ibus_mode = sub.add_parser("ibus-mode")
-    ibus_mode.add_argument("mode", nargs="?", choices=["IBUS", "IBUS_INV", "IBUS_8N2", "IBUS_INV_8N2", "SBUS", "SBUS_NOINV"])
+    ibus_mode.add_argument("mode", nargs="?", choices=["PPM", "IBUS", "IBUS_INV", "IBUS_8N2", "IBUS_INV_8N2", "SBUS", "SBUS_NOINV"])
     ibus_mode.set_defaults(func=cmd_ibus_mode)
 
     sub.add_parser("ibus-channels").set_defaults(func=cmd_ibus_channels)

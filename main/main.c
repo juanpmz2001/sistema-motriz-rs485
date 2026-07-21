@@ -30,9 +30,9 @@ static const char *TAG = "main";
 #define STEER_RL_PIN 6
 #define STEER_RR_PIN 7
 
-// Experimental FlySky i-BUS receiver input.
+// Tested FlySky FS-iA10B PPM input. Signal must be limited to 3.3 V.
 #define IBUS_UART_PORT UART_NUM_1
-#define IBUS_RX_PIN 18
+#define IBUS_RX_PIN 14
 
 static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
@@ -186,11 +186,11 @@ void app_main(void)
 
     robot_control_config_t robot_config = {
         .svd48 = svd48,
-        .wheelbase_m = 0.50f,
-        .track_width_m = 0.40f,
+        .wheelbase_m = 1.60f,
+        .track_width_m = 0.70f,
         .wheel_radius_m = 0.10f,
-        .max_wheel_rpm = 1000.0f,
-        .enable_steering_servos = true,
+        .max_wheel_rpm = 300.0f,
+        .enable_steering_servos = false,
         .steering_servo_pins = { STEER_FL_PIN, STEER_FR_PIN, STEER_RL_PIN, STEER_RR_PIN },
         .servo_min_us = 1000,
         .servo_center_us = 1500,
@@ -209,6 +209,13 @@ void app_main(void)
         return;
     }
 
+    err = robot_control_stop_all(robot);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "Boot stop was not acknowledged by every configured motor, err=0x%x; startup continues",
+                 err);
+    }
+
     if (svd48_start_polling(svd48) != ESP_OK) {
         handle_startup_failure("svd48_polling", ESP_FAIL, pending_verify);
         robot_control_deinit(robot);
@@ -223,14 +230,20 @@ void app_main(void)
         .uart_port = IBUS_UART_PORT,
         .rx_pin = IBUS_RX_PIN,
         .tx_pin = UART_PIN_NO_CHANGE,
-        .baud_rate = 115200,
-        .stale_timeout_ms = 100,
+        .baud_rate = 0,
+        .stale_timeout_ms = 300,
         .invert_rx = false,
+        .mode = IBUS_RECEIVER_MODE_PPM,
+        .ppm_channel_count = 10,
+        .ppm_min_frame_channels = 4,
+        .ppm_sync_threshold_us = 3000,
+        .ppm_min_pulse_us = 750,
+        .ppm_max_pulse_us = 2250,
     };
     err = ibus_receiver_init(&ibus_config, &ibus_receiver);
     if (err != ESP_OK) {
         ESP_LOGW(TAG,
-                 "Experimental i-BUS receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
+                 "RC receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
                  IBUS_RX_PIN,
                  err);
         ibus_receiver = NULL;
@@ -372,7 +385,7 @@ void app_main(void)
         }
     }
 
-    ESP_LOGI(TAG, "Ready. Try: PING, GET_SPEED 0, GET_MOTOR 0, MOVE_VEL 1.0 0.0 0.5");
+    ESP_LOGI(TAG, "Ready for diagnostics. Try: VERSION, SAFETY_STATUS, IBUS_STATUS, READ_REG 1 0x5018 1");
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));

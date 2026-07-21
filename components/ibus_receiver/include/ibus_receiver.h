@@ -23,6 +23,7 @@ typedef enum {
     IBUS_RECEIVER_MODE_IBUS_INVERTED_8N2,
     IBUS_RECEIVER_MODE_SBUS,
     IBUS_RECEIVER_MODE_SBUS_NON_INVERTED,
+    IBUS_RECEIVER_MODE_PPM,
 } ibus_receiver_mode_t;
 
 typedef struct {
@@ -33,6 +34,11 @@ typedef struct {
     uint32_t stale_timeout_ms;
     bool invert_rx;
     ibus_receiver_mode_t mode;
+    uint8_t ppm_channel_count;
+    uint8_t ppm_min_frame_channels;
+    uint32_t ppm_sync_threshold_us;
+    uint16_t ppm_min_pulse_us;
+    uint16_t ppm_max_pulse_us;
 } ibus_receiver_config_t;
 
 typedef struct {
@@ -48,6 +54,10 @@ typedef struct {
     uint32_t valid_frames;
     uint32_t bad_header_frames;
     uint32_t bad_checksum_frames;
+    uint32_t invalid_pulses;
+    uint32_t incomplete_frames;
+    uint32_t overflow_pulses;
+    uint8_t frame_channel_count;
     uint16_t channels[IBUS_RECEIVER_CHANNELS];
     uint8_t raw_sample[IBUS_RECEIVER_RAW_SAMPLE_SIZE];
     uint8_t raw_sample_count;

@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "ppm_decoder.h"
 
 static const char *TAG = "ibus_receiver";
 
@@ -22,12 +23,20 @@ static const char *TAG = "ibus_receiver";
 #define IBUS_TASK_STACK 4096
 #define IBUS_TASK_PRIORITY 5
 #define IBUS_LOCK_TIMEOUT_MS 100
+#define PPM_DEFAULT_CHANNEL_COUNT 10
+#define PPM_DEFAULT_MIN_FRAME_CHANNELS 4
+#define PPM_DEFAULT_SYNC_THRESHOLD_US 3000
+#define PPM_DEFAULT_MIN_PULSE_US 750
+#define PPM_DEFAULT_MAX_PULSE_US 2250
+#define PPM_DEFAULT_STALE_TIMEOUT_MS 300
 
 struct ibus_receiver_t {
     ibus_receiver_config_t config;
     SemaphoreHandle_t lock;
     TaskHandle_t task;
     bool running;
+    bool uart_driver_installed;
+    ppm_decoder_handle_t ppm_decoder;
     uint32_t last_frame_ms;
     uint32_t bytes_received;
     uint32_t frames_seen;
@@ -55,6 +64,8 @@ const char *ibus_receiver_mode_to_string(ibus_receiver_mode_t mode)
         return "SBUS";
     case IBUS_RECEIVER_MODE_SBUS_NON_INVERTED:
         return "SBUS_NOINV";
+    case IBUS_RECEIVER_MODE_PPM:
+        return "PPM";
     default:
         return "UNKNOWN";
     }
@@ -277,20 +288,66 @@ esp_err_t ibus_receiver_init(const ibus_receiver_config_t *config, ibus_receiver
     }
 
     handle->config = *config;
-    if (handle->config.baud_rate == 0) {
-        handle->config.baud_rate = IBUS_DEFAULT_BAUD_RATE;
+    ibus_receiver_mode_t mode = config->mode;
+    if (mode == IBUS_RECEIVER_MODE_IBUS && config->invert_rx) {
+        mode = IBUS_RECEIVER_MODE_IBUS_INVERTED;
     }
+    handle->config.mode = mode;
     if (handle->config.stale_timeout_ms == 0) {
-        handle->config.stale_timeout_ms = IBUS_DEFAULT_STALE_TIMEOUT_MS;
+        handle->config.stale_timeout_ms = mode == IBUS_RECEIVER_MODE_PPM
+                                              ? PPM_DEFAULT_STALE_TIMEOUT_MS
+                                              : IBUS_DEFAULT_STALE_TIMEOUT_MS;
     }
     if (handle->config.tx_pin == 0) {
         handle->config.tx_pin = UART_PIN_NO_CHANGE;
+    }
+    if (mode != IBUS_RECEIVER_MODE_PPM && handle->config.baud_rate == 0) {
+        handle->config.baud_rate = IBUS_DEFAULT_BAUD_RATE;
     }
 
     handle->lock = xSemaphoreCreateMutex();
     if (!handle->lock) {
         free(handle);
         return ESP_ERR_NO_MEM;
+    }
+
+    if (mode == IBUS_RECEIVER_MODE_PPM) {
+        if (handle->config.ppm_channel_count == 0) {
+            handle->config.ppm_channel_count = PPM_DEFAULT_CHANNEL_COUNT;
+        }
+        if (handle->config.ppm_min_frame_channels == 0) {
+            handle->config.ppm_min_frame_channels = PPM_DEFAULT_MIN_FRAME_CHANNELS;
+        }
+        if (handle->config.ppm_sync_threshold_us == 0) {
+            handle->config.ppm_sync_threshold_us = PPM_DEFAULT_SYNC_THRESHOLD_US;
+        }
+        if (handle->config.ppm_min_pulse_us == 0) {
+            handle->config.ppm_min_pulse_us = PPM_DEFAULT_MIN_PULSE_US;
+        }
+        if (handle->config.ppm_max_pulse_us == 0) {
+            handle->config.ppm_max_pulse_us = PPM_DEFAULT_MAX_PULSE_US;
+        }
+        const ppm_decoder_config_t ppm_config = {
+            .ppm_pin = handle->config.rx_pin,
+            .channel_count = handle->config.ppm_channel_count,
+            .min_frame_channels = handle->config.ppm_min_frame_channels,
+            .sync_threshold_us = handle->config.ppm_sync_threshold_us,
+            .min_pulse_us = handle->config.ppm_min_pulse_us,
+            .max_pulse_us = handle->config.ppm_max_pulse_us,
+            .stale_timeout_ms = handle->config.stale_timeout_ms,
+        };
+        handle->ppm_decoder = ppm_decoder_init(&ppm_config);
+        if (!handle->ppm_decoder) {
+            ibus_receiver_deinit(handle);
+            return ESP_FAIL;
+        }
+        handle->config.baud_rate = 0;
+        ESP_LOGI(TAG,
+                 "PPM receiver ready on GPIO%d channels=%u",
+                 handle->config.rx_pin,
+                 handle->config.ppm_channel_count);
+        *out_handle = handle;
+        return ESP_OK;
     }
 
     esp_err_t err = uart_driver_install(handle->config.uart_port,
@@ -303,6 +360,7 @@ esp_err_t ibus_receiver_init(const ibus_receiver_config_t *config, ibus_receiver
         ibus_receiver_deinit(handle);
         return err;
     }
+    handle->uart_driver_installed = true;
 
     err = uart_set_pin(handle->config.uart_port,
                        handle->config.tx_pin,
@@ -315,10 +373,6 @@ esp_err_t ibus_receiver_init(const ibus_receiver_config_t *config, ibus_receiver
     }
     (void)gpio_set_pull_mode((gpio_num_t)handle->config.rx_pin, GPIO_PULLUP_ONLY);
 
-    ibus_receiver_mode_t mode = config->mode;
-    if (mode == IBUS_RECEIVER_MODE_IBUS && config->invert_rx) {
-        mode = IBUS_RECEIVER_MODE_IBUS_INVERTED;
-    }
     err = apply_uart_mode(handle, mode);
     if (err != ESP_OK) {
         ibus_receiver_deinit(handle);
@@ -356,7 +410,13 @@ void ibus_receiver_deinit(ibus_receiver_handle_t handle)
     if (handle->task) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
-    (void)uart_driver_delete(handle->config.uart_port);
+    if (handle->ppm_decoder) {
+        ppm_decoder_deinit(handle->ppm_decoder);
+        handle->ppm_decoder = NULL;
+    }
+    if (handle->uart_driver_installed) {
+        (void)uart_driver_delete(handle->config.uart_port);
+    }
     if (handle->lock) {
         vSemaphoreDelete(handle->lock);
     }
@@ -373,9 +433,15 @@ esp_err_t ibus_receiver_set_mode(ibus_receiver_handle_t handle, ibus_receiver_mo
     if (err != ESP_OK) {
         return err;
     }
-    err = apply_uart_mode(handle, mode);
-    if (err == ESP_OK) {
-        reset_runtime_state(handle);
+    const bool current_is_ppm = handle->config.mode == IBUS_RECEIVER_MODE_PPM;
+    const bool requested_is_ppm = mode == IBUS_RECEIVER_MODE_PPM;
+    if (current_is_ppm || requested_is_ppm) {
+        err = current_is_ppm && requested_is_ppm ? ESP_OK : ESP_ERR_NOT_SUPPORTED;
+    } else {
+        err = apply_uart_mode(handle, mode);
+        if (err == ESP_OK) {
+            reset_runtime_state(handle);
+        }
     }
     xSemaphoreGive(handle->lock);
     return err;
@@ -398,11 +464,33 @@ esp_err_t ibus_receiver_get_status(ibus_receiver_handle_t handle, ibus_receiver_
     status->rx_pin = handle->config.rx_pin;
     status->baud_rate = handle->config.baud_rate;
     status->stale_timeout_ms = handle->config.stale_timeout_ms;
+
+    if (handle->config.mode == IBUS_RECEIVER_MODE_PPM) {
+        ppm_decoder_status_t ppm_status;
+        if (!ppm_decoder_get_status(handle->ppm_decoder, &ppm_status)) {
+            xSemaphoreGive(handle->lock);
+            return ESP_FAIL;
+        }
+        status->signal_valid = ppm_status.signal_valid;
+        status->last_frame_age_ms = ppm_status.last_frame_age_ms;
+        status->bytes_received = ppm_status.edges_seen;
+        status->frames_seen = ppm_status.sync_gaps;
+        status->valid_frames = ppm_status.valid_frames;
+        status->invalid_pulses = ppm_status.invalid_pulses;
+        status->incomplete_frames = ppm_status.incomplete_frames;
+        status->overflow_pulses = ppm_status.overflow_pulses;
+        status->frame_channel_count = ppm_status.channel_count;
+        memcpy(status->channels, ppm_status.channels, sizeof(status->channels));
+        xSemaphoreGive(handle->lock);
+        return ESP_OK;
+    }
+
     status->bytes_received = handle->bytes_received;
     status->frames_seen = handle->frames_seen;
     status->valid_frames = handle->valid_frames;
     status->bad_header_frames = handle->bad_header_frames;
     status->bad_checksum_frames = handle->bad_checksum_frames;
+    status->frame_channel_count = handle->valid_frames > 0 ? IBUS_RECEIVER_CHANNELS : 0;
     memcpy(status->channels, handle->channels, sizeof(status->channels));
     status->raw_sample_count = handle->raw_sample_count;
     uint8_t raw_start = handle->raw_sample_count == IBUS_RECEIVER_RAW_SAMPLE_SIZE ?

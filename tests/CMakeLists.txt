@@ -68,6 +68,15 @@ botfarms_add_host_test(
         ../components/serial_gateway/include
 )
 
+botfarms_add_host_test(
+    NAME ppm_decoder_model_test
+    SOURCES
+        host/ppm_decoder_model_test.c
+        ../components/ppm_decoder/ppm_decoder_model.c
+    INCLUDE_DIRS
+        ../components/ppm_decoder/include
+)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
     NAME svd48_protocol_reference_test
