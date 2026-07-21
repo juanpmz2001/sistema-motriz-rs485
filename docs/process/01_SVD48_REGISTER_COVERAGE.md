@@ -183,8 +183,8 @@ The manuals further claim PID parameters are persisted when both motors stop and
 | `0x530C` / `0x530E` | Given position | `i32 RW` | No typed write | `MANUAL_ONLY` | Defer |
 | `0x5400/01` | Motor status | `i16 RO` | Polled | `IMPLEMENTED` | Retain |
 | `0x5404/05` | Motor temperature, 0.1 C | `i16 RO` | Polled | `IMPLEMENTED` | Retain |
-| `0x5408/09` | Bus voltage, 0.1 V | `u16 RO` | Polled | `IMPLEMENTED` | Add configured warning/fault interpretation |
-| `0x540C/0D` | MOS temperature, 0.1 C | `i16 RO` | Polled | `IMPLEMENTED` | Retain |
+| `0x5408/09` | MOS temperature, 0.1 C | `i16 RO` | Polled | `IMPLEMENTED` | Corrected in build 18 after live/XML verification |
+| `0x540C/0D` | Bus voltage, 0.1 V | `u16 RO` | Polled | `IMPLEMENTED` | Corrected in build 18; add configured warning/fault interpretation |
 | `0x5410/11` | Actual speed RPM | `i16 RO` | Fast polled | `IMPLEMENTED` | Retain |
 | `0x5414/15` | Actual current, 0.1 A | `i16 RO` | Fast polled | `IMPLEMENTED` | Retain |
 | `0x5418..0x541B` | Positions | `i32 RO` | Polled high-word first | `IMPLEMENTED` | Verify physical scaling per motor/profile |

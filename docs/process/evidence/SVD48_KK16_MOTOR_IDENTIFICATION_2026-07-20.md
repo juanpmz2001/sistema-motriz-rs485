@@ -50,10 +50,15 @@ identification routine does not measure KV.
 - M1/M2 actual RPM: 0.
 - M1/M2 error: `0x00000000`.
 - M1/M2 communication exception: none.
-- Bus voltage: approximately 22.8-23.0 V.
-- MOS temperature: approximately 53.7 C.
+- Bus voltage: approximately 53.7 V (`0x540C/0x540D`).
+- MOS temperature: approximately 22.8-23.0 C (`0x5408/0x5409`).
 - Motor temperature reads -22.7 C and is considered an absent/invalid sensor,
   not a trustworthy physical temperature.
+
+The original build 17 `GET_MOTOR` output had bus voltage and MOS temperature
+labels inverted. Direct reads and the official SV-Config XML proved the correct
+mapping above; firmware build 18 fixes it. This correction does not alter the
+electrical-identification results.
 
 ## Remaining Tests
 

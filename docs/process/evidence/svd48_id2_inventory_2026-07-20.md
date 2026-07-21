@@ -160,10 +160,10 @@ the controller's float order has not been physically verified.
 | telemetry | m2_status | 0x5401 x1 | u16 | OK | 0x0000 |
 | telemetry | m1_motor_temperature_dc | 0x5404 x1 | u16 | OK | 0xFF1D |
 | telemetry | m2_motor_temperature_dc | 0x5405 x1 | u16 | OK | 0xFF1D |
-| telemetry | m1_bus_voltage_dv | 0x5408 x1 | u16 | OK | 0x00E0 |
-| telemetry | m2_bus_voltage_dv | 0x5409 x1 | u16 | OK | 0x00E0 |
-| telemetry | m1_mos_temperature_dc | 0x540C x1 | u16 | OK | 0x0218 |
-| telemetry | m2_mos_temperature_dc | 0x540D x1 | u16 | OK | 0x0218 |
+| telemetry | m1_mos_temperature_dc | 0x5408 x1 | i16 | OK | 0x00E0 |
+| telemetry | m2_mos_temperature_dc | 0x5409 x1 | i16 | OK | 0x00E0 |
+| telemetry | m1_bus_voltage_dv | 0x540C x1 | u16 | OK | 0x0218 |
+| telemetry | m2_bus_voltage_dv | 0x540D x1 | u16 | OK | 0x0218 |
 | telemetry | m1_actual_speed_rpm | 0x5410 x1 | u16 | OK | 0x0000 |
 | telemetry | m2_actual_speed_rpm | 0x5411 x1 | u16 | OK | 0x0000 |
 | telemetry | m1_actual_current_da | 0x5414 x1 | u16 | OK | 0x0000 |
