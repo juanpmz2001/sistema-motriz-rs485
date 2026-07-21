@@ -26,6 +26,8 @@ The public documentation for `SVD48B50A` is not indexed under that exact model n
 - Fulling official SVD4812RC-AA datasheet: https://www.fullingmotor.com/en/Uploads/file/20250122/1737543933622349.pdf
 - Fulling SVD4812RC-AA product page: https://www.fullingmotor.com/en/product/76_233
 - Fulling SVD4822RC-AA product page: https://www.fullingmotor.com/en/product/76_232
+- Official SV-Config download: https://retail.uumotor.com/wp-content/uploads/2022/08/software20220727.zip
+- Official KK16-compatible motor profile: https://retail.uumotor.com/wp-content/uploads/2022/08/uuMotor_48V50A_1100rpm.zip
 
 ## Integration Notes
 
@@ -36,3 +38,27 @@ The public documentation for `SVD48B50A` is not indexed under that exact model n
 - Fulling's current SVD48RC documentation is not a replacement register map for
   the dual SVD48V controller. Its most useful transferable result is the complete
   set of electrical motor data required before third-party motor initialization.
+
+## KK16 Profile And Motor Identification
+
+UUMOTOR explicitly lists `uuMotor_48V50A_1100rpm` for KK5WS, KK5WT, KK6156 and
+KK16 motors. Its motor values for both channels are: 10 pole pairs, Hall sensor,
+`KV=166` in SV-Config units, `Rs=0.06972 ohm`, `Ld=Lq=0.00013348 H`, 60 A,
+1100 motor RPM and a 1:5 driving/driven tooth ratio. Limits such as 60 A and
+1100 RPM are manufacturer-profile values, not safe robot operating limits.
+
+Static analysis of the official SV-Config package confirms its identification
+protocol for this dual SVD48V family:
+
+- start/stop M1: function `0x10`, register `0x5700`, one word, value `1/0`;
+- start/stop M2: function `0x10`, register `0x5701`, one word, value `1/0`;
+- state: `0x5710/0x5711`;
+- identified Rs: `0x5714/0x5715`;
+- identified Ld: `0x5718/0x5719`;
+- identified Lq: `0x571C/0x571D`.
+
+The official PC manual says the operation detects phase resistance and phase
+inductance. Neither the manual nor the SV-Config parameter map identifies KV.
+Do not describe this as KV calibration. The result-register scale is not
+published in the XML and must be validated against SV-Config before applying
+raw results to the persistent motor parameters.

@@ -287,6 +287,9 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *save_config_missing_confirm[] = { "SAVE_SVD48_CONFIG", "1" };
     const char *set_gear_ratio[] = { "SET_SVD48_GEAR_RATIO", "1", "1", "5", "confirm" };
     const char *set_gear_ratio_missing_confirm[] = { "SET_SVD48_GEAR_RATIO", "1", "1", "5" };
+    const char *identify_status[] = { "SVD48_IDENTIFY_STATUS", "1", "M1" };
+    const char *identify_start[] = { "SVD48_IDENTIFY", "1", "M2", "START", "confirm" };
+    const char *identify_missing_confirm[] = { "SVD48_IDENTIFY", "1", "M2", "START" };
     const char *move[] = { "MOVE_VEL", "1", "0", "0" };
     const char *stop_one[] = { "STOP", "0" };
     const char *stop_all[] = { "STOP", "ALL" };
@@ -302,6 +305,9 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, save_config_missing_confirm));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(5, set_gear_ratio));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, set_gear_ratio_missing_confirm));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, identify_status));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(5, identify_start));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, identify_missing_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, move));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, stop_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));

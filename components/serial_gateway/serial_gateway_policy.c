@@ -67,5 +67,11 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
     if (arg_is(argv[0], "SET_SVD48_GEAR_RATIO") && argc == 5 && arg_is(argv[4], "CONFIRM")) {
         return true;
     }
+    if (arg_is(argv[0], "SVD48_IDENTIFY_STATUS") && argc == 3) {
+        return true;
+    }
+    if (arg_is(argv[0], "SVD48_IDENTIFY") && argc == 5 && arg_is(argv[4], "CONFIRM")) {
+        return true;
+    }
     return false;
 }

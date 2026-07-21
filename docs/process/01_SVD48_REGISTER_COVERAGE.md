@@ -214,6 +214,27 @@ The manuals further claim PID parameters are persisted when both motors stop and
 | `0x5688` / `0x5689` | Hall status | `u16 RO` | Partial typed read | local values conflict with documented `0..7` | `SUSPECT` interpretation |
 | `0x568C` / `0x568D` | Hall current angle | `i16 RO` | Partial typed read | `OBSERVED` raw | Read-only |
 
+### Motor electrical identification
+
+| M1 / M2 | Meaning | Type/access | Current use | Confidence | MVP decision |
+| --- | --- | --- | --- | --- | --- |
+| `0x5700` / `0x5701` | Start/stop electrical identification | write-only through function `0x10` | Dedicated guarded command | `SV_CONFIG_CONFIRMED` | Allowed stopped/off-ground; no automatic apply |
+| `0x5710` / `0x5711` | Identification state | `u16 RO` | Typed status | `SV_CONFIG_CONFIRMED` | Poll during identification |
+| `0x5714` / `0x5715` | Identified Rs | `u16 RO` | Typed raw status | address confirmed, scale `SUSPECT` | Compare against SV-Config before apply |
+| `0x5718` / `0x5719` | Identified Ld | `u16 RO` | Typed raw status | address confirmed, scale `SUSPECT` | Compare against SV-Config before apply |
+| `0x571C` / `0x571D` | Identified Lq | `u16 RO` | Typed raw status | address confirmed, scale `SUSPECT` | Compare against SV-Config before apply |
+
+Commands added in build 17:
+
+```text
+SVD48_IDENTIFY_STATUS drive_id M1|M2
+SVD48_IDENTIFY drive_id M1|M2 START|STOP CONFIRM
+```
+
+The operation does not identify KV and does not automatically apply or persist
+its result. This avoids silently replacing a known KK16 profile with values whose
+raw-register scaling has not yet been confirmed on software `0x0131`.
+
 ### Card reader / software upgrade
 
 The manual describes separate framing and upgrade behavior without a normal holding-register map usable by the current driver. It is `UNSUPPORTED` for this program and must remain separate from application OTA.
