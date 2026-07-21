@@ -58,6 +58,11 @@ bool robot_control_is_safe_for_ota(robot_control_handle_t handle, char *reason, 
 esp_err_t robot_control_prepare_for_ota(robot_control_handle_t handle);
 esp_err_t robot_control_read_svd48_registers(robot_control_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t quantity, uint16_t *out_regs);
 esp_err_t robot_control_write_svd48_register(robot_control_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t value);
+esp_err_t robot_control_write_svd48_registers(robot_control_handle_t handle,
+                                              uint8_t drive_id,
+                                              uint16_t start_reg,
+                                              const uint16_t *values,
+                                              uint16_t quantity);
 
 #ifdef __cplusplus
 }

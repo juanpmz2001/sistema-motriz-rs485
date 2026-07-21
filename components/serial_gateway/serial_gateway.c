@@ -18,11 +18,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "serial_gateway_policy.h"
 
 static const char *TAG = "serial_gateway";
 
 #define GATEWAY_LINE_MAX SERIAL_GATEWAY_COMMAND_MAX
-#define GATEWAY_ARG_MAX 10
+#define GATEWAY_ARG_MAX 20
 #define GATEWAY_DEFAULT_STREAM_MS 200
 #define SVD48_PY6514_POLE_PAIRS 10
 #define SVD48_PY6514_SENSOR_HALL 1
@@ -39,6 +40,7 @@ static const char *TAG = "serial_gateway";
 #define MAINTENANCE_LAN_DEFAULT_PORT 32321
 #define PLATFORM_SAFE_RPM_THRESHOLD 5
 #define PLATFORM_SAFE_FLOAT_THRESHOLD 0.001f
+#define SVD48_MAINTENANCE_WRITE_MAX_REGISTERS 8
 
 struct serial_gateway_t {
     serial_gateway_config_t config;
@@ -157,57 +159,20 @@ static int split_args(char *line, char *argv[], int max_args)
     return argc;
 }
 
-static bool arg_is_all(const char *value)
-{
-    return value && strcasecmp(value, "ALL") == 0;
-}
-
-static bool lan_safe_no_arg_command(const char *command)
-{
-    static const char *const allowed[] = {
-        "PING",
-        "VERSION",
-        "PLATFORM_STATUS",
-        "SAFETY_STATUS",
-        "CONFIG_STATUS",
-        "WIFI_STATUS",
-        "OTA_CONFIG",
-        "OTA_ANNOUNCE_STATUS",
-        "OTA_ROLLBACK_STATUS",
-        "OTA_AUTO_STATUS",
-        "IBUS_STATUS",
-        "IBUS_CHANNELS",
-        "POLL_ONCE",
-        "MAINT_LAN_STATUS",
-    };
-
-    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
-        if (strcasecmp(command, allowed[i]) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool command_allowed_for_policy(serial_gateway_command_policy_t policy, int argc, char *argv[])
 {
     if (policy == SERIAL_GATEWAY_POLICY_FULL_SERIAL) {
         return true;
     }
-    if (policy != SERIAL_GATEWAY_POLICY_LAN_SAFE || argc <= 0 || !argv[0]) {
+    if (policy != SERIAL_GATEWAY_POLICY_LAN_SAFE || argc <= 0 || argc > GATEWAY_ARG_MAX) {
         return false;
     }
 
-    if (argc == 1 && lan_safe_no_arg_command(argv[0])) {
-        return true;
+    const char *lan_argv[GATEWAY_ARG_MAX] = { 0 };
+    for (int i = 0; i < argc; i++) {
+        lan_argv[i] = argv[i];
     }
-    if ((strcasecmp(argv[0], "GET_SPEED") == 0 || strcasecmp(argv[0], "GET_MOTOR") == 0) && argc == 2) {
-        return true;
-    }
-    if (strcasecmp(argv[0], "STOP") == 0 && argc == 2 && arg_is_all(argv[1])) {
-        return true;
-    }
-    return false;
+    return serial_gateway_lan_command_allowed(argc, lan_argv);
 }
 
 static bool parse_u8_arg(const char *text, uint8_t *value)
@@ -1440,11 +1405,12 @@ static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *arg
     uint8_t drive_id = 0;
     uint16_t reg = 0;
     uint16_t value = 0;
-    if (argc != 4 ||
+    if (argc != 5 ||
         !parse_drive_id_arg(argv[1], &drive_id) ||
         !parse_u16_any_arg(argv[2], &reg) ||
-        !parse_u16_any_arg(argv[3], &value)) {
-        print_locked(handle, "ERR USAGE WRITE_REG drive_id reg value\n");
+        !parse_u16_any_arg(argv[3], &value) ||
+        strcasecmp(argv[4], "CONFIRM") != 0) {
+        print_locked(handle, "ERR USAGE WRITE_REG drive_id reg value CONFIRM\n");
         return;
     }
 
@@ -1455,12 +1421,191 @@ static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *arg
         return;
     }
 
-    esp_err_t err = robot_control_write_svd48_register(handle->config.robot, drive_id, reg, value);
-    if (err == ESP_OK) {
-        print_locked(handle, "OK WRITE_REG DRIVE:%u REG:0x%04x VALUE:0x%04x/%u\n", drive_id, reg, value, value);
-    } else {
-        print_locked(handle, "ERR WRITE_REG_FAILED DRIVE:%u REG:0x%04x VALUE:0x%04x ERR:0x%x\n", drive_id, reg, value, err);
+    char reason[48] = { 0 };
+    if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
+        print_locked(handle, "ERR WRITE_REG_ROBOT_NOT_STOPPED REASON:%s\n", reason);
+        return;
     }
+
+    uint16_t old_value = 0;
+    esp_err_t err = robot_control_read_svd48_registers(handle->config.robot,
+                                                       drive_id,
+                                                       reg,
+                                                       1,
+                                                       &old_value);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR WRITE_REG_PRE_READ_FAILED DRIVE:%u REG:0x%04x ERR:0x%x\n",
+                     drive_id,
+                     reg,
+                     err);
+        return;
+    }
+
+    err = robot_control_write_svd48_register(handle->config.robot, drive_id, reg, value);
+    if (err != ESP_OK) {
+        print_locked(handle, "ERR WRITE_REG_FAILED DRIVE:%u REG:0x%04x VALUE:0x%04x ERR:0x%x\n", drive_id, reg, value, err);
+        return;
+    }
+
+    uint16_t readback = 0;
+    err = robot_control_read_svd48_registers(handle->config.robot,
+                                             drive_id,
+                                             reg,
+                                             1,
+                                             &readback);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR WRITE_REG_READBACK_FAILED DRIVE:%u REG:0x%04x OLD:0x%04x VALUE:0x%04x OUTCOME:ACKED_UNVERIFIED ERR:0x%x\n",
+                     drive_id,
+                     reg,
+                     old_value,
+                     value,
+                     err);
+        return;
+    }
+    if (readback != value) {
+        print_locked(handle,
+                     "ERR WRITE_REG_READBACK_MISMATCH DRIVE:%u REG:0x%04x OLD:0x%04x VALUE:0x%04x READBACK:0x%04x\n",
+                     drive_id,
+                     reg,
+                     old_value,
+                     value,
+                     readback);
+        return;
+    }
+
+    print_locked(handle,
+                 "OK WRITE_REG DRIVE:%u REG:0x%04x OLD:0x%04x/%u VALUE:0x%04x/%u READBACK:0x%04x/%u VERIFIED:1\n",
+                 drive_id,
+                 reg,
+                 old_value,
+                 old_value,
+                 value,
+                 value,
+                 readback,
+                 readback);
+}
+
+static void handle_write_regs(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    uint8_t drive_id = 0;
+    uint16_t start_reg = 0;
+    uint16_t values[SVD48_MAINTENANCE_WRITE_MAX_REGISTERS] = { 0 };
+    uint16_t old_values[SVD48_MAINTENANCE_WRITE_MAX_REGISTERS] = { 0 };
+    uint16_t readback[SVD48_MAINTENANCE_WRITE_MAX_REGISTERS] = { 0 };
+    int value_count = argc - 4;
+
+    if (argc < 5 || value_count <= 0 ||
+        value_count > SVD48_MAINTENANCE_WRITE_MAX_REGISTERS ||
+        !parse_drive_id_arg(argv[1], &drive_id) ||
+        !parse_u16_any_arg(argv[2], &start_reg) ||
+        strcasecmp(argv[argc - 1], "CONFIRM") != 0) {
+        print_locked(handle, "ERR USAGE WRITE_REGS drive_id start_reg value [value...] CONFIRM\n");
+        return;
+    }
+
+    for (int i = 0; i < value_count; i++) {
+        if (!parse_u16_any_arg(argv[3 + i], &values[i])) {
+            print_locked(handle, "ERR WRITE_REGS_BAD_VALUE INDEX:%d\n", i);
+            return;
+        }
+    }
+
+    uint16_t quantity = (uint16_t)value_count;
+    if (!svd48_write_multiple_range_is_valid(start_reg, quantity)) {
+        print_locked(handle, "ERR WRITE_REGS_BAD_RANGE START:0x%04x COUNT:%u\n", start_reg, quantity);
+        return;
+    }
+    if (svd48_register_range_has_runtime_actuation(start_reg, quantity)) {
+        print_locked(handle,
+                     "ERR WRITE_REGS_ACTUATION_BLOCKED START:0x%04x COUNT:%u\n",
+                     start_reg,
+                     quantity);
+        return;
+    }
+
+    char reason[48] = { 0 };
+    if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
+        print_locked(handle, "ERR WRITE_REGS_ROBOT_NOT_STOPPED REASON:%s\n", reason);
+        return;
+    }
+
+    esp_err_t err = robot_control_read_svd48_registers(handle->config.robot,
+                                                       drive_id,
+                                                       start_reg,
+                                                       quantity,
+                                                       old_values);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR WRITE_REGS_PRE_READ_FAILED DRIVE:%u START:0x%04x COUNT:%u ERR:0x%x\n",
+                     drive_id,
+                     start_reg,
+                     quantity,
+                     err);
+        return;
+    }
+
+    err = robot_control_write_svd48_registers(handle->config.robot,
+                                              drive_id,
+                                              start_reg,
+                                              values,
+                                              quantity);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR WRITE_REGS_FAILED DRIVE:%u START:0x%04x COUNT:%u ERR:0x%x\n",
+                     drive_id,
+                     start_reg,
+                     quantity,
+                     err);
+        return;
+    }
+
+    err = robot_control_read_svd48_registers(handle->config.robot,
+                                             drive_id,
+                                             start_reg,
+                                             quantity,
+                                             readback);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR WRITE_REGS_READBACK_FAILED DRIVE:%u START:0x%04x COUNT:%u OUTCOME:ACKED_UNVERIFIED ERR:0x%x\n",
+                     drive_id,
+                     start_reg,
+                     quantity,
+                     err);
+        return;
+    }
+
+    for (uint16_t i = 0; i < quantity; i++) {
+        if (readback[i] != values[i]) {
+            print_locked(handle,
+                         "ERR WRITE_REGS_READBACK_MISMATCH DRIVE:%u START:0x%04x INDEX:%u OLD:0x%04x VALUE:0x%04x READBACK:0x%04x\n",
+                         drive_id,
+                         start_reg,
+                         i,
+                         old_values[i],
+                         values[i],
+                         readback[i]);
+            return;
+        }
+    }
+
+    print_locked(handle,
+                 "OK WRITE_REGS DRIVE:%u START:0x%04x COUNT:%u VERIFIED:1",
+                 drive_id,
+                 start_reg,
+                 quantity);
+    for (uint16_t i = 0; i < quantity; i++) {
+        print_locked(handle,
+                     " O%u:0x%04x N%u:0x%04x R%u:0x%04x",
+                     i,
+                     old_values[i],
+                     i,
+                     values[i],
+                     i,
+                     readback[i]);
+    }
+    print_locked(handle, "\n");
 }
 
 static void handle_get_svd48_config(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -1625,7 +1770,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
@@ -2167,6 +2312,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_read_reg(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WRITE_REG") == 0) {
         handle_write_reg(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WRITE_REGS") == 0) {
+        handle_write_regs(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SVD48_CONFIG") == 0) {
         handle_get_svd48_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "APPLY_PY6514_CONFIG") == 0) {

@@ -552,3 +552,19 @@ esp_err_t robot_control_write_svd48_register(robot_control_handle_t handle, uint
     }
     return svd48_write_register_by_id(handle->config.svd48, drive_id, reg, value);
 }
+
+esp_err_t robot_control_write_svd48_registers(robot_control_handle_t handle,
+                                              uint8_t drive_id,
+                                              uint16_t start_reg,
+                                              const uint16_t *values,
+                                              uint16_t quantity)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return svd48_write_registers_by_id(handle->config.svd48,
+                                       drive_id,
+                                       start_reg,
+                                       values,
+                                       quantity);
+}

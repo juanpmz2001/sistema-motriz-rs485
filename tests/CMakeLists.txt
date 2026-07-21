@@ -61,6 +61,7 @@ botfarms_add_host_test(
         host/firmware_contracts_test.c
         ../components/svd48/svd48_protocol.c
         ../components/serial_gateway/serial_gateway_framing.c
+        ../components/serial_gateway/serial_gateway_policy.c
         ../components/serial_gateway/serial_gateway_result.c
     INCLUDE_DIRS
         ../components/svd48/include

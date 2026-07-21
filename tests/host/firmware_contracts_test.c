@@ -3,6 +3,7 @@
 
 #include "host_test.h"
 #include "serial_gateway_framing.h"
+#include "serial_gateway_policy.h"
 #include "serial_gateway_result.h"
 #include "svd48_protocol.h"
 
@@ -273,6 +274,33 @@ static bool test_gateway_error_result(void)
     return true;
 }
 
+static bool test_gateway_lan_maintenance_policy(void)
+{
+    const char *read_one[] = { "READ_REG", "1", "0x5018" };
+    const char *read_many[] = { "read_reg", "1", "0x5200", "2" };
+    const char *typed_config[] = { "GET_SVD48_CONFIG", "1", "M1" };
+    const char *write_one[] = { "WRITE_REG", "1", "0x5018", "10", "CONFIRM" };
+    const char *write_many[] = { "WRITE_REGS", "1", "0x5200", "0x3f80", "0", "confirm" };
+    const char *write_missing_confirm[] = { "WRITE_REG", "1", "0x5018", "10" };
+    const char *write_bad_confirm[] = { "WRITE_REGS", "1", "0x5200", "0x3f80", "APPLY" };
+    const char *move[] = { "MOVE_VEL", "1", "0", "0" };
+    const char *stop_one[] = { "STOP", "0" };
+    const char *stop_all[] = { "STOP", "ALL" };
+
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, typed_config));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(5, write_one));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(6, write_many));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, write_missing_confirm));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(5, write_bad_confirm));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, move));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, stop_one));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
+    return true;
+}
+
 int main(void)
 {
     const host_test_case_t cases[] = {
@@ -282,6 +310,7 @@ int main(void)
         HOST_TEST_CASE(test_svd48_runtime_actuation_register_classification),
         HOST_TEST_CASE(test_serial_framing),
         HOST_TEST_CASE(test_gateway_error_result),
+        HOST_TEST_CASE(test_gateway_lan_maintenance_policy),
     };
 
     host_test_summary_t summary =
