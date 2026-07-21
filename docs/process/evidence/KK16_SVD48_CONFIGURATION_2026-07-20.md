@@ -110,3 +110,24 @@ with a temporarily higher maximum RPM requires explicit operator approval becaus
 it can make elevated wheels rotate substantially faster. Other unresolved common
 causes are incorrect 60/120-degree selection, shared UVW/Hall ordering assumptions,
 or incompatible electrical motor parameters.
+
+## Calibration Retry With Temporary 50 RPM Maximum
+
+With explicit operator approval, M1 and M2 maximum speed was temporarily changed
+from 10 to 50 RPM. Both channels were calibrated sequentially at 15 A configured
+calibration current:
+
+- M1 reached approximately 33-34 RPM and 2.9-3.7 A telemetry, then failed.
+- M2 reached approximately 33-34 RPM and 2.8-4.0 A telemetry, then failed.
+- Both channels stopped cleanly and retained zero raw motor errors.
+- Final angle tables remained populated and mutually consistent.
+
+This result rules out the 10 RPM limit as the primary cause. Both maximum-speed
+registers were restored to 10 RPM, verified by readback, and `0x3100=1` was
+acknowledged to save the final configuration.
+
+The KK16 5:1 gearbox ratio is not stored in this SVD48. Documented gear-tooth
+registers `0x2202/0x2203` return unsupported-register exception `0x108` on
+software `0x0131`. Do not encode the ratio by falsifying pole pairs or motor KV;
+apply it in the robot profile/kinematics until a controller-supported parameter is
+independently identified.

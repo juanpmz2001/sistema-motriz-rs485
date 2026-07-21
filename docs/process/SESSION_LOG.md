@@ -516,3 +516,10 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   per channel still ended in status `2`; both stopped cleanly with no motor error.
   Angle tables were populated and closely matched. A temporary higher maximum RPM
   calibration test remains pending explicit operator approval.
+- The approved temporary 50 RPM test was completed on both channels. Each reached
+  approximately 34 RPM and still ended in Hall calibration status `2`. The 10 RPM
+  production limit was restored, read back, and saved; low maximum speed is no
+  longer considered the primary calibration failure cause.
+- The KK16 5:1 ratio is documented but not written to the controller because
+  `0x2202/0x2203` are unsupported on SVD48 software `0x0131`. It remains a robot
+  profile/kinematics parameter.
