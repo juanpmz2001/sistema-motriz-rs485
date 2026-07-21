@@ -40,6 +40,29 @@ Python CLI wrappers:
 
 This path is diagnostic only. It does not drive motors and is not command authority.
 
+## Current PPM Default (2026-07-20)
+
+The GPIO18 i-BUS experiment remains historical. The active build now follows the
+working `origin/lucho@5ac0a52` RAFA reference:
+
+- FlySky FS-iA10B PPM on ESP32-S3 GPIO14 through a divider limited to 3.3 V;
+- shared receiver/ESP ground;
+- 10 channels, `3000 us` sync gap, `750..2250 us` channel pulses;
+- `300 ms` stale timeout;
+- source channel indexes used by the historical sketch: throttle `1`, steering
+  `3`, speed multiplier `5` (zero-based array indexes).
+
+`components/ppm_decoder` now publishes complete snapshots under a critical
+section, supports 14 channels maximum, tracks invalid/incomplete/overflow input,
+and is consumed through `ibus_receiver` mode `PPM`. `main` selects PPM/GPIO14 by
+default and `IBUS_STATUS`/`IBUS_CHANNELS` expose its status for compatibility.
+The name of those commands is historical.
+
+Important boundary: valid PPM currently feeds `robot_safety` signal-loss state
+and diagnostics only. It does not auto-arm, choose command authority or move the
+motors. Switching between PPM and UART modes at runtime is rejected; change the
+startup configuration and reboot.
+
 ## Observed Results
 
 The ESP32-S3 serial gateway is reachable:

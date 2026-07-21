@@ -2,15 +2,18 @@
   "schema_version": "1.0.0",
   "profile_id": "differential-2wd-one-svd48-draft",
   "revision": 1,
-  "name": "Differential 2WD with one SVD48 - measurement draft",
-  "description": "Topology fixture only. Channel mapping, dimensions, signs, limits, pins and controller parameters must be measured before activation.",
+  "name": "RAFA differential 2WD with one SVD48 - bench draft",
+  "description": "Bench profile transcribed from origin/lucho Joystic_iphone.ino. It remains non-activatable until the current ESP-IDF runtime consumes profiles and the physical wiring, deadman channel and limits are measured.",
   "lifecycle": {
     "status": "draft",
     "activation_allowed": false,
     "evidence": [
       "Confirmed topology: one SVD48 uses M1 and M2",
       "Confirmed topology: two driven wheels and two passive casters",
-      "Channel-to-side mapping and all numeric physical values require measurement"
+      "origin/lucho maps M1 to left and M2 to right with command signs -1/-1",
+      "origin/lucho uses PPM GPIO14, 10 channels, 3000 us sync, 750..2250 us pulses and 300 ms timeout",
+      "origin/lucho declares wheelbase 1.60 m, track 0.70 m and wheel radius 0.10 m; it does not prove the body envelope",
+      "Body envelope, deadman channel, current limits and controller parameters still require measurement"
     ]
   },
   "board": {
@@ -39,34 +42,44 @@
     "rc_receivers": [
       {
         "id": "rc-primary",
-        "protocol": "ibus",
-        "uart_port": 1,
-        "rx_gpio": 18,
-        "baud_rate": 115200,
-        "inverted": false,
-        "stale_timeout_ms": 100,
+        "protocol": "ppm",
+        "rx_gpio": 14,
+        "channel_count": 10,
+        "min_frame_channels": 4,
+        "sync_threshold_us": 3000,
+        "min_pulse_us": 750,
+        "max_pulse_us": 2250,
+        "stale_timeout_ms": 300,
         "channels": {
           "linear": {
             "index": 1,
-            "min": 1000,
+            "min": 750,
             "center": 1500,
-            "max": 2000,
+            "max": 2250,
             "deadband": 20,
             "inverted": false
           },
           "angular": {
-            "index": 0,
-            "min": 1000,
+            "index": 3,
+            "min": 750,
             "center": 1500,
-            "max": 2000,
+            "max": 2250,
+            "deadband": 20,
+            "inverted": false
+          },
+          "speed_scale": {
+            "index": 5,
+            "min": 750,
+            "center": 1500,
+            "max": 2250,
             "deadband": 20,
             "inverted": false
           },
           "deadman": {
             "index": 4,
-            "min": 1000,
+            "min": 750,
             "center": 1500,
-            "max": 2000,
+            "max": 2250,
             "deadband": 20,
             "inverted": false,
             "active_min": 1700
@@ -108,7 +121,7 @@
         "id": "traction-left",
         "pose": {
           "x_m": 0.0,
-          "y_m": 0.2,
+          "y_m": 0.35,
           "z_m": 0.0,
           "yaw_rad": 0.0
         },
@@ -124,11 +137,11 @@
           "motor_revolutions_per_wheel_revolution": 1.0
         },
         "direction": {
-          "command_sign": 1,
-          "telemetry_sign": 1
+          "command_sign": -1,
+          "telemetry_sign": -1
         },
         "limits": {
-          "max_motor_rpm": 50.0,
+          "max_motor_rpm": 30.0,
           "max_current_a": 2.0
         },
         "required_for_motion": true
@@ -137,7 +150,7 @@
         "id": "traction-right",
         "pose": {
           "x_m": 0.0,
-          "y_m": -0.2,
+          "y_m": -0.35,
           "z_m": 0.0,
           "yaw_rad": 0.0
         },
@@ -157,7 +170,7 @@
           "telemetry_sign": -1
         },
         "limits": {
-          "max_motor_rpm": 50.0,
+          "max_motor_rpm": 30.0,
           "max_current_a": 2.0
         },
         "required_for_motion": true
@@ -197,8 +210,8 @@
       "yaw_positive": "counterclockwise"
     },
     "body": {
-      "length_m": 0.5,
-      "width_m": 0.4,
+      "length_m": 1.6,
+      "width_m": 0.7,
       "height_m": 0.2
     }
   },
@@ -210,7 +223,7 @@
     "right_motors": [
       "traction-right"
     ],
-    "track_width_m": 0.4,
+    "track_width_m": 0.7,
     "lateral_deadband_mps": 0.001
   },
   "control_sources": {

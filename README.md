@@ -35,21 +35,21 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 
 ## Firmware Architecture
 
-- `components/svd48`: serialized RS485 driver for two SVD48 drives / four logical motors. Implements reads, single-register writes, telemetry polling, UU Motor CRC byte order, high-bit exception diagnostics, and stale/fault state. Its internal `0x10` transaction validates the echoed register/count and does not retry an ambiguous write, but it is not exposed as a serial/LAN configuration command.
+- `components/svd48`: serialized RS485 driver for two SVD48 drives / four logical motors. Implements reads, single-register writes, bounded multi-register writes, telemetry polling, UU Motor CRC byte order, high-bit exception diagnostics, and stale/fault state. Function `0x10` validates the echoed register/count and is exposed only through the confirmed bench command described below; it is not retried after an ambiguous response.
 - `components/robot_state`: pure operational-state model plus a mutex-protected ESP-IDF service for single-owner inhibit slots, fault latches, direct transition results, snapshots, and gate epochs. It deliberately exposes neither external callbacks nor a check/use motion permit; both layers compile, but `main` does not instantiate the service and movement entry points do not enforce it yet.
 - `components/command_authority`: pure deterministic mailbox/arbiter model for simultaneous `RC > LAN > Bluetooth` inputs, TTL, dead-man, sequence checks, authority epochs, stop-before-switch, and fresh-after-switch. It is host-tested but has no runtime adapters or actuator ownership yet.
 - `components/robot_kinematics`: pure generic differential kinematics for one or more motors per side, with per-motor radius, transmission ratio, sign, RPM limit, and proportional saturation. Profile parsing and runtime actuation integration remain pending; Ackermann and crab strategies are not implemented.
-- `components/robot_control`: maps four logical motors into robot commands. Implements `MOVE_VEL vx vy wz` as independent steering kinematics and controls four PWM steering servos.
-- `components/robot_safety`: high-priority safety supervisor. It watches RC/i-BUS signal loss after a valid signal is seen and online motor fault telemetry, then requests `STOP ALL` without doing Wi-Fi, HTTP, JSON, OTA or NVS work.
-- `components/ibus_receiver`: low-latency FlySky i-BUS/SBUS receiver input used by the safety supervisor and diagnostics.
+- `components/robot_control`: maps four logical motors into robot commands. It still implements legacy `MOVE_VEL vx vy wz` as four-wheel independent steering kinematics; steering PWM is disabled by the current RAFA defaults.
+- `components/robot_safety`: high-priority safety supervisor. It watches RC/PPM/i-BUS signal loss after a valid signal is seen and online motor fault telemetry, then requests `STOP ALL` without doing Wi-Fi, HTTP, JSON, OTA or NVS work.
+- `components/ibus_receiver`: common RC receiver facade. The current default is a 10-channel FlySky PPM decoder on GPIO14; i-BUS/SBUS UART modes remain available for diagnostics. PPM is read by safety and status only and does not currently issue motion commands.
 - `components/serial_gateway`: ASCII gateway over the ESP-IDF console/USB serial stream. Emits `OK`, `ERR`, and `DATA` responses. It also exposes the shared command dispatcher used by LAN maintenance.
 - `components/config_manager`: persists Wi-Fi and OTA settings in NVS.
 - `components/wifi_manager`: Wi-Fi station mode used by manual OTA and background OTA checks. A low-priority supervisor auto-connects on boot and reconnects with backoff when credentials are saved.
 - `components/ota_manager`: manifest validation, inactive-slot download/verification, manual boot-slot switch, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: low-priority authenticated UDP listener for LAN OTA announcements from developer laptops.
-- `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for safe diagnostics and telemetry without USB. It uses a separate maintenance token and blocks movement/write commands in v1.
+- `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for diagnostics and telemetry without USB. It uses a separate maintenance token, blocks movement, and provisionally permits confirmed raw SVD48 configuration writes with pre-read/readback verification for elevated bench work.
 - `components/control_lan`: bounded UDP control-ingress component on port `32322`. It validates the maintenance token and parses arm/command/disarm/stop events without touching motors. It is compiled but intentionally not started until authority adapters, the runtime safety gate, a single actuator coordinator, and a valid robot profile exist.
-- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, telemetry polling, the current fixed robot control, i-BUS, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services. It does not yet start `control_lan` or the new state/authority/kinematics path.
+- `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, sends a best-effort boot stop, starts telemetry polling, PPM GPIO14, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services. It does not yet start `control_lan` or the new state/authority/kinematics path.
 
 Run the CMake/CTest host suite before every firmware build or hardware session:
 
@@ -79,7 +79,10 @@ canonical robot JSON above and remove topology literals from `main.c`.
   - `MOTOR_1`: drive 1 M2, front-right.
   - `MOTOR_2`: drive 2 M1, rear-left.
   - `MOTOR_3`: drive 2 M2, rear-right.
-- Steering servo GPIO defaults: 4, 5, 6, 7.
+- Current RAFA geometry defaults: wheelbase/body length `1.60 m`, track width `0.70 m`, wheel radius `0.10 m`, and software wheel ceiling `300 RPM`.
+- Steering outputs are disabled. GPIO 4, 5, 6 and 7 remain historical compile-time literals but are not initialized as PWM.
+- RC input defaults to FlySky PPM on GPIO14: 10 channels, sync gap `3000 us`, pulse range `750..2250 us`, stale timeout `300 ms`.
+- The PPM receiver is diagnostic/safety input only. RC-to-motion authority and differential output are not connected in this build.
 
 Until that migration is implemented, adjust these values in `main/main.c` before
 flashing if the harness differs. Do not treat them as a new robot profile.
@@ -130,7 +133,9 @@ python3 tools/esp_lanctl.py watch --host 192.168.1.185 --motor 0 --period-ms 100
 
 `maintenance_lan` is not OTA. OTA LAN announce remains on UDP `32320` with `BOTFARMS_OTA_TOKEN`; maintenance LAN uses UDP `32321` with `BOTFARMS_MAINT_TOKEN`.
 
-LAN maintenance v1 allows read/diagnostic commands and `STOP ALL`. It intentionally blocks movement, raw writes, sensitive configuration mutation and destructive OTA commands. Blocked commands return `ERR LAN_COMMAND_BLOCKED <command>`.
+LAN maintenance allows read/diagnostic commands, `STOP ALL`, `READ_REG`, `GET_SVD48_CONFIG`, and the provisional confirmed `WRITE_REG`/`WRITE_REGS` bench commands. Movement, direct actuation registers, sensitive ESP configuration mutation and destructive OTA commands remain blocked. Blocked commands return `ERR LAN_COMMAND_BLOCKED <command>`.
+
+The write path is intentionally an MVP escape hatch, not the final typed configuration service. It requires `CONFIRM`, checks the current stopped heuristic, captures old words, writes once for FC `0x10`, reads back, and reports `VERIFIED:1` only on an exact match. A response containing `OUTCOME:UNKNOWN` or `OUTCOME:ACKED_UNVERIFIED` must never be blindly retried; read the register first.
 
 ## Build
 

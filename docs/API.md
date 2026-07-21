@@ -283,10 +283,15 @@ Runs one explicit telemetry poll. Use it with `TRACE ON` to inspect the read fra
 
 ```text
 READ_REG drive_id reg [count]
-WRITE_REG drive_id reg value
+WRITE_REG drive_id reg value CONFIRM
+WRITE_REGS drive_id start_reg value [value...] CONFIRM
 ```
 
-Reads or writes raw 16-bit SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, `reg`, and `value` accept decimal or `0x` hex. Raw writes that touch known runtime actuation registers `0x5300`, `0x5301`, `0x5304`, `0x5305`, `0x5308`, or `0x5309` are rejected; serial reports `ERR WRITE_REG_ACTUATION_BLOCKED`. This is containment, not a safe parameter service: other raw configuration writes still have no typed float/32-bit codec, catalog/range policy, stopped-motor interlock, old-value capture, readback, rollback, or controller-flash save. The internal tested `svd48_write_registers_by_id()` transaction is not reachable from serial/LAN. Do not use `WRITE_REG` as a production configuration API.
+Reads or writes raw 16-bit SVD48 holding registers through the ESP32 RS485 bus. `drive_id`, registers and values accept decimal or `0x` hex. A read accepts at most 16 words; a multi-write accepts at most 8 contiguous words.
+
+Both write forms require the literal `CONFIRM`, reject ranges that touch runtime actuation registers `0x5300`, `0x5301`, `0x5304`, `0x5305`, `0x5308`, or `0x5309`, and require the current `SAFE_FOR_OTA` stopped heuristic. The firmware pre-reads old values, performs the write, reads the same range again and reports success only when every word matches. They are available over USB and authenticated `maintenance_lan`.
+
+This is provisional bench containment, not the target typed parameter service. It has no exclusive maintenance job, request deduplication, complete register catalog, hard ceilings, rollback or verified controller-flash persistence. A write transport failure may mean the controller applied the value but its response was lost. `OUTCOME:UNKNOWN`, `OUTCOME:ACKED_UNVERIFIED`, or `READBACK_MISMATCH` means: do not retry; read the target range and recover deliberately.
 
 ```text
 GET_SVD48_CONFIG drive_id [M1|M2|ALL]

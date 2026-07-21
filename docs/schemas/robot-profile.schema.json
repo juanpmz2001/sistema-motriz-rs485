@@ -393,12 +393,48 @@
       "required": [
         "id",
         "protocol",
-        "uart_port",
         "rx_gpio",
-        "baud_rate",
-        "inverted",
         "stale_timeout_ms",
         "channels"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "enum": [
+                  "ibus",
+                  "sbus"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "uart_port",
+              "baud_rate",
+              "inverted"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "const": "ppm"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "channel_count",
+              "min_frame_channels",
+              "sync_threshold_us",
+              "min_pulse_us",
+              "max_pulse_us"
+            ]
+          }
+        }
       ],
       "properties": {
         "id": {
@@ -408,7 +444,8 @@
           "type": "string",
           "enum": [
             "ibus",
-            "sbus"
+            "sbus",
+            "ppm"
           ]
         },
         "uart_port": {
@@ -426,6 +463,31 @@
         },
         "inverted": {
           "type": "boolean"
+        },
+        "channel_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 14
+        },
+        "min_frame_channels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 14
+        },
+        "sync_threshold_us": {
+          "type": "integer",
+          "minimum": 2000,
+          "maximum": 20000
+        },
+        "min_pulse_us": {
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 2500
+        },
+        "max_pulse_us": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 3000
         },
         "stale_timeout_ms": {
           "type": "integer",
@@ -448,6 +510,9 @@
               "$ref": "#/$defs/rcChannel"
             },
             "angular": {
+              "$ref": "#/$defs/rcChannel"
+            },
+            "speed_scale": {
               "$ref": "#/$defs/rcChannel"
             },
             "deadman": {

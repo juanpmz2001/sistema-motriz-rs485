@@ -13,7 +13,7 @@ contracts are stable. Normative details are in
 `05_SAFE_CONFIGURATION_WRITE_PLAN.md` and
 `06_SIMULATED_QA_FAULT_INJECTION_PLAN.md`.
 
-Current implementation slice (2026-07-19, firmware build 13):
+Current implementation slice (2026-07-20, firmware build 14):
 
 - LAN compatibility responses now map captured `ERR` lines to `status:"err"` (`TRANS-001`, hardware/web verification pending).
 - Serial overlength input drains through the delimiter before accepting another command (`TRANS-007`; explicit response completion is still pending).
@@ -22,9 +22,11 @@ Current implementation slice (2026-07-19, firmware build 13):
 - A pure `command_authority` model implements simultaneous `RC > LAN > Bluetooth`, bounded mailboxes, TTL/dead-man/sequence validation, stop-before-switch, fresh-after-switch, epochs and moving-source-loss fault-stop. Runtime source adapters and actuator ownership remain pending (`SAFE-003/004`).
 - Pure `robot_kinematics` differential mapping now supports one or more motors per side with per-motor radius, ratio, sign, RPM ceiling and proportional global saturation. Profile parsing/runtime integration and Ackermann/crab strategies remain pending (`KIN-001..005`).
 - A bounded token-authenticated `control_lan` UDP ingress exists on port `32322` and emits typed events only. It is compiled but intentionally not started or connected to movement until the runtime gate, authority adapters, valid profile and actuator coordinator exist (`TRANS-009`).
-- The host QA project uses CMake/CTest with strict C11 warnings, a fake monotonic clock and bounded event sink. Six state, authority, differential-kinematics, protocol, framing and reference-vector tests pass normally and with ASan/UBSan (`TEST-001/007`).
-- SVD48 exceptions preserve matching high-bit function/code/time, and the internal `0x10` path now builds, transacts and validates echoed start/count without blind write retries. It remains unreachable from serial/LAN and has no maintenance/change-set semantics (`SVD-001/002/003`).
-- Raw single/multiple writes now reject ranges touching known runtime actuation registers, and a failed zero-target write still attempts `STOP`. Typed, stopped-state, readback-verified configuration writes remain pending (`SVD-008`, `SAFE-005/009`).
+- The host QA project uses CMake/CTest with strict C11 warnings, a fake monotonic clock and bounded event sink. Seven state, authority, differential-kinematics, PPM, protocol, framing and reference-vector tests pass (`TEST-001/007`).
+- SVD48 exceptions preserve matching high-bit function/code/time. FC `0x10` validates echoed start/count and makes one attempt. It is provisionally exposed as `WRITE_REGS ... CONFIRM` for bench use (`SVD-001/002/003/028`).
+- Confirmed raw single/multiple writes over USB/LAN reject runtime actuation, check the stopped heuristic, pre-read old words and verify readback. This is not the target maintenance job/catalog/save workflow (`SVD-008/021/028`).
+- FlySky PPM is now an active 10-channel input on GPIO14 with a pure host-tested frame model and a `300 ms` stale timeout. It feeds diagnostics and RC-loss safety, not movement authority (`SAFE-010`).
+- The web repository contains provisional register read/write endpoints and an elevated-bench editor with LAN fake integration tests. PID float ordering and all physical SVD48 writes remain unverified (`WEB-001..004/101/102`).
 
 ## Outcome
 
@@ -105,6 +107,7 @@ bounded/deduplicated. Production trust controls remain explicit deferred work.
 | `SAFE-007` | Add deterministic task shutdown/acknowledgement to avoid deinit races | `NOT_STARTED` | none | yes |
 | `SAFE-008` | Define physical E-stop input and electrical power-cut architecture | `BLOCKED` | hardware decision | yes before floor |
 | `SAFE-009` | Eliminate residual-setpoint startup: write/validate the intended safe target before `START`; prohibit generic enable from reusing an unknown prior target | `IN_PROGRESS` | `SAFE-002`, `SAFE-005` | yes |
+| `SAFE-010` | Decode FlySky PPM GPIO14 without auto-arm; expose freshness/channels and feed RC-loss safety | `IN_PROGRESS` (host/build complete; real PPM and loss-stop HIL pending) | `SAFE-002/003` | yes |
 
 Exit: no configuration work can cause a movement API to bypass an inhibit, and stop latency has a measured bound.
 
@@ -145,7 +148,7 @@ Detailed ownership is in `01_SVD48_REGISTER_COVERAGE.md`.
 | --- | --- | --- | --- | --- |
 | `SVD-001` | Preserve exception function/code and distinguish device exception from timeout/bad response | `IN_PROGRESS` | none | yes |
 | `SVD-002` | Add response parser tests, including `0x90`, standard high-bit exception forms, CRC, truncation, and wrong slave/function | `DONE` | `SVD-001` | yes |
-| `SVD-003` | Implement `0x10` write-multiple request/response support with golden vectors | `IN_PROGRESS` (host/build complete; restrained controller pending) | `SVD-002` | yes |
+| `SVD-003` | Implement `0x10` write-multiple request/response support with golden vectors | `IN_PROGRESS` (host/build and provisional command complete; restrained controller pending) | `SVD-002` | yes |
 | `SVD-004` | Implement typed codecs for `u16`, `i16`, `u32`, `i32`, and verified float word order | `BLOCKED` for float | SV-Config capture | yes |
 | `SVD-005` | Build parameter catalog with access, range, unit, scope, persistence, safety class, and confidence | `NOT_STARTED` | audit complete | yes |
 | `SVD-006` | Add typed single/group reads and controller inventory/capabilities | `NOT_STARTED` | `SVD-004`, `SVD-005` | yes |
@@ -177,14 +180,14 @@ Exit: serial and LAN produce equivalent domain results and capabilities; ASCII l
 | ID | Work item | Status | Dependencies | MVP |
 | --- | --- | --- | --- | --- |
 | `SVD-020` | Add exclusive firmware maintenance operation with stopped-state guard, expiry and visible job state; no operator/session ownership in local MVP | `NOT_STARTED` | `SAFE-002`, `TRANS-003` | yes |
-| `SVD-021` | Add change-set validation, compiled hard ceilings, old-value capture, ordered writes, readback, and per-field results | `NOT_STARTED` | `SVD-005`, `SVD-020` | yes |
+| `SVD-021` | Add change-set validation, compiled hard ceilings, old-value capture, ordered writes, readback, and per-field results | `IN_PROGRESS` (raw command has old/readback only; job/catalog/ceilings/rollback pending) | `SVD-005`, `SVD-020` | yes |
 | `SVD-022` | Implement controller flash-save workflow and document non-atomic power-loss behavior | `BLOCKED` | hardware experiment | yes |
 | `SVD-023` | Enable first verified low-risk fields: pole pairs, RPM/current limits, direction, sensor type, ramps | `NOT_STARTED` | `SVD-021`, hardware evidence | yes |
 | `SVD-024` | Board address/baud migration with recovery channel | `DEFERRED` | capture and recovery design | no |
-| `SVD-025` | Enable bounded speed PID reads/writes after float word-order and persistence evidence | `NOT_STARTED` | `SVD-004/021`, hardware capture | yes |
+| `SVD-025` | Enable bounded speed PID reads/writes after float word-order and persistence evidence | `BLOCKED` | `SVD-004/021`, hardware capture | yes |
 | `SVD-026` | Hall/encoder calibration workflows | `DEFERRED` | hazardous state-machine design | later MVP increment |
-| `SVD-027` | Throttle/brake/PPM/CAN/card-reader features | `DEFERRED` | actual robot requirement | no |
-| `SVD-028` | Add compile-time-disabled engineering raw-write mode with maintenance gate, denylist, old value, readback and audit | `NOT_STARTED` | `SVD-021`, `GATE-SAFE`, hardware procedure | no |
+| `SVD-027` | Throttle/brake/PPM/CAN/card-reader features | `IN_PROGRESS` for ESP PPM input only; controller-direct throttle/brake/CAN/card remain deferred | actual robot requirement | no |
+| `SVD-028` | Add compile-time-disabled engineering raw-write mode with maintenance gate, denylist, old value, readback and audit | `IN_PROGRESS` (provisional always-built bench path; formal gate/audit/compile flag pending) | `SVD-021`, `GATE-SAFE`, hardware procedure | no |
 
 Exit: a deliberately small verified parameter set can be changed and recovered on restrained hardware.
 
@@ -194,12 +197,12 @@ The detailed consumer plan lives in the web repository `docs/process/00_WEB_IMPL
 
 | ID | Work item | Status | Dependencies | MVP |
 | --- | --- | --- | --- | --- |
-| `WEB-001` | Introduce typed backend `SerialTransport`/`LanTransport` and connection state | `NOT_STARTED` | `TRANS-001/003` | yes |
-| `WEB-002` | Add backend JSON schema validation and stable API/error envelopes | `NOT_STARTED` | `PROF-001`, `TRANS-003` | yes |
-| `WEB-003` | Add backend profile/capability/source/controller/read/change-set routes and job correlation | `NOT_STARTED` | `SVD-006/021`, `PROF-005/009` | yes |
-| `WEB-004` | Add backend unit/API/transport/fault-injection tests for USB and LAN | `NOT_STARTED` | `WEB-001..003` | yes |
-| `WEB-101` | Design and implement profile/controller Configuration frontend from stable backend capabilities | `NOT_STARTED` | `WEB-001..004` complete | after backend |
-| `WEB-102` | Add guarded change-set review/readback frontend | `NOT_STARTED` | `WEB-101`, `SVD-021/025` | after backend |
+| `WEB-001` | Introduce typed backend `SerialTransport`/`LanTransport` and connection state | `IN_PROGRESS` (both transports operate; formal interface/capabilities pending) | `TRANS-001/003` | yes |
+| `WEB-002` | Add backend JSON schema validation and stable API/error envelopes | `IN_PROGRESS` for raw register endpoints only | `PROF-001`, `TRANS-003` | yes |
+| `WEB-003` | Add backend profile/capability/source/controller/read/change-set routes and job correlation | `IN_PROGRESS` for raw register read/write only; profiles/jobs pending | `SVD-006/021`, `PROF-005/009` | yes |
+| `WEB-004` | Add backend unit/API/transport/fault-injection tests for USB and LAN | `IN_PROGRESS` (Node helper + fake LAN tests; serial/HIL/fault matrix pending) | `WEB-001..003` | yes |
+| `WEB-101` | Design and implement profile/controller Configuration frontend from stable backend capabilities | `IN_PROGRESS` as provisional raw editor; typed profile UI pending | `WEB-001..004` complete | after backend |
+| `WEB-102` | Add guarded change-set review/readback frontend | `IN_PROGRESS` as single-command confirm/readback UI; jobs/change sets pending | `WEB-101`, `SVD-021/025` | after backend |
 | `WEB-103` | Add PID telemetry/tuning frontend | `DEFERRED` | `SVD-025`, backend evidence | later increment |
 
 Exit: the UI cannot invent register semantics and cannot offer unsupported/unsafe operations.
@@ -209,7 +212,7 @@ Exit: the UI cannot invent register semantics and cannot offer unsupported/unsaf
 | ID | Work item | Status | Dependencies | MVP |
 | --- | --- | --- | --- | --- |
 | `TEST-001` | Automate firmware protocol/profile/kinematic/safety unit tests | `IN_PROGRESS` | corresponding units | yes |
-| `TEST-002` | Automate Node backend unit/API/serial/LAN/control transport tests | `NOT_STARTED` | `WEB-001..004` | yes |
+| `TEST-002` | Automate Node backend unit/API/serial/LAN/control transport tests | `IN_PROGRESS` (8 Node tests; serial/control/HIL pending) | `WEB-001..004` | yes |
 | `TEST-003` | Build mock SVD48/UDP fault-injection harness | `NOT_STARTED` | `SVD-002`, `TRANS-003` | yes |
 | `TEST-004` | Execute all USB and LAN-only tests with ESP and no motor bus | `NOT_STARTED` | transport implementation | yes |
 | `TEST-005` | Execute SVD48 tests with motor power isolated or wheels removed | `NOT_STARTED` | typed read/write slices | yes |

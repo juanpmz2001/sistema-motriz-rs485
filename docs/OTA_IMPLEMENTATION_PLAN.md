@@ -2847,7 +2847,7 @@ Objective:
 Scope:
 
 - Keep the auto-check task as normal FreeRTOS/application code only.
-- Do not add `IRAM_ATTR`, ISR handlers, `ESP_INTR_FLAG_IRAM`, `ppm_decoder`, or low-level memory/cache/FreeRTOS flag changes.
+- Historical Iteration 10.5 constraint: do not add `IRAM_ATTR`, ISR handlers, `ESP_INTR_FLAG_IRAM`, `ppm_decoder`, or low-level memory/cache/FreeRTOS flag changes in that OTA-only iteration. Build 14 later enabled PPM under the separately documented non-IRAM constraints in `docs/OTA_MEMORY_AUDIT.md`.
 - Do not download firmware automatically.
 - Do not write flash automatically.
 - Do not call `OTA_UPDATE` automatically.
@@ -3174,7 +3174,7 @@ Main risks before the next code iteration:
 
 - Physical flash and configured flash are now both `16MB`; future iterations must not regress `CONFIG_ESPTOOLPY_FLASHSIZE`, the selected CSV, or slot sizing.
 - IRAM is currently `16383 / 16384` bytes because the fixed first 16 KB bucket is full. Future iterations must monitor `IRAM`, `DIRAM .text`, total `DIRAM`, full `.iram0.text` from the map file, `Flash Code`, and total image size.
-- New `IRAM_ATTR`, ISR handlers, `ESP_INTR_FLAG_IRAM`, IRAM-safe driver options, low-level SPI flash/cache/MMU changes, heap/FreeRTOS placement changes, and enabling `ppm_decoder` are blocked unless separately audited.
+- New `IRAM_ATTR`, `ESP_INTR_FLAG_IRAM`, IRAM-safe driver options, low-level SPI flash/cache/MMU changes, heap/FreeRTOS placement changes, and converting the active PPM input to cache-off/IRAM-safe execution are blocked unless separately audited. Build 14 uses a non-IRAM GPIO ISR and keeps PPM outside the motion path.
 - Wrong USB port could cause failed diagnostics.
 - Partition migration is already complete, but any future partition edit remains high risk and requires full build, partition-table and boot validation.
 - OTA must be blocked unless robot safety state is known.

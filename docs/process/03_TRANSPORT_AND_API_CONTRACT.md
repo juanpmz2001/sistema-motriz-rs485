@@ -213,6 +213,20 @@ Capabilities are domain actions, not raw command strings:
 
 Backend policy must mirror firmware for early rejection and good UX, but firmware remains authoritative.
 
+### Provisional Bench Deviation (Build 14)
+
+To unblock the supervised MVP, authenticated maintenance LAN currently permits
+`READ_REG`, `WRITE_REG ... CONFIRM`, and `WRITE_REGS ... CONFIRM`. Firmware still
+blocks runtime-actuation addresses, checks its stopped heuristic, captures old
+words and verifies readback. The web backend mirrors known ranges for pole pairs,
+current, direction, sensor type and speed dead zone.
+
+This is a documented temporary deviation from the target table above. It has no
+job ID/deduplication, exclusive `MAINTENANCE` owner, complete catalog, save or
+rollback. `OUTCOME:UNKNOWN`/`ACKED_UNVERIFIED` is terminal for that request: the
+client must read back and must not retry blindly. Movement remains denied in
+`maintenance_lan`.
+
 ## Separate LAN Motion Ingress
 
 `maintenance_lan` remains a management plane and must keep motion blocked in its

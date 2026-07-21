@@ -3,9 +3,11 @@
 Fecha: 2026-07-19
 
 Estado: `IN_PROGRESS`. El modelo/servicio de estados, el árbitro puro de fuentes,
-la cinemática differential y la transacción interna SVD48 FC `0x10` existen.
-Todavía faltan coordinador/gate runtime, adaptadores de fuentes, catálogo tipado,
-operación de mantenimiento, perfil JSON y writes públicos seguros.
+la cinemática diferencial y FC `0x10` existen. También hay un vertical
+provisional de banco: `WRITE_REG(S) ... CONFIRM` por USB/LAN, prelectura,
+readback y editor web. Todavía faltan coordinador/gate runtime, adaptadores de
+fuentes, catálogo tipado completo, operación exclusiva, perfil JSON y writes de
+producción.
 
 ## Avance Verificado
 
@@ -17,13 +19,18 @@ operación de mantenimiento, perfil JSON y writes públicos seguros.
 - `tests/` aporta CMake/CTest, fake clock y event sink.
 - `svd48_write_registers_by_id()` valida FC `0x10` y hace un solo intento para no
   repetir a ciegas un write cuyo ACK se perdió.
-- `./tools/run_host_tests.sh` pasa 6/6 y ESP-IDF 5.4.1 compila build 13 para
+- `./tools/run_host_tests.sh` pasa 7/7 y ESP-IDF 5.4.1 compila build 14 para
   `esp32s3`.
+- El write provisional exige `CONFIRM`, bloquea registros de actuación, consulta
+  el stopped heuristic, captura old value, escribe y verifica readback. FC
+  `0x10` no hace retry ciego.
+- El backend web ya ofrece `/api/svd48/register/read` y
+  `/api/svd48/register/write`; la UI de banco muestra words y ambas
+  interpretaciones float. El orden float PID sigue sin evidencia física.
 
-Esto no autoriza movimiento ni configuración física: el modelo aún no está
-conectado a `robot_control`, `robot_safety`, serial o LAN. El raw USB `WRITE_REG`
-ya rechaza registros conocidos de actuación, pero el resto conserva su riesgo
-histórico por falta de estado detenido, catálogo, old value y readback.
+Esto no autoriza movimiento ni configura por sí solo un controlador físico. El
+vertical raw es utilizable únicamente con ruedas elevadas y corte disponible;
+no sustituye `MAINTENANCE`, catálogo/hard ceilings, dedupe, rollback o save.
 
 ## Objetivo MVP
 
@@ -39,8 +46,8 @@ Permitir que firmware y luego backend puedan:
 - operar el mismo contrato por USB y LAN local con el token existente;
 - distinguir rechazo, exception, timeout, mismatch y resultado ambiguo.
 
-El frontend queda fuera de esta fase. Primero se cierran y prueban firmware y
-backend; después el frontend consume esos contratos estables.
+El frontend final tipado sigue después del backend estable. El editor raw actual
+es una herramienta técnica provisional para desbloquear la parametrización MVP.
 
 ## Prioridad de Riesgos
 
@@ -74,10 +81,10 @@ para el prototipo LAN. Los secretos nunca se incluyen en el robot JSON.
 | Estado | modelo puro no integrado | una ruta puede mover mientras otra detiene |
 | Fuentes | sin árbitro único | stale, prioridad y preempción no están definidas runtime |
 | Movimiento | target-before-START y fail-stop best effort | no consulta gate; apply sigue secuencial |
-| SVD48 write | raw USB `0x06`; FC `0x10` interno | sin catálogo, old value, readback o clasificación ambigua |
-| LAN | token y allowlist read-only/STOP | no transporta JSON grande ni change sets idempotentes |
+| SVD48 write | raw confirmado FC `0x06/0x10`, old value y readback | sin catálogo completo, job, dedupe, rollback o save verificado |
+| LAN | token; read/STOP y raw config confirmado | no transporta JSON grande ni change sets idempotentes |
 | Perfil | literales en `main.c` | topología/pines/geometría no son configurables |
-| Backend | comandos genéricos serial/LAN | falta dominio tipado y tests |
+| Backend | transporte serial/LAN y endpoints raw de registros con tests LAN fake | faltan dominio de perfiles/jobs, tests serial/fault completos y HIL |
 
 ## Máquina de Estados
 

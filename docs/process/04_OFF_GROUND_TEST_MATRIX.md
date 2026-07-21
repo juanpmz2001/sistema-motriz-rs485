@@ -163,6 +163,24 @@ firmware maintenance operation. PID begins only after the float word order is
 captured; do not begin with bus address/baud, voltage/current extremes or
 calibration.
 
+### F0. Provisional Raw Editor Acceptance
+
+These rows validate the build-14 escape hatch; passing them does not mark the
+target guarded job tests below as complete.
+
+| ID | Test | Action | Expected | Evidence | Status |
+| --- | --- | --- | --- | --- | --- |
+| `TEST-WRITE-P001` | USB/LAN parity | Read the same benign register through both transports | Same drive/start/count/words | `E3/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P002` | Confirm required | Omit or alter `CONFIRM` | Rejected before RS485 write | `E2/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P003` | Actuation denylist | Try `0x5300/01`, `0x5304/05`, `0x5308/09` | Rejected before RS485 write | `E2/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P004` | Single benign readback | Change one backed-up low-risk word | old/request/readback exact; `VERIFIED:1` | `E4` | `NOT_STARTED` |
+| `TEST-WRITE-P005` | Two-word readback | Write two known raw words, then read | exact order and values; no blind retry | `E4` | `NOT_STARTED` |
+| `TEST-WRITE-P006` | Ambiguous result | Drop write ACK/readback response | UI says result uncertain and forbids blind retry | `E2/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P007` | PID float order | Read known PID through SV-Config/ESP and compare both orders | one captured order becomes evidence; no PID write before it | `E4` | `NOT_STARTED` |
+| `TEST-WRITE-P008` | Persistence | Read, write, stop/save as approved, power-cycle, read | exact persistence result recorded per field | `E4` | `NOT_STARTED` |
+
+### F1. Target Guarded Job
+
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | `TEST-WRITE-001` | Unguarded write | Attempt typed/raw write outside the maintenance job path | Rejected; no frame emitted | `E4` | `NOT_STARTED` |

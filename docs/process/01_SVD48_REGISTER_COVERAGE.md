@@ -38,17 +38,22 @@ Implemented:
 - Two fixed drives with two channels each.
 - Typed start/stop/clear alarm, given RPM, and given current.
 - Polling and typed decoding for status, speed, current, temperatures, bus voltage, position, and error code.
-- Raw `READ_REG` and `WRITE_REG` gateway commands.
+- Raw `READ_REG`, confirmed `WRITE_REG`, and confirmed/bounded `WRITE_REGS`
+  gateway commands over USB and authenticated maintenance LAN.
+- Provisional write containment: runtime-actuation denylist, stopped heuristic,
+  old-value pre-read, exact readback, and explicit ambiguous-outcome text.
 - Partial `GET_SVD48_CONFIG`/`APPLY_PY6514_CONFIG` support.
 
 Missing or unsafe:
 
-- Maintenance-guarded typed exposure of function `0x10`, including old values, readback and explicit ambiguous-outcome classification. The current internal driver API is deliberately unreachable from serial/LAN.
 - Typed float and generic 32-bit codecs.
 - Physical evidence that each local controller firmware emits the documented exception forms/codes.
 - Parameter metadata, range/access validation, persistence semantics, and controller-firmware capability detection.
-- Stopped-state enforcement for raw writes.
-- Complete old-value/readback/change-set transaction behavior.
+- A formal `MAINTENANCE` state, exclusive operation ownership, expiry and
+  request deduplication. The current stopped check is the OTA heuristic, not a
+  state-machine permit.
+- Typed change-set validation, complete hard ceilings, rollback and audit. The
+  provisional raw path only captures old/readback words for one command.
 - Controller save (`0x3100`) and power-cycle verification workflow.
 - Calibration workflows.
 - Reliable health meaning for `svd48_poll_once()`: it can return success even if all drives fail.
@@ -216,7 +221,7 @@ Every capture must record controller product/software/hardware version, drive ID
 ## Implementation Order
 
 1. `SVD-001/002`: parser/error fidelity and tests.
-2. `SVD-003`: `0x10` framing, ACK parser and internal transaction with host golden vectors, not exposed publicly. Host/build implementation is complete; physical SVD48 evidence remains pending.
+2. `SVD-003`: `0x10` framing, ACK parser and one-attempt transaction with host golden vectors. It is provisionally exposed by `WRITE_REGS ... CONFIRM`; physical SVD48 evidence remains pending.
 3. Execute `SVD-EXP-001/004/005`.
 4. `SVD-004/005`: typed codecs and catalog with confidence metadata.
 5. `SVD-006/007`: read-only inventory/group reads/drift.

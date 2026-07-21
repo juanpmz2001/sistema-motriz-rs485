@@ -326,9 +326,15 @@ Rollback is required and already validated. Do not disable or loosen it to recov
 
 Verbose maximum logging and dynamic log control likely cost flash/rodata/DRAM more than IRAM. Reducing maximum log level is reasonable after the memory experiments, but not as the first IRAM fix because diagnostics are still valuable.
 
-### inactive components
+### interrupt and inactive components
 
-`components/ppm_decoder` contains an `IRAM_ATTR` ISR, but it is not active in the current build. Do not activate it until IRAM has margin and its ISR path is reviewed. `bluetooth_controller` and `motor_controller` are also inactive.
+Build 14 activates `components/ppm_decoder` for the GPIO14 PPM input. Its GPIO
+interrupt service is deliberately installed without `ESP_INTR_FLAG_IRAM`, and
+the handler is not marked `IRAM_ATTR`; the pure frame model is covered by host
+tests. Flash/OTA operations may therefore delay or drop PPM edges while cache is
+unavailable. That is acceptable only because PPM does not currently command
+motion and OTA remains gated to a stopped robot. `bluetooth_controller` and
+`motor_controller` remain inactive.
 
 ## 4. Triage Table
 
@@ -813,7 +819,7 @@ RTC FAST: 52 / 8192 bytes
    They can occupy addresses inside the bucket, but once the bucket is full the reported `used_iram` remains capped. The practical growth appears as increased `DIRAM .text` or eventual linker pressure. New `IRAM_ATTR` should still be treated as dangerous.
 
 7. **What future changes are dangerous for this bucket or executable internal RAM?**  
-   New `IRAM_ATTR`, new ISR-safe drivers, `ESP_INTR_FLAG_IRAM`, enabling inactive ISR-heavy components, changing panic/backtrace/debug settings, changing heap/FreeRTOS low-level placement, SPI flash/cache/MMU changes, and enabling `ppm_decoder` without a separate audit.
+   New `IRAM_ATTR`, new ISR-safe drivers, `ESP_INTR_FLAG_IRAM`, changing panic/backtrace/debug settings, changing heap/FreeRTOS low-level placement, SPI flash/cache/MMU changes, or converting the active PPM path to IRAM-safe execution without a separate audit.
 
 8. **Can Iteration 10 advance if it only adds normal FreeRTOS task logic?**  
    Yes, with guardrails. A normal low-priority task for periodic manifest checks should compile into flash code, not the critical IRAM bucket, provided it does not add ISR handlers, `IRAM_ATTR`, low-level driver IRAM-safe options, or automatic OTA writes.
@@ -829,7 +835,7 @@ RTC FAST: 52 / 8192 bytes
 - Do not add `IRAM_ATTR` unless the change has a written justification and map-file evidence.
 - Do not add new ISR handlers in Iteration 10.
 - Do not use `ESP_INTR_FLAG_IRAM` in Iteration 10.
-- Do not enable `ppm_decoder` until it gets its own ISR/IRAM audit.
+- Keep the active PPM interrupt path non-IRAM and motion-inactive until a separate ISR/cache-off audit and hardware loss-of-signal test are complete.
 - Do not enable IRAM-safe driver options casually, such as UART/I2C/I2S/PCNT/RMT ISR-in-IRAM options.
 - Do not change SPI flash/cache/MMU, panic, backtrace, heap, FreeRTOS low-level, interrupt allocation or startup settings without a dedicated experiment.
 - Run `idf.py build` and `idf.py size` in every iteration.

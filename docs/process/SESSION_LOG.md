@@ -341,3 +341,76 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   backend integration and all elevated/hardware tests remain open.
 - Raw writes to known actuation registers are blocked, but other raw configuration
   writes and `APPLY_PY6514_CONFIG` remain hazardous legacy bench surfaces.
+
+## 2026-07-20 - Provisional SVD48 Register Vertical and PPM GPIO14
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware repository: branch `feature/mvp-svd48-register-editor`.
+- Web repository: branch `feature/mvp-svd48-register-editor`.
+- Reference inspected: `origin/lucho@5ac0a52`,
+  `bootfarms/tono/tecnico/software/Joystic_iphone/Joystic_iphone.ino`.
+- Hardware state for this entry: ESP connected by USB, but flash/HIL evidence is
+  recorded separately after the documentation commits.
+
+### Subagents
+
+| Agent | Session ID | Scope/result |
+| --- | --- | --- |
+| Hypatia | `019f829b-c464-7061-9ec4-f5c3482e6a0e` | Audited `origin/lucho`, RAFA wiring/PPM/differential assumptions and current firmware gaps |
+| Gauss | `019f829b-c7ec-72a3-9799-8c60a7c075af` | Reviewed backend/editor validation, response correlation, ambiguous outcomes and responsive UI |
+| Turing | `019f829b-c5fc-7d83-aa18-09f3ebe7c25a` | Audited documentation drift across firmware and web repositories |
+
+### Organized Commits
+
+| Repository/commit | Scope |
+| --- | --- |
+| Firmware `86d832f` | Confirmed SVD48 register writes over USB/LAN with pre-read, one write, readback and actuation denylist |
+| Firmware `0adf2e6` | Host-tested PPM decoder/facade, default GPIO14 and RAFA non-servo boot baseline; build 14 |
+| Web `8722bea` | Bounded register backend routes, serial/LAN correlation, fake-LAN tests and responsive bench editor |
+
+### Implemented
+
+- `READ_REG`, `GET_SVD48_CONFIG`, `WRITE_REG ... CONFIRM` and bounded
+  `WRITE_REGS ... CONFIRM` are available under `LAN_SAFE` for supervised
+  configuration. Known runtime-actuation registers remain blocked.
+- A write requires the stopped heuristic, captures old values, sends one FC
+  `0x06`/`0x10` transaction and verifies exact readback. Ambiguous ACK/readback
+  outcomes explicitly say not to retry blindly.
+- PPM is the default receiver mode on GPIO14 with 10 channels, `3000 us` sync,
+  `750..2250 us` pulses and `300 ms` stale timeout. It feeds status and RC-loss
+  safety only; it cannot arm or command motors.
+- `main` uses the RAFA reference geometry (`1.60 m` wheelbase, `0.70 m` track,
+  `0.10 m` radius), disables steering servo outputs and requests a best-effort
+  boot `STOP ALL`.
+- The draft canonical profile now represents PPM GPIO14, one SVD48 ID 1 using
+  M1/M2, two driven wheels/two casters and command signs `-1/-1`. It remains
+  non-activatable and is not consumed by runtime.
+
+### Verified Before Hardware
+
+- `./tools/run_host_tests.sh`: 7/7 passed, including PPM and SVD48 protocol
+  reference vectors.
+- Web `npm test`: 8/8 passed, including fake-LAN read/single/multiple writes,
+  wrong-target rejection, ambiguous outcome and actuation blocking.
+- ESP-IDF 5.4.1 build for `esp32s3` passed before the documentation alignment;
+  a final rebuild is required before flash.
+- JSON Schema validation of the PPM RAFA draft passed.
+- Desktop and narrow/mobile register-editor layouts were visually inspected with
+  no horizontal overflow; automated accessibility/Playwright remains pending.
+
+### Safety Boundary and Remaining Work
+
+- This vertical authorizes elevated-bench configuration only. It does not satisfy
+  `GATE-SAFE`, authorize floor movement or make direct serial movement safe.
+- The current motion runtime still assumes the legacy fixed motor topology and
+  does not consume the generic differential strategy/profile/authority model.
+- PPM-to-motion, LAN movement, Bluetooth motion, command TTL/deadman, one actuator
+  coordinator, exclusive `MAINTENANCE`, typed catalog/change sets, PID float word
+  order and SVD48 persistence remain pending.
+- Physical PPM, RS485 read/write/readback, power-cycle persistence and stop latency
+  require wheels-elevated HIL evidence.
+
+### Rollback
+
+- Revert firmware `0adf2e6` to remove active PPM GPIO14, then `86d832f` to remove
+  provisional LAN writes. Revert web `8722bea` to remove the register API/editor.

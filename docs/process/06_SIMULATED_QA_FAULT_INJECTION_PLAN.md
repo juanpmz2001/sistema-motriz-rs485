@@ -273,6 +273,26 @@ La propiedad critica no es "el software siempre logra detener el motor"; con bus
 | `QA-WRITE-014` | save/power loss fixture | active/runtime/persisted nunca se confunden |
 | `QA-WRITE-015` | raw mode en release/LAN | capability ausente y rechazo antes de bus |
 
+`QA-WRITE-015` remains the production target. Build 14 intentionally carries a
+temporary authenticated-LAN raw editor. Its automated subset must additionally
+cover confirmation, actuation denylist, known one-word ranges, exact target
+correlation, pre-read/readback parsing and `unknown_do_not_retry`. It must be
+removed or placed behind an explicit engineering capability before
+`QA-WRITE-015` can pass.
+
+## Suite PPM GPIO14
+
+| ID | Secuencia | Resultado obligatorio |
+| --- | --- | --- |
+| `QA-PPM-001` | config invalida/canales fuera de capacidad | init rechazado; sin ISR activa |
+| `QA-PPM-002` | sync + 10 pulsos validos + sync | snapshot atomico con 10 canales y frame valido |
+| `QA-PPM-003` | pulso fuera de `750..2250 us` | contador invalid incrementa; no valor corrupto publicado |
+| `QA-PPM-004` | menos de 4 canales antes de sync | frame incompleto, señal no renovada |
+| `QA-PPM-005` | mas de 10 canales | overflow contado, escritura siempre bounded |
+| `QA-PPM-006` | wrap de timestamp de 32 bits | edad y sync siguen correctos |
+| `QA-PPM-007` | cesan frames por mas de `300 ms` | `STATUS:NO_SIGNAL`; safety solicita stop si antes vio RC valido |
+| `QA-PPM-008` | OTA/escritura flash mientras PPM activo y robot detenido | sin crash; ausencia temporal de frames no arma ni mueve |
+
 ## Suite de Perfil y Pines
 
 | ID | Fixture/falla | Resultado obligatorio |

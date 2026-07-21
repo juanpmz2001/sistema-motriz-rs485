@@ -6,11 +6,11 @@ Update this file only from observed build/release evidence. Source inspection al
 
 | Surface | Current observed/source value | Target MVP | Compatibility rule | Status |
 | --- | --- | --- | --- | --- |
-| Firmware project/build | `sistema-motriz-rs485`, source build number `12` | monotonically increasing build with source/artifact provenance | OTA rejects same/lower build; never reuse build number for different bytes | `E2_BUILD_VERIFIED` |
+| Firmware project/build | `sistema-motriz-rs485`, source build number `14` | monotonically increasing build with source/artifact provenance | OTA rejects same/lower build; never reuse build number for different bytes | `E2_BUILD_VERIFIED` |
 | ESP target/flash | `esp32s3`, 16 MB OTA layout | explicit canonical-JSON `board` compatibility | partition/flash/target must match physical module | `HARDWARE_PREVIOUSLY_OBSERVED` |
 | Maintenance LAN protocol | implicit v1 UDP JSON | management protocol `2.x` plus capabilities | reject unknown major; feature-gate by capabilities | `PROTOTYPE` |
 | Serial command protocol | unversioned ASCII lines | correlated structured result plus diagnostic compatibility adapter | no success inference from arbitrary lines | `PROTOTYPE` |
-| Canonical robot JSON schema | documentation/schema `1.0.0`; runtime absent | `1.x` self-contained board/controllers/actuators/kinematics/sources/SVD desired config | migrate known older minor; reject unknown major; preserve exact active/known-good JSON | `IN_PROGRESS_DESIGN_ONLY` |
+| Canonical robot JSON schema | documentation/schema `1.0.0` includes PPM; runtime absent | `1.x` self-contained board/controllers/actuators/kinematics/sources/SVD desired config | migrate known older minor; reject unknown major; preserve exact active/known-good JSON | `IN_PROGRESS_DESIGN_ONLY` |
 | SVD48 parameter catalog | absent | versioned catalog consumed by embedded controller configuration sections | catalog confidence and controller identity constrain readable/writable keys | `NOT_STARTED` |
 | Web package | source `0.1.0` | versioned API/event consumer | negotiate device capabilities; do not key behavior only on build | `SOURCE_ONLY` |
 

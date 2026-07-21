@@ -75,13 +75,16 @@ crear driver SVD48 con:
     timeout=100ms
 
 crear robot_control con:
-    geometría fija
+    geometría fija RAFA 1.60m x 0.70m
     4 motores
-    servos GPIO 4,5,6,7
+    máximo 300 RPM
+    servos deshabilitados
+
+enviar STOP ALL de mejor esfuerzo al arrancar
 
 iniciar polling SVD48
 
-intentar iniciar receptor i-BUS en GPIO18
+intentar iniciar receptor PPM de 10 canales en GPIO14
 iniciar robot_safety
 iniciar ota_announce
 iniciar serial_gateway
@@ -318,18 +321,30 @@ No es una complicación de C++; es un diccionario formal entre "parámetro human
 Pseudocódigo de `WRITE_REG`:
 
 ```text
-recibir drive_id, registro, valor
+recibir drive_id, registro, valor y CONFIRM
 si el registro es una consigna/START/STOP conocida:
     rechazar WRITE_REG_ACTUATION_BLOCKED
+si el comando recordado o una RPM fresca indica movimiento:
+    rechazar WRITE_REG_ROBOT_NOT_STOPPED
+leer y guardar old_value
 llamar robot_control_write_svd48_register
 llamar svd48_write_register_by_id
 construir frame 0x06
 enviar y esperar eco
-si eco exacto: OK
-si no: ERROR
+si el write falla despues de transmitir:
+    devolver OUTCOME:UNKNOWN
+leer el registro otra vez
+si readback == valor:
+    devolver VERIFIED:1 con old/value/readback
+si no:
+    devolver error sin reintento ciego
 ```
 
-El bloqueo de registros de actuación evita el bypass más directo, pero las demás escrituras raw no comprueban estado detenido, sesión, rango, old value, readback ni persistencia. Por eso debe seguir siendo acceso de laboratorio USB y no convertirse directamente en un formulario web.
+`WRITE_REGS` hace el mismo flujo para hasta 8 words contiguos con FC `0x10` y
+un solo intento. USB y `maintenance_lan` comparten el dispatcher. Esto ya permite
+un formulario web de banco, pero sigue sin sesión exclusiva, catálogo completo,
+hard ceilings, deduplicación, rollback ni persistencia verificada. Nunca se debe
+reintentar un resultado `UNKNOWN`/`ACKED_UNVERIFIED` sin leer primero.
 
 ## Movimiento Actual Simplificado
 
