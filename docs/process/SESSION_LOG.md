@@ -523,3 +523,8 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
 - The KK16 5:1 ratio is documented but not written to the controller because
   `0x2202/0x2203` are unsupported on SVD48 software `0x0131`. It remains a robot
   profile/kinematics parameter.
+- Manual Hall-table editing found that reads use degrees while writes require Q15
+  turn units (`degrees * 32768 / 360`). M1 was restored close to its historical
+  table through individual FC06 writes. M2 rejects documented individual and
+  multiple table writes on software `0x0131`, so its generated table was retained.
+  Both calibration statuses remain failed; no movement validation was attempted.

@@ -131,3 +131,26 @@ registers `0x2202/0x2203` return unsupported-register exception `0x108` on
 software `0x0131`. Do not encode the ratio by falsifying pole pairs or motor KV;
 apply it in the robot profile/kinematics until a controller-supported parameter is
 independently identified.
+
+## Manual Hall Table Configuration Attempt
+
+Manual writes exposed undocumented conversion and access behavior:
+
+- Hall angle-table reads return degrees.
+- Hall angle-table writes expect Q15 turn units, approximately
+  `raw = degrees * 32768 / 360`.
+- Writing ordinary degree values therefore corrupts the table by scaling values
+  down to approximately `raw * 360 / 32768` degrees.
+- M1 accepts individual FC06 writes across `0x5640..0x5647`.
+- M2 rejects FC06 writes after base address `0x5650` and rejects an eight-word
+  FC16 write at `0x5650` with exception `0x02` on software `0x0131`.
+
+M1 was restored from the last captured status-successful table using Q15 values.
+Controller rounding produced final degrees `[0,44,102,164,224,282,345,0]` versus
+the historical `[0,44,103,164,224,283,345,0]`. M2 remained unchanged at
+`[0,40,99,162,220,279,343,0]` because its documented write paths are rejected.
+
+The final configuration was saved, both motors remained stopped with raw errors
+zero, and calibration status remained `2/2`. A manually populated table does not
+make the read-only calibration status successful and is not sufficient evidence
+for a movement test.
