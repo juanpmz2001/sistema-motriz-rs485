@@ -82,3 +82,31 @@ motor parameters as causes of startup/calibration problems.
 - Both channels online at 0 RPM with raw motor errors zero.
 - General configuration written and save command acknowledged.
 - Hall calibration unresolved and loaded/floor movement remains blocked.
+
+## Retry After Hall Contact Repair And Power Cycle
+
+After a reported M1 Hall-contact repair, the complete system was power-cycled.
+The cycle independently confirmed persistence of the KK16 parameters and cleared
+the prior M2 `0x00004000` sensor-input fault. Both 32-bit motor error words read
+zero before calibration.
+
+M1 and M2 were then calibrated once each at the persisted 15 A calibration-current
+setting. Both produced the same result:
+
+- calibration ran for about five seconds;
+- wheel speed remained approximately 3-6 RPM;
+- measured current was approximately 2.5-3.5 A;
+- the channel stopped without a motor error;
+- final calibration status was `2` (failed).
+
+The resulting angle tables were populated and similar:
+
+- M1: `[0, 43, 101, 162, 222, 281, 345, 0]`
+- M2: `[0, 40, 100, 162, 220, 280, 344, 0]`
+
+Final state remained `SAFE_IDLE`, zero RPM and raw motor errors zero. A plausible
+common cause is the 10 RPM maximum constraining the calibration routine. Testing
+with a temporarily higher maximum RPM requires explicit operator approval because
+it can make elevated wheels rotate substantially faster. Other unresolved common
+causes are incorrect 60/120-degree selection, shared UVW/Hall ordering assumptions,
+or incompatible electrical motor parameters.

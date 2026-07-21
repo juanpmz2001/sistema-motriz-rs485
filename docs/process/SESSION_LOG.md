@@ -511,3 +511,8 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   M1 rotated only while calibrating, stopped afterward, and retained zero raw
   motor errors. M2 was not calibrated.
 - Evidence: `docs/process/evidence/KK16_SVD48_CONFIGURATION_2026-07-20.md`.
+- After an M1 Hall-contact repair and complete power cycle, persistence was
+  confirmed and both raw motor errors were zero. One 15 A auto-calibration retry
+  per channel still ended in status `2`; both stopped cleanly with no motor error.
+  Angle tables were populated and closely matched. A temporary higher maximum RPM
+  calibration test remains pending explicit operator approval.
