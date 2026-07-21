@@ -3,6 +3,9 @@
 Read this before editing RS485 code. Public docs identify this controller as UU Motor SVD48V50A / SVD48V Series. One controller drives two motors: M1 and M2. Four-motor robots use two controllers.
 
 Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before changing motor parameters, Hall calibration, PID tuning, or gear-ratio behavior.
+Read `docs/controllers/SVD48B50A/FULLING_MANUAL_AUDIT.md` before using Fulling
+sources. The 2025 Fulling SVD48 manual is for a related single-axis RC family and
+its addresses/procedures are not directly compatible with the dual SVD48V.
 
 ## Default Robot Topology
 
@@ -30,6 +33,12 @@ Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before cha
 - M1/M2 sensor type: M1 `0x502C`, M2 `0x502D`; `0=encoder`, `1=Hall`, `2=string encoder`.
 - Vehicle/wheel parameters used by SV-Config for geared motors: wheel diameter `0x2201` mm, motor teeth `0x2202`, wheel teeth `0x2203`. For PY6514 initial hypothesis use diameter `330`, motor teeth `1`, wheel teeth `5` for ratio `5:1`.
 - Observed on Toño hardware: drive ID `2` accepts `0x2200` and `0x2201`, but returns an invalid-register exception for `0x2202/0x2203`. Do not assume every SV-Config field is exposed on every controller firmware revision.
+- Software `0x0131` also rejects a direct FC `0x10` write of `1/5` to
+  `0x2202/0x2203`; these fields are not write-only on this revision. Keep the 5:1
+  gearbox in the robot profile unless the manufacturer supplies a compatible map.
+- Before another KK16 Hall calibration, obtain line-line resistance/inductance,
+  back-EMF or rotor-side KV, torque constant, rotor inertia, Hall spacing and phase
+  sequence. Fulling's third-party motor procedure treats these as prerequisites.
 - Hall installation/status: M1/M2 installation `0x5620/0x5621`; Hall status `0x5688/0x5689`; current Hall angle `0x568C/0x568D`.
 - Historical physical speed test: with configured pole pairs `48`, command `1 RPM`, measured wheel period `12.75 s/rev`; inferred actual pole pairs are about `10.2`. This is a hypothesis, not a motor datasheet fact: observed configurations have also contained `24` and an experiment used `48`. Verify each robot/motor before staging a pole-pair change; never auto-apply `10` from this note.
 - Mode: M1 `0x5100`, M2 `0x5101`; `0=speed`, `1=position`, `2=torque`, `3=voltage`, `4=skateboard`, `5=kart`.

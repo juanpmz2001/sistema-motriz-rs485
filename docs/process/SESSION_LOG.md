@@ -531,3 +531,19 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
 - Build 16 added a narrowly scoped stopped-only gear-ratio command to test
   write-only behavior at `0x2202/0x2203`. ID 2/software `0x0131` rejected FC16
   values `1/5` with Modbus exception `0x02`; the 5:1 ratio was not applied.
+
+## 2026-07-20 - Fulling Motor SVD48 Documentation Audit
+
+- Added the official Fulling `SVD48 Series Servo Driver User Manual V1.00` and a
+  source/applicability audit under `docs/controllers/SVD48B50A/`.
+- Confirmed the Fulling manual targets the related single-axis
+  SVD4812RC-AA/SVD4822RC-AA family, not the connected dual SVD48V software
+  `0x0131`; its UART/CANopen addresses must not be copied into firmware.
+- Fulling's third-party motor appendix requires line-line resistance/inductance,
+  back-EMF, torque constant and rotor inertia before initialization and Hall
+  self-tuning. Those values are missing for KK16 and the controller's current
+  `Lq/Ld/Rs/KV` values remain inherited, not manufacturer-confirmed.
+- Fulling's electronic pulse gear is unrelated to the KK16 mechanical 5:1 ratio
+  and provides no alternate address for rejected SVD48V `0x2202/0x2203`.
+- Next external dependency: request a KK16+SVD48V parameter export or complete
+  electrical data and Hall/wiring information from UUMOTOR/Fulling.

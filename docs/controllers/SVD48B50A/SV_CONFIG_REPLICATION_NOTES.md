@@ -4,6 +4,10 @@ Date: 2026-05-08
 
 Current constraint: the ESP32-S3/controller is not connected, so these notes are based on the UU Motor manuals, previous observed reads, and physical measurements. Do not attempt live serial communication from this note.
 
+Later hardware work and the Fulling documentation audit supersede that historical
+constraint. See `FULLING_MANUAL_AUDIT.md` and the dated evidence under
+`docs/process/evidence/` before changing live parameters.
+
 ## Pole-Pair Inference From Physical Speed
 
 Observation:
@@ -148,6 +152,20 @@ Observed issue on Toño: controller ID `0x02` accepted reads of `0x2200/0x2201`,
 - SV-Config may use a parameter-list indirection through the `0x3300..0x330E` parameter register address list.
 - Some fields may be write-only, mode-gated, or only valid under a specific control input/interface mode.
 - The manual may have a typo or version mismatch for these addresses.
+
+Subsequent build-16 testing bypassed pre-read and sent FC `0x10` values `1/5`
+directly. Software `0x0131` rejected the write with exception `0x02`; the fields
+are not merely write-only. The current Fulling SVD48RC manual documents only an
+unrelated electronic pulse gear and provides no alternate dual-SVD48V address.
+
+## Third-Party Motor Data Required
+
+The related Fulling SVD48 V1.00 manual requires a complete electrical model before
+initialization/Hall tuning: pole pairs, rated and maximum current, line-line
+inductance, line-line resistance, back-EMF, torque constant, rotor inertia,
+feedback data and excitation settings. For KK16 only voltage/current/poles and
+mechanical data are confirmed. Do not tune Hall again or overwrite current
+`Lq/Ld/Rs/KV` until the missing KK16 values and units are obtained.
 
 ## How To Replicate SV-Config In Our Platform
 
