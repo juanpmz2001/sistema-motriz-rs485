@@ -75,3 +75,16 @@ Important updates versus the earlier capture:
   suspect.
 - Gear teeth, controller-direct PPM, CAN/RS232 active-upload blocks and the two
   suspect M2 calibration-current addresses are unsupported on this revision.
+
+## 2026-07-20 KK16 Electrical Identification
+
+Build 17 reproduced the official SV-Config motor-identification transaction over
+RS485. Both channels reached state 2 without motor errors. The identified values
+were applied with exact float readback and acknowledged save:
+
+- M1: `Rs=0.1191 ohm`, `Ld=Lq=247.4 uH`.
+- M2: `Rs=0.1311 ohm`, `Ld=Lq=242.8 uH`.
+- KV remained `16.6 rpm/V`; this routine does not identify KV.
+
+Full commands, raw results, old/new words and remaining persistence test are in
+`docs/process/evidence/SVD48_KK16_MOTOR_IDENTIFICATION_2026-07-20.md`.
