@@ -1650,6 +1650,76 @@ static void handle_save_svd48_config(serial_gateway_handle_t handle, int argc, c
                  drive_id);
 }
 
+static void handle_set_svd48_gear_ratio(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    uint8_t drive_id = 0;
+    uint16_t motor_teeth = 0;
+    uint16_t wheel_teeth = 0;
+    if (argc != 5 ||
+        !parse_drive_id_arg(argv[1], &drive_id) ||
+        !parse_u16_any_arg(argv[2], &motor_teeth) ||
+        !parse_u16_any_arg(argv[3], &wheel_teeth) ||
+        motor_teeth == 0 || wheel_teeth == 0 ||
+        strcasecmp(argv[4], "CONFIRM") != 0) {
+        print_locked(handle,
+                     "ERR USAGE SET_SVD48_GEAR_RATIO drive_id motor_teeth wheel_teeth CONFIRM\n");
+        return;
+    }
+
+    char reason[48] = { 0 };
+    if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
+        print_locked(handle, "ERR SET_SVD48_GEAR_RATIO_ROBOT_NOT_STOPPED REASON:%s\n", reason);
+        return;
+    }
+
+    uint16_t values[2] = { motor_teeth, wheel_teeth };
+    esp_err_t err = robot_control_write_svd48_registers(handle->config.robot,
+                                                         drive_id,
+                                                         0x2202,
+                                                         values,
+                                                         2);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR SET_SVD48_GEAR_RATIO_FAILED DRIVE:%u MOTOR_TEETH:%u WHEEL_TEETH:%u OUTCOME:UNKNOWN ERR:0x%x\n",
+                     drive_id,
+                     motor_teeth,
+                     wheel_teeth,
+                     err);
+        return;
+    }
+
+    uint16_t readback[2] = { 0 };
+    err = robot_control_read_svd48_registers(handle->config.robot, drive_id, 0x2202, 2, readback);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "OK SET_SVD48_GEAR_RATIO DRIVE:%u MOTOR_TEETH:%u WHEEL_TEETH:%u RATIO:%.3f OUTCOME:ACKED_UNVERIFIED READBACK_ERR:0x%x\n",
+                     drive_id,
+                     motor_teeth,
+                     wheel_teeth,
+                     (double)wheel_teeth / (double)motor_teeth,
+                     err);
+        return;
+    }
+
+    if (readback[0] != motor_teeth || readback[1] != wheel_teeth) {
+        print_locked(handle,
+                     "ERR SET_SVD48_GEAR_RATIO_READBACK_MISMATCH DRIVE:%u MOTOR_TEETH:%u WHEEL_TEETH:%u READBACK:%u/%u\n",
+                     drive_id,
+                     motor_teeth,
+                     wheel_teeth,
+                     readback[0],
+                     readback[1]);
+        return;
+    }
+
+    print_locked(handle,
+                 "OK SET_SVD48_GEAR_RATIO DRIVE:%u MOTOR_TEETH:%u WHEEL_TEETH:%u RATIO:%.3f VERIFIED:1\n",
+                 drive_id,
+                 motor_teeth,
+                 wheel_teeth,
+                 (double)wheel_teeth / (double)motor_teeth);
+}
+
 static void handle_get_svd48_config(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     uint8_t drive_id = 0;
@@ -1812,7 +1882,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
@@ -2362,6 +2432,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_write_regs(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SAVE_SVD48_CONFIG") == 0) {
         handle_save_svd48_config(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SET_SVD48_GEAR_RATIO") == 0) {
+        handle_set_svd48_gear_ratio(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SVD48_CONFIG") == 0) {
         handle_get_svd48_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "APPLY_PY6514_CONFIG") == 0) {

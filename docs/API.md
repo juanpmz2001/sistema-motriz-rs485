@@ -28,6 +28,16 @@ Success reports `OUTCOME:ACKED_UNVERIFIED WRITE_ONLY:1`: the Modbus write was
 acknowledged, but readback is impossible by definition. Verify persistence with a
 controlled SVD48 power cycle and parameter reread.
 
+### `SET_SVD48_GEAR_RATIO drive_id motor_teeth wheel_teeth CONFIRM`
+
+Attempts the documented gear-tooth write at `0x2202/0x2203` without a pre-read,
+for SVD48 revisions that expose these registers as write-only. It requires a
+stopped robot and positive tooth counts. Successful writes use readback when
+supported; otherwise the result is explicitly `ACKED_UNVERIFIED`.
+
+SVD48 software `0x0131` rejects both reads and FC16 writes with exception `0x02`,
+so this command cannot configure gear ratio on that revision.
+
 ```text
 PING
 ```

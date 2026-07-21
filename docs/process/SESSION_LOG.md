@@ -528,3 +528,6 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   table through individual FC06 writes. M2 rejects documented individual and
   multiple table writes on software `0x0131`, so its generated table was retained.
   Both calibration statuses remain failed; no movement validation was attempted.
+- Build 16 added a narrowly scoped stopped-only gear-ratio command to test
+  write-only behavior at `0x2202/0x2203`. ID 2/software `0x0131` rejected FC16
+  values `1/5` with Modbus exception `0x02`; the 5:1 ratio was not applied.

@@ -132,6 +132,11 @@ software `0x0131`. Do not encode the ratio by falsifying pole pairs or motor KV;
 apply it in the robot profile/kinematics until a controller-supported parameter is
 independently identified.
 
+A dedicated write-only-compatible test was later performed with
+`SET_SVD48_GEAR_RATIO 2 1 5 CONFIRM`. The controller rejected the FC16 write with
+Modbus exception `0x02`, exactly as it rejects reads. Therefore software `0x0131`
+does not accept the documented gear registers; no 5:1 value was applied or saved.
+
 ## Manual Hall Table Configuration Attempt
 
 Manual writes exposed undocumented conversion and access behavior:
