@@ -91,15 +91,35 @@ Incremental evidence from firmware build 13 (2026-07-19):
 - ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`), target `esp32s3`, build 13 binary `0xfe6a0`, smallest app slot `0x600000`, 83% free. `robot_state_service`, `command_authority`, `robot_kinematics` and `control_lan` compiled in the graph.
 - No `E3..E5` row was executed. The new state/authority/kinematics/control-LAN path is not started by `main` and does not authorize movement.
 
+Incremental evidence from firmware build 14 (2026-07-20):
+
+- `./tools/run_host_tests.sh`: `PASS`, 7/7 CTest tests (`E1`), including the
+  bounded PPM model and updated protocol/policy fixtures.
+- ESP-IDF 5.4.1 `idf.py build`: `PASS` (`E2`), target `esp32s3`, app commit
+  `4fa2889`, binary `0x100aa0`, smallest app slot `0x600000`, 83% free.
+- Full USB flash wrote and hash-verified bootloader, 16 MB partition table,
+  initial OTA data and build 14 app (`E3`). `VERSION` reported `ota_0`, valid.
+- With no responding SVD48, the ESP remained responsive in `SAFE_IDLE`, reported
+  all four legacy slots offline/stale, PPM GPIO14 `NO_SIGNAL`, Wi-Fi connected and
+  maintenance LAN active. No reboot loop or motion was observed (`E3`).
+- USB and LAN returned the same `READ_REG_FAILED ... ERR:0x109`. This proves
+  truthful no-controller handling, not SVD48 read parity (`E3`, not `E4`).
+- Valid LAN discovery/status/version passed; a wrong token returned `BAD_TOKEN`.
+  All six known actuation registers, movement, missing confirmation and malformed
+  register commands were rejected, then `VERSION` still succeeded (`E3`).
+- The real Node backend connected over USB and LAN. Both register routes mapped
+  the absent-drive read to HTTP `409`; backend actuation validation returned HTTP
+  `400` before transport. No physical SVD48 write was attempted.
+
 ## C. ESP Without SVD48/Motors
 
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| `TEST-ESP-001` | Factory/provision boot | Flash and boot with expected partition table | Correct target/flash/partition/build reported | `E3` | `NOT_STARTED` |
-| `TEST-ESP-002` | Missing controller behavior | Boot with RS485 disconnected | Firmware remains responsive; state is disarmed/unknown, no reboot loop | `E3` | `NOT_STARTED` |
-| `TEST-ESP-003` | USB capabilities | Query version/capabilities/profile/safety | Typed coherent result and boot ID | `E3` | `NOT_STARTED` |
+| `TEST-ESP-001` | Factory/provision boot | Flash and boot with expected partition table | Correct target/flash/partition/build reported | `E3` | `IN_PROGRESS` (provisioned full flash passed; erased-factory path not run) |
+| `TEST-ESP-002` | Missing controller behavior | Boot with RS485 disconnected | Firmware remains responsive; state is disarmed/unknown, no reboot loop | `E3` | `DONE` (build 14) |
+| `TEST-ESP-003` | USB capabilities | Query version/capabilities/profile/safety | Typed coherent result and boot ID | `E3` | `IN_PROGRESS` (version/platform/safety passed; capabilities/profile/boot ID absent) |
 | `TEST-ESP-004` | Wi-Fi reconnect | Cycle access point/connectivity | Control tasks remain responsive; bounded backoff and recovery | `E3` | `NOT_STARTED` |
-| `TEST-ESP-005` | LAN discovery/token | Discover with valid/invalid/missing local token | Only valid token receives protected data; counters/logs redact secret | `E3` | `NOT_STARTED` |
+| `TEST-ESP-005` | LAN discovery/token | Discover with valid/invalid/missing local token | Only valid token receives protected data; counters/logs redact secret | `E3` | `IN_PROGRESS` (valid and wrong token passed; missing token/counter redaction pending) |
 | `TEST-ESP-006` | Production replay security | Exercise future HMAC/nonce/timestamp policy | Rejected with stable code; no action | `E3` | `DEFERRED` |
 | `TEST-ESP-007` | Payload boundaries | Send exact max, max+1, truncated, malformed chunks | Deterministic rejection; service remains healthy | `E3` | `NOT_STARTED` |
 | `TEST-ESP-008` | Correlation | Delay/duplicate/reorder/spoof responses in harness | Wrong/stale response never satisfies request | `E3` | `NOT_STARTED` |
@@ -108,9 +128,9 @@ Incremental evidence from firmware build 13 (2026-07-19):
 | `TEST-ESP-011` | Maintenance job expiry | Expire/disconnect a job at controlled phases | Job classifies deterministically; robot remains disarmed/faulted; staged data not activated | `E3` | `NOT_STARTED` |
 | `TEST-ESP-012` | OTA/config exclusion | Attempt OTA and configuration jobs concurrently | One exclusive operation runs; other gets explicit conflict | `E3` | `NOT_STARTED` |
 | `TEST-ESP-013` | Lost-response retry | Drop first LAN response and retry identical request | Operation executes once and cached result returns | `E3` | `NOT_STARTED` |
-| `TEST-ESP-014` | LAN result truthfulness | Send blocked, usage-error, missing-drive, and successful commands | UDP `status/detail/lines` agree; backend rejects every `status:err` | `E3` | `NOT_STARTED` |
+| `TEST-ESP-014` | LAN result truthfulness | Send blocked, usage-error, missing-drive, and successful commands | UDP `status/detail/lines` agree; backend rejects every `status:err` | `E3` | `DONE` (build 14) |
 | `TEST-ESP-015` | USB overlong recovery | Send 160+ bytes ending in a movement-like suffix, delimiter, then `PING` | One `ERR LINE_TOO_LONG`; suffix is not executed; next `PING` succeeds | `E3` | `NOT_STARTED` |
-| `TEST-ESP-016` | Operational state boot/reconnect | Boot and cycle USB/Wi-Fi/backend without arm request | Always reaches/remains `DISARMED`; never auto-arms | `E3` | `NOT_STARTED` |
+| `TEST-ESP-016` | Operational state boot/reconnect | Boot and cycle USB/Wi-Fi/backend without arm request | Always reaches/remains `DISARMED`; never auto-arms | `E3` | `IN_PROGRESS` (boot/backend reconnect stayed `SAFE_IDLE`; Wi-Fi cycle pending) |
 | `TEST-ESP-017` | Maintenance job reconnect | Start/expire/reconnect to a no-write job by ID | Exclusive job result is deterministic; remains disarmed | `E3` | `NOT_STARTED` |
 | `TEST-ESP-018` | Staged robot JSON boot | Stage a safe alternate board/I/O fixture and reboot | Resources initialize while inhibited; active/known-good JSON status is explicit | `E3` | `NOT_STARTED` |
 | `TEST-ESP-019` | `control_lan` sequence/TTL | Send valid, duplicate, regressive, new-stream and expired command packets | Only valid fresh sequence reaches LAN mailbox; new stream stops/changes epoch | `E3` | `NOT_STARTED` |
@@ -171,11 +191,11 @@ target guarded job tests below as complete.
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | `TEST-WRITE-P001` | USB/LAN parity | Read the same benign register through both transports | Same drive/start/count/words | `E3/E4` | `NOT_STARTED` |
-| `TEST-WRITE-P002` | Confirm required | Omit or alter `CONFIRM` | Rejected before RS485 write | `E2/E4` | `NOT_STARTED` |
-| `TEST-WRITE-P003` | Actuation denylist | Try `0x5300/01`, `0x5304/05`, `0x5308/09` | Rejected before RS485 write | `E2/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P002` | Confirm required | Omit or alter `CONFIRM` | Rejected before RS485 write | `E2/E4` | `IN_PROGRESS` (fake/web and real LAN rejection passed; traced controller bus pending) |
+| `TEST-WRITE-P003` | Actuation denylist | Try `0x5300/01`, `0x5304/05`, `0x5308/09` | Rejected before RS485 write | `E2/E4` | `DONE` for build 14 policy (`E2/E3`; no controller needed) |
 | `TEST-WRITE-P004` | Single benign readback | Change one backed-up low-risk word | old/request/readback exact; `VERIFIED:1` | `E4` | `NOT_STARTED` |
 | `TEST-WRITE-P005` | Two-word readback | Write two known raw words, then read | exact order and values; no blind retry | `E4` | `NOT_STARTED` |
-| `TEST-WRITE-P006` | Ambiguous result | Drop write ACK/readback response | UI says result uncertain and forbids blind retry | `E2/E4` | `NOT_STARTED` |
+| `TEST-WRITE-P006` | Ambiguous result | Drop write ACK/readback response | UI says result uncertain and forbids blind retry | `E2/E4` | `IN_PROGRESS` (fake LAN/API passed; physical response loss pending) |
 | `TEST-WRITE-P007` | PID float order | Read known PID through SV-Config/ESP and compare both orders | one captured order becomes evidence; no PID write before it | `E4` | `NOT_STARTED` |
 | `TEST-WRITE-P008` | Persistence | Read, write, stop/save as approved, power-cycle, read | exact persistence result recorded per field | `E4` | `NOT_STARTED` |
 
@@ -257,15 +277,15 @@ Begin at the smallest command that produces observable movement and enforce low 
 | `TEST-WEB-001` | Production unauthenticated access | Call future production REST/WS without identity | Rejected by production trust layer | `E2/E3` | `DEFERRED` |
 | `TEST-WEB-002` | Production role policy | Use future read-only/operator/admin fixtures | Each sees only negotiated actions | `E2` | `DEFERRED` |
 | `TEST-WEB-003` | Production CSRF/origin | Cross-origin state-changing request/WS | Rejected | `E2` | `DEFERRED` |
-| `TEST-WEB-004` | Generic command defense | Submit blocked motion/raw/config commands in LAN mode | Backend and firmware both reject with matching policy code | `E2/E3` | `NOT_STARTED` |
-| `TEST-WEB-005` | Truthful device error | Cause SVD timeout/exception | HTTP/UI show failure, never success with hidden `ERR` | `E2/E4` | `NOT_STARTED` |
+| `TEST-WEB-004` | Generic command defense | Submit blocked motion/raw/config commands in LAN mode | Backend and firmware both reject with matching policy code | `E2/E3` | `IN_PROGRESS` (movement and actuation blocked; full generic policy matrix pending) |
+| `TEST-WEB-005` | Truthful device error | Cause SVD timeout/exception | HTTP/UI show failure, never success with hidden `ERR` | `E2/E4` | `IN_PROGRESS` (absent-drive timeout mapped to HTTP `409` over USB/LAN; real exception pending) |
 | `TEST-WEB-006` | Two browser telemetry | Subscribe from two clients | One backend poll stream; both receive correlated typed samples | `E2/E4` | `NOT_STARTED` |
 | `TEST-WEB-007` | Concurrent maintenance jobs | Two clients apply different change sets | One firmware job runs; other gets explicit busy/conflict | `E2/E3` | `NOT_STARTED` |
 | `TEST-WEB-008` | Client disconnect during job | Drop backend/network after acceptance, reconnect by job ID | Job completes/classifies once; ESP remains disarmed; no duplicate write | `E2/E4` | `NOT_STARTED` |
 | `TEST-WEB-009` | Transport degradation | Drop LAN/USB after connect | State becomes degraded/disconnected with `lastSeenAt` | `E2/E3` | `NOT_STARTED` |
 | `TEST-WEB-010` | Profile revision conflict | Edit stale revision from second client | `409`; no lost update | `E2` | `NOT_STARTED` |
 | `TEST-WEB-011` | Unknown/stale values | Supply null, malformed, and stale telemetry | UI never displays false zero/healthy value | `E2` | `NOT_STARTED` |
-| `TEST-WEB-012` | Frontend responsive/accessibility | Exercise longest labels/errors desktop/mobile/keyboard | No overlap/truncation; focus/status/labels usable | `E2` | `DEFERRED` |
+| `TEST-WEB-012` | Frontend responsive/accessibility | Exercise longest labels/errors desktop/mobile/keyboard | No overlap/truncation; focus/status/labels usable | `E2` | `IN_PROGRESS` for provisional editor (desktop/mobile visual pass; automation pending) |
 | `TEST-WEB-013` | Result history export | Apply/read/reject operations and export | Redacted request/build/profile/controller/result history | `E2/E4` | `NOT_STARTED` |
 
 ## Toño Motherboard Campaign Order

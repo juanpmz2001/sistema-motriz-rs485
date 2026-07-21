@@ -214,7 +214,7 @@ Exit: the UI cannot invent register semantics and cannot offer unsupported/unsaf
 | `TEST-001` | Automate firmware protocol/profile/kinematic/safety unit tests | `IN_PROGRESS` | corresponding units | yes |
 | `TEST-002` | Automate Node backend unit/API/serial/LAN/control transport tests | `IN_PROGRESS` (8 Node tests; serial/control/HIL pending) | `WEB-001..004` | yes |
 | `TEST-003` | Build mock SVD48/UDP fault-injection harness | `NOT_STARTED` | `SVD-002`, `TRANS-003` | yes |
-| `TEST-004` | Execute all USB and LAN-only tests with ESP and no motor bus | `NOT_STARTED` | transport implementation | yes |
+| `TEST-004` | Execute all USB and LAN-only tests with ESP and no motor bus | `IN_PROGRESS` (build 14 boot/status/read-failure/token/policy/backend subset passed) | transport implementation | yes |
 | `TEST-005` | Execute SVD48 tests with motor power isolated or wheels removed | `NOT_STARTED` | typed read/write slices | yes |
 | `TEST-006` | Execute complete elevated-robot matrix with physical cutoff operator | `NOT_STARTED` | all MVP gates | yes |
 | `TEST-007` | Automate deterministic state/authority/change-set tests with virtual clock, fake SVD48/bus and communication fault injection | `IN_PROGRESS` (harness/state/authority tests complete; bus/change-set pending) | `SAFE-001`, `SVD-003`, test harness | yes |

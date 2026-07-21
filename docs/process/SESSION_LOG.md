@@ -414,3 +414,39 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
 
 - Revert firmware `0adf2e6` to remove active PPM GPIO14, then `86d832f` to remove
   provisional LAN writes. Revert web `8722bea` to remove the register API/editor.
+
+## 2026-07-20 - Build 14 USB/LAN Validation Without SVD48
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Firmware app commit embedded by ESP-IDF: `4fa2889`; build number `14`.
+- USB port: stable `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C37205098-if00`.
+- Network observed: laptop `192.168.1.107/24`, ESP `192.168.1.185` on the
+  configured local Wi-Fi. Credentials/tokens were not printed or logged.
+
+### Physical Evidence
+
+- Final ESP-IDF 5.4.1 build passed; app size `0x100aa0`, 83% of the smallest
+  `0x600000` OTA slot free.
+- `idf.py ... flash` wrote/hash-verified bootloader, 16 MB partition table,
+  `ota_data_initial` and app, then hard-reset successfully.
+- USB reported build 14, target `esp32s3`, partition `ota_0`, `OTA_STATE:VALID`,
+  `SAFE_IDLE`, zero motion, PPM `MODE:PPM RX_GPIO:14 STATUS:NO_SIGNAL`, Wi-Fi
+  connected and maintenance token set.
+- The absent SVD48 produced `READ_REG_FAILED ... ERR:0x109` consistently over
+  USB, direct LAN CLI, LAN web backend and serial web backend. No write was sent.
+- LAN discovery and valid-token status/version passed; a deliberately wrong token
+  returned `ERR BAD_TOKEN`.
+- Firmware rejected `MOVE_VEL`, malformed/missing-confirm register commands and
+  all six actuation registers `0x5300/01`, `0x5304/05`, `0x5308/09`. A following
+  `VERSION` succeeded, showing the service remained healthy.
+- Web backends over both transports mapped the absent-drive read to HTTP `409`.
+  Backend validation rejected `0x5304` with HTTP `400` before transport.
+
+### Not Proven
+
+- The SVD48/controller was not reachable, so no benign physical write/readback,
+  FC `0x10`, PID float order, persistence, polling coexistence or motor telemetry
+  is claimed.
+- No receiver pulse train was attached, so PPM frame decode and loss-after-valid
+  stop behavior remain HIL pending.
+- No motor/servo/movement command was executed. Floor operation remains forbidden.

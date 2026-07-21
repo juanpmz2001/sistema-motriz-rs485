@@ -21,6 +21,7 @@ Add one row per complete validation. Do not overwrite prior rows.
 | Date | Robot profile/revision | Board/ESP | Firmware build/commit | Protocol | Web version/commit | SVD48 IDs and product/software/hardware versions | Transport | Evidence level | Result/notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-17 | none | ESP32-S3 source configuration | build `10`, commit base `d932792` plus dirty changes | maintenance v1 | `0.1.0`, commit base `0d55f8b` plus dirty changes | not queried in this audit | none | `E0/E2 build only` | Planning baseline, not a validated robot combination |
+| 2026-07-20 | non-active RAFA draft revision 1 | ESP32-S3, 16 MB OTA | build `14`, app commit `4fa2889` | ASCII v1 + maintenance LAN v1 | `0.1.0`, commit `c51ee7d` | ID 1 did not respond (`0x109`); identity unknown | USB + LAN | `E3 ESP/no-controller` | Full flash, safe boot, PPM GPIO14 no-signal, Wi-Fi/LAN/token/error/backend parity passed. No SVD48 write, PID, persistence or movement evidence. |
 
 ## Required Compatibility Checks
 
