@@ -60,6 +60,25 @@ Missing or unsafe:
 
 ## Register Matrix
 
+### Full ID 2 capture (2026-07-20)
+
+`tools/svd48_read_inventory.py` queried 187 documented groups through
+maintenance LAN against controller ID 2: 151 succeeded and 36 returned preserved
+invalid-register/read exceptions. No write or movement command was sent.
+
+Evidence:
+
+- `docs/process/evidence/svd48_id2_inventory_2026-07-20.json`
+- `docs/process/evidence/svd48_id2_inventory_2026-07-20.md`
+- `docs/process/evidence/SVD48_ID2_CURRENT_STATE_SUMMARY.md`
+
+The capture confirms board/software identity, all documented motor/PID/motion
+fields, live telemetry, encoder fields and most Hall fields. It also confirms
+that this firmware revision does not expose gear teeth, controller-direct PPM,
+CAN/RS232 active-upload configuration or the suspect M2 Hall-current addresses.
+Raw float patterns strongly support high-word-first IEEE-754, but an independent
+SV-Config comparison is still required before PID writes.
+
 ### Vehicle, throttle, brake, and remote control
 
 | Registers          | Meaning                                       | Type/access in manual | Current use                              | Confidence    | MVP decision                                                   |

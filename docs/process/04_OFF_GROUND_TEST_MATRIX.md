@@ -141,18 +141,18 @@ Motor power should be isolated where controller communication permits; otherwise
 
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| `TEST-SVD-001` | Controller inventory | Read IDs/product/software/hardware/boot versions | Stable identity per physical drive | `E4` | `NOT_STARTED` |
+| `TEST-SVD-001` | Controller inventory | Read IDs/product/software/hardware/boot versions | Stable identity per physical drive | `E4` | `DONE` for ID 2 (`0x0131/0x0300/0x0103/0x0101`) |
 | `TEST-SVD-002` | Duplicate/wrong ID | Configure harness/mock duplicate or query absent ID | Structured exception/timeout; no bus lockup | `E4` | `NOT_STARTED` |
-| `TEST-SVD-003` | Full verified parameter read | Read every catalog `OBSERVED/IMPLEMENTED` field | Values typed, ranged, timestamped, no writes | `E4` | `NOT_STARTED` |
-| `TEST-SVD-004` | Manual-only read survey | Read safe manual fields in approved ranges | Value or preserved exception stored with controller version | `E4` | `NOT_STARTED` |
+| `TEST-SVD-003` | Full verified parameter read | Read every catalog `OBSERVED/IMPLEMENTED` field | Values typed, ranged, timestamped, no writes | `E4` | `IN_PROGRESS` (187 groups captured; final typed catalog/range semantics pending) |
+| `TEST-SVD-004` | Manual-only read survey | Read safe manual fields in approved ranges | Value or preserved exception stored with controller version | `E4` | `DONE` for ID 2/software `0x0131` |
 | `TEST-SVD-005` | USB/LAN parity | Read identical groups over both transports | Same typed values/result codes within timestamp tolerance | `E4` | `NOT_STARTED` |
-| `TEST-SVD-006` | Float fixture | Compare typed float read with SV-Config capture | Exact word order/value confirmed | `E4` | `NOT_STARTED` |
+| `TEST-SVD-006` | Float fixture | Compare typed float read with SV-Config capture | Exact word order/value confirmed | `E4` | `IN_PROGRESS` (raw patterns strongly support high-word-first; SV-Config comparison pending) |
 | `TEST-SVD-007` | Exception fidelity | Issue approved invalid read/write to spare/bench drive | Function and exception code preserved end to end | `E4` | `NOT_STARTED` |
 | `TEST-SVD-008` | CRC/noise handling | Inject corrupt/truncated/wrong-slave responses in harness | Retry/timeout metrics and no wrong data acceptance | `E2/E4` | `NOT_STARTED` |
 | `TEST-SVD-009` | One drive absent | Disconnect one controller during polling | Other controller remains fresh; absent drive backs off; safety state explicit | `E4/E5` | `NOT_STARTED` |
 | `TEST-SVD-010` | Bus saturation | Run maximum approved telemetry/config reads | Stop class remains bounded; no watchdog/reset | `E4/E5` | `NOT_STARTED` |
 | `TEST-SVD-011` | Position scale | Rotate known motor/wheel turns manually or at minimal speed | Counts/revolution and sign recorded per channel | `E4/E5` | `NOT_STARTED` |
-| `TEST-SVD-012` | Error decode baseline | Read zero/nonzero error/status fields | Raw and decoded representation agree | `E4` | `NOT_STARTED` |
+| `TEST-SVD-012` | Error decode baseline | Read zero/nonzero error/status fields | Raw and decoded representation agree | `E4` | `IN_PROGRESS` (raw zero errors captured; nonzero/decode fixture pending) |
 
 ## E. Profile and Drift Tests
 

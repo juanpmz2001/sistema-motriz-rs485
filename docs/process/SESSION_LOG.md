@@ -450,3 +450,46 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
 - No receiver pulse train was attached, so PPM frame decode and loss-after-valid
   stop behavior remain HIL pending.
 - No motor/servo/movement command was executed. Floor operation remains forbidden.
+
+## 2026-07-20 - Full Read-Only SVD48 ID 2 Inventory
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Hardware: ESP powered from assembled platform, no USB; maintenance LAN at the
+  previously discovered local address. Wheels remained elevated.
+- Controller: ID 2 with both M1/M2 channels online; ID 1 absent.
+
+### Implemented
+
+- Added `tools/svd48_read_inventory.py`, a read-only catalog scanner that uses
+  correlated maintenance-LAN requests, bounded retries, delay between reads and
+  preserved raw/unsupported results.
+- The tool records unsigned/signed words, hexadecimal values, both u32/float word
+  orders and generates machine-readable JSON plus a complete Markdown table.
+- Added a human-friendly current-state summary and updated the prior Toño
+  observation document without replacing historical evidence.
+
+### Evidence
+
+- 187 documented groups queried; 151 successful, 36 invalid-register/read
+  exceptions preserved. No write, `ENABLE` or movement command was sent.
+- Identity: ID 2, software `0x0131`, hardware `0x0300`, bootloader `0x0103`,
+  product `0x0101`, RS485 115200 and RS485 control source.
+- Both motors: 24 pole pairs, Hall, reverse, speed mode, 100 RPM, 30 A,
+  acceleration 45 RPM/s, deceleration 40 RPM/s and smoothing 100 ms.
+- Speed PID for both channels reads `Kp=0.3`, `Ki=0.1`, `Kd=2.0` using the only
+  plausible word order (high word first). Independent SV-Config evidence remains
+  required before writing PID.
+- Post-scan state remained `SAFE_IDLE`, command/speed targets zero, actual RPM
+  zero and motor errors `0x00000000`.
+
+### Findings Requiring Resolution
+
+- SVD48 wheel diameter is 100 mm, while the current RAFA firmware reference
+  radius implies 200 mm diameter.
+- Maximum current is 30 A and maximum bus protection is 60.0 V; both require
+  hardware/battery ceilings before modification or movement.
+- Motor temperature `-22.7 C`, Hall status `103`, current `-0.1 A` and current
+  position values have uncertain/sentinel semantics and must not be rendered as
+  ordinary healthy measurements.
+- Unsupported groups: gear teeth, controller-direct PPM, CAN active upload,
+  RS232 active upload and suspect M2 Hall calibration current addresses.
