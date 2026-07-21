@@ -18,6 +18,16 @@ LAN maintenance uses the same ASCII command strings inside JSON requests, but ap
 
 ## Commands
 
+### `SAVE_SVD48_CONFIG drive_id CONFIRM`
+
+Persists the current SVD48 parameters by writing `1` to the controller's
+write-only register `0x3100`. The command requires the robot safety gate to report
+stopped and is available through serial and authenticated maintenance LAN.
+
+Success reports `OUTCOME:ACKED_UNVERIFIED WRITE_ONLY:1`: the Modbus write was
+acknowledged, but readback is impossible by definition. Verify persistence with a
+controlled SVD48 power cycle and parameter reread.
+
 ```text
 PING
 ```

@@ -493,3 +493,21 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   ordinary healthy measurements.
 - Unsupported groups: gear teeth, controller-direct PPM, CAN active upload,
   RS232 active upload and suspect M2 Hall calibration current addresses.
+
+## 2026-07-20 - KK16 Configuration And Hall Calibration Attempt
+
+- Configured ID 2 for two KK16 motors using manufacturer data: 10 pole pairs,
+  Hall sensors, 400 mm tire diameter, 10 RPM maximum, and 3 RPM/s acceleration
+  and deceleration on both channels.
+- Added `SAVE_SVD48_CONFIG drive CONFIRM`, restricted to a stopped robot and the
+  SVD48 write-only FLASH-save register `0x3100`. Host tests and ESP-IDF build pass;
+  build 15 was deployed by OTA and reported valid on `ota_1`.
+- The save write was acknowledged. A physical controller power cycle is pending
+  to independently verify persistence.
+- Corrected the effective M2 Hall calibration-current address to `0x5625`; this
+  controller exposes the symmetric pair `0x5624/0x5625`, while manual addresses
+  `0x5605/0x5609` reject reads.
+- M1 Hall auto-calibration failed at configured currents 3 A, 6 A, and 15 A.
+  M1 rotated only while calibrating, stopped afterward, and retained zero raw
+  motor errors. M2 was not calibrated.
+- Evidence: `docs/process/evidence/KK16_SVD48_CONFIGURATION_2026-07-20.md`.

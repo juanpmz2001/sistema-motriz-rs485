@@ -74,8 +74,10 @@ Evidence:
 
 The capture confirms board/software identity, all documented motor/PID/motion
 fields, live telemetry, encoder fields and most Hall fields. It also confirms
-that this firmware revision does not expose gear teeth, controller-direct PPM,
-CAN/RS232 active-upload configuration or the suspect M2 Hall-current addresses.
+that this firmware revision does not expose gear teeth, controller-direct PPM or
+CAN/RS232 active-upload configuration. Later write/read testing confirmed M2 Hall
+calibration current at symmetric address `0x5625`; manual addresses `0x5605` and
+`0x5609` are unsupported on this revision.
 Raw float patterns strongly support high-word-first IEEE-754, but an independent
 SV-Config comparison is still required before PID writes.
 

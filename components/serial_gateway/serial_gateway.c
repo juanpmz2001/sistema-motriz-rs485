@@ -1617,6 +1617,39 @@ static void handle_write_regs(serial_gateway_handle_t handle, int argc, char *ar
     print_locked(handle, "\n");
 }
 
+static void handle_save_svd48_config(serial_gateway_handle_t handle, int argc, char *argv[])
+{
+    uint8_t drive_id = 0;
+    if (argc != 3 ||
+        !parse_drive_id_arg(argv[1], &drive_id) ||
+        strcasecmp(argv[2], "CONFIRM") != 0) {
+        print_locked(handle, "ERR USAGE SAVE_SVD48_CONFIG drive_id CONFIRM\n");
+        return;
+    }
+
+    char reason[48] = { 0 };
+    if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
+        print_locked(handle, "ERR SAVE_SVD48_CONFIG_ROBOT_NOT_STOPPED REASON:%s\n", reason);
+        return;
+    }
+
+    esp_err_t err = robot_control_write_svd48_register(handle->config.robot,
+                                                        drive_id,
+                                                        0x3100,
+                                                        1);
+    if (err != ESP_OK) {
+        print_locked(handle,
+                     "ERR SAVE_SVD48_CONFIG_FAILED DRIVE:%u OUTCOME:UNKNOWN ERR:0x%x\n",
+                     drive_id,
+                     err);
+        return;
+    }
+
+    print_locked(handle,
+                 "OK SAVE_SVD48_CONFIG DRIVE:%u REG:0x3100 VALUE:1 OUTCOME:ACKED_UNVERIFIED WRITE_ONLY:1\n",
+                 drive_id);
+}
+
 static void handle_get_svd48_config(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     uint8_t drive_id = 0;
@@ -1779,7 +1812,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
@@ -2327,6 +2360,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_write_reg(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WRITE_REGS") == 0) {
         handle_write_regs(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SAVE_SVD48_CONFIG") == 0) {
+        handle_save_svd48_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SVD48_CONFIG") == 0) {
         handle_get_svd48_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "APPLY_PY6514_CONFIG") == 0) {

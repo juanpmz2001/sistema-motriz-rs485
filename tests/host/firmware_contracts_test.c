@@ -283,6 +283,8 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *write_many[] = { "WRITE_REGS", "1", "0x5200", "0x3f80", "0", "confirm" };
     const char *write_missing_confirm[] = { "WRITE_REG", "1", "0x5018", "10" };
     const char *write_bad_confirm[] = { "WRITE_REGS", "1", "0x5200", "0x3f80", "APPLY" };
+    const char *save_config[] = { "SAVE_SVD48_CONFIG", "1", "confirm" };
+    const char *save_config_missing_confirm[] = { "SAVE_SVD48_CONFIG", "1" };
     const char *move[] = { "MOVE_VEL", "1", "0", "0" };
     const char *stop_one[] = { "STOP", "0" };
     const char *stop_all[] = { "STOP", "ALL" };
@@ -294,6 +296,8 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(6, write_many));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, write_missing_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(5, write_bad_confirm));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, save_config));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, save_config_missing_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, move));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, stop_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));
