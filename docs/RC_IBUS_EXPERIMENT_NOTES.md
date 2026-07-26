@@ -3,6 +3,10 @@
 Date: 2026-06-20
 Branch: `experiment/rc-ibus-fsia10b`
 
+Classification: historical experiment with a current follow-up section. GPIO18
+i-BUS findings are not the active receiver configuration; build 19 defaults to
+the PPM/GPIO14 path described below.
+
 ## Hardware Under Test
 
 - Transmitter: FlySky `FS-i6`.

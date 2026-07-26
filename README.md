@@ -14,6 +14,8 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 
 ## Start Here
 
+- Documentation status and source-of-truth map: `docs/DOCUMENTATION_INDEX.md`
+- Current implementation/release checklist: `docs/process/07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md`
 - Controller knowledge base: `docs/skills/SVD48B50A_SKILL.md`
 - PC command contract: `docs/API.md`
 - Prototype platform safety contract: `docs/TONO_PLATFORM_SAFETY_CONTRACT.md`
@@ -47,7 +49,7 @@ OK MOVE_VEL VX:1.000 VY:0.000 WZ:0.500 ...
 - `components/wifi_manager`: Wi-Fi station mode used by manual OTA and background OTA checks. A low-priority supervisor auto-connects on boot and reconnects with backoff when credentials are saved.
 - `components/ota_manager`: manifest validation, inactive-slot download/verification, manual boot-slot switch, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: low-priority authenticated UDP listener for LAN OTA announcements from developer laptops.
-- `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for diagnostics and telemetry without USB. It uses a separate maintenance token, blocks movement, and provisionally permits confirmed raw SVD48 configuration writes with pre-read/readback verification for elevated bench work.
+- `components/maintenance_lan`: low-priority authenticated UDP listener on port `32321` for diagnostics and telemetry without USB. It uses a separate maintenance token and provisionally permits confirmed raw SVD48 configuration writes. Build 19 also contains a temporary elevated-bench exception for `SET_SPEED` and `STOP n|ALL`; it has no command TTL/dead-man and is not a production motion channel.
 - `components/control_lan`: bounded UDP control-ingress component on port `32322`. It validates the maintenance token and parses arm/command/disarm/stop events without touching motors. It is compiled but intentionally not started until authority adapters, the runtime safety gate, a single actuator coordinator, and a valid robot profile exist.
 - `main`: initializes NVS, config, Wi-Fi/OTA managers, RS485, sends a best-effort boot stop, starts telemetry polling, PPM GPIO14, safety, serial gateway, rollback self-test, then low-priority Wi-Fi/OTA/LAN maintenance services. It does not yet start `control_lan` or the new state/authority/kinematics path.
 
@@ -79,7 +81,7 @@ canonical robot JSON above and remove topology literals from `main.c`.
   - `MOTOR_1`: drive 1 M2, front-right.
   - `MOTOR_2`: drive 2 M1, rear-left.
   - `MOTOR_3`: drive 2 M2, rear-right.
-- Current RAFA geometry defaults: wheelbase/body length `1.60 m`, track width `0.70 m`, wheel radius `0.10 m`, and software wheel ceiling `300 RPM`.
+- Current RAFA geometry defaults: wheelbase/body length `1.60 m`, track width `0.70 m`, wheel radius `0.10 m`, and temporary software wheel ceiling `15 RPM`.
 - Steering outputs are disabled. GPIO 4, 5, 6 and 7 remain historical compile-time literals but are not initialized as PWM.
 - RC input defaults to FlySky PPM on GPIO14: 10 channels, sync gap `3000 us`, pulse range `750..2250 us`, stale timeout `300 ms`.
 - The PPM receiver is diagnostic/safety input only. RC-to-motion authority and differential output are not connected in this build.
@@ -133,7 +135,9 @@ python3 tools/esp_lanctl.py watch --host 192.168.1.185 --motor 0 --period-ms 100
 
 `maintenance_lan` is not OTA. OTA LAN announce remains on UDP `32320` with `BOTFARMS_OTA_TOKEN`; maintenance LAN uses UDP `32321` with `BOTFARMS_MAINT_TOKEN`.
 
-LAN maintenance allows read/diagnostic commands, `STOP ALL`, `READ_REG`, `GET_SVD48_CONFIG`, and the provisional confirmed `WRITE_REG`/`WRITE_REGS` bench commands. Movement, direct actuation registers, sensitive ESP configuration mutation and destructive OTA commands remain blocked. Blocked commands return `ERR LAN_COMMAND_BLOCKED <command>`.
+LAN maintenance allows read/diagnostic commands, `STOP n|ALL`, `READ_REG`, `GET_SVD48_CONFIG`, and the provisional confirmed `WRITE_REG`/`WRITE_REGS` bench commands. Build 19 also allows `SET_SPEED n rpm`, bounded by the firmware-wide `+/-15 RPM` ceiling. `MOVE_VEL`, `ENABLE`, `CLEAR_FAULT`, direct raw writes to known actuation registers, sensitive ESP configuration mutation and destructive OTA commands remain blocked. The exact current allowlist is normative in `docs/API.md` and enforced by `components/serial_gateway/serial_gateway_policy.c`.
+
+> **Critical bench limitation:** `SET_SPEED` over `maintenance_lan` is a temporary engineering exception. Authentication and the RPM ceiling do not provide a dead-man, lease, authority arbitration, or an automatic stop when the laptop/Wi-Fi disappears. Use it only with the robot elevated, a person at the physical power cutoff, and an explicit `STOP`; remove or gate it before floor/product operation (`SAFE-011`).
 
 The write path is intentionally an MVP escape hatch, not the final typed configuration service. It requires `CONFIRM`, checks the current stopped heuristic, captures old words, writes once for FC `0x10`, reads back, and reports `VERIFIED:1` only on an exact match. A response containing `OUTCOME:UNKNOWN` or `OUTCOME:ACKED_UNVERIFIED` must never be blindly retried; read the register first.
 
@@ -261,6 +265,10 @@ python3 -m http.server 8080 --bind 0.0.0.0 --directory ota_release
 BOTFARMS_OTA_TOKEN="choose-a-long-dev-token" python3 tools/ota_announce.py --server-port 8080 --manifest /api/firmware/latest --action check
 BOTFARMS_OTA_TOKEN="choose-a-long-dev-token" python3 tools/ota_announce.py --server-port 8080 --manifest /api/firmware/latest --action update
 ```
+
+`tools/ota_announce.py` resolves the token in this order: `--token`, exported
+`BOTFARMS_OTA_TOKEN`, then the ignored repository `.env`. It never needs the
+token committed to source control.
 
 The ESP32 listens on UDP port `32320`, validates the token, uses the sender IP as the temporary OTA server host, and ignores unauthenticated packets. `--action update` is still explicit and still refuses to reboot unless the robot is safe for OTA.
 

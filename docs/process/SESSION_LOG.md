@@ -547,3 +547,155 @@ Entries are append-only. Corrections should add a dated note rather than rewriti
   and provides no alternate address for rejected SVD48V `0x2202/0x2203`.
 - Next external dependency: request a KK16+SVD48V parameter export or complete
   electrical data and Hall/wiring information from UUMOTOR/Fulling.
+
+## 2026-07-21 - KK16 Hall, PID, speed and gear bench diagnosis
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Hardware: ESP powered from the assembled platform over LAN, SVD48 ID 2, both
+  KK16 wheels elevated. Movement was explicitly authorized and captured to CSV.
+- Build 19 added a 15 RPM absolute firmware/gateway ceiling for the bench; a
+  16 RPM request was rejected. It also exposed temporary authenticated LAN
+  `SET_SPEED`/`STOP` access for these tests.
+- Repeated Hall calibration on both motors with direct register telemetry. Both
+  channels traversed Hall sectors and produced regular angle tables, but both
+  ended in calibration state `2`; calibration is not considered successful.
+- Located the actual gear fields in the official SV-Config XML and confirmed
+  them live: M1 `0x5030/0x5034`, M2 `0x5031/0x5035`. Correct KK16 setup is
+  driving/driven `1/5`.
+- Temporarily limited current to 5 A and compared inherited PID, official
+  UUMOTOR profile PID, a 3/5/10/15 RPM sweep, gear `1/1`, and inverted gear
+  `5/1`. Every movement has a timestamped CSV under `docs/process/evidence/`.
+- Inverted `5/1` was conclusively wrong: target 1 RPM oscillated from about
+  -16 to +13.5 RPM, set fault `0x00000800`, and left the SVD48 unresponsive
+  until a physical power cycle. It was not saved; last saved gear is `1/5`.
+- Full evidence and the recovery checklist are in
+  `docs/process/evidence/SVD48_BENCH_DIAGNOSIS_2026-07-21.md`.
+
+## 2026-07-21 - Superseded intermediate SVD48 restoration
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- The first interpretation used
+  `svd48_id2_inventory_2026-07-21_pre_calibration.json`, but the operator later
+  clarified that this was not the requested pre-parameterization baseline.
+- Captured all 339 official XML parameters before and after restoration.
+- Restored and verified max RPM 10/10, max current 30/30, and the complete M1
+  Hall table. Gear remained driving/driven 1/5.
+- M2 sectors at `0x5653/0x5655` differ from the initial snapshot by -1/+1 degree.
+  Software `0x0131` rejects both writes with exception `0x108`; no further
+  calibration was attempted.
+- Explicit save `0x3100=1` was acknowledged. Immediate command, run, speed and
+  fault registers were zero. Physical power-cycle persistence remains pending.
+- Evidence and confirmed/unconfirmed classification:
+  `docs/process/evidence/SVD48_RESTORE_TO_INITIAL_2026-07-21.md`.
+
+## 2026-07-21 - Correct restoration to original pre-parameterization baseline
+
+- Codex thread/session ID: `019f6e72-3486-7ce1-af40-72d240a5f676`
+- Correct source of truth:
+  `docs/process/evidence/SVD48_ID2_CURRENT_STATE_SUMMARY.md` and raw inventory
+  `svd48_id2_inventory_2026-07-20.json`.
+- Restored with exact readback: wheel diameter 100 mm; original M1/M2 Lq, Ld and
+  Rs words; 24 pole pairs; 100 RPM maximum; 30 A maximum current; 45 RPM/s
+  acceleration; 40 RPM/s deceleration; and the original complete M1 Hall table.
+- Every overlapping RW register from the 151 successful original reads matches
+  the final 339-parameter inventory.
+- M2 Hall table and RO encoder offsets cannot be restored. M2 table writes return
+  exception `0x108` on software `0x0131`.
+- Gear `0x5030/31/34/35`, M2 Hall calibration current `0x5625`, board extensions
+  and extended PID/filter fields were absent from the original scanner, so their
+  original values are unknown and were not invented.
+- Explicit save `0x3100=1` was acknowledged. No motor movement or calibration was
+  performed during restoration; commands, run state, speed and errors were zero.
+- This restored SVD parameters only. ESP build 19 remains installed and still
+  enforces its temporary 15 RPM command ceiling even though the SVD maximum is
+  restored to 100 RPM.
+- Final inventory:
+  `svd48_id2_xml_inventory_2026-07-21_restored_original_baseline.{csv,json}`.
+
+## 2026-07-25 - Build 19 documentation audit and evidence closure
+
+- Codex thread/session ID: `019f9265-a418-70b1-a807-95a2a6bbc157`
+- Subagent IDs: none
+- Repository/branch/base commit:
+  `sistema-motriz-rs485`, `feature/mvp-svd48-register-editor`, `d12e54e`
+- Dirty worktree before work: yes; contained the build-19 RPM/LAN policy changes,
+  SVD48 tools, dated controller evidence and partial process-document updates from
+  the preceding hardware session. No user change was reverted.
+- Claimed work items: `OPS-001/003`, `SAFE-011`, `SVD-004/005/009/022/023/025/026/028`,
+  `TRANS-001/009`, `TEST-001/004/005/006/007`.
+- Hardware state: no USB/LAN/hardware operation in this documentation session;
+  prior SVD48/elevated evidence was reviewed from retained CSV/JSON/logs.
+
+### Changed
+
+- Added `docs/DOCUMENTATION_INDEX.md` and
+  `07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md`; every repository Markdown is
+  classified as current contract, target plan, historical audit or dated
+  evidence.
+- Aligned README/API/component/safety/skill documentation with build 19:
+  temporary 15 RPM ceiling, exact LAN allowlist, direct `SET_SPEED` hazard,
+  current task/runtime boundary and OTA `.env` fallback.
+- Added ADR-0004 and `SAFE-011` to make the no-TTL maintenance-LAN actuation
+  exception a critical removal/gating requirement before floor/product use.
+- Updated plans/matrices for official XML/live findings: real gear
+  `0x5030/31/34/35`, M2 Hall current `0x5625`, high-word-first observed floats,
+  MOS/bus mapping, speed `0.1 RPM`, failed Hall calibration and restoration/save
+  limits.
+- Preserved historical reports while adding corrections/supersession notes.
+  Hall CSVs and tools now retain both raw deci-RPM and physical RPM; original raw
+  values were not changed.
+- Expanded/corrected the inventory tool's official fields and signed telemetry
+  types. Added `.obsidian/` to `.gitignore`; `.env` remains ignored.
+
+### Verified
+
+- `./tools/run_host_tests.sh`: `PASS`, 7/7 (`E1`).
+- `BOTFARMS_HOST_TEST_SANITIZERS=ON ./tools/run_host_tests.sh`: `PASS`, 7/7 with
+  ASan/UBSan (`E1`).
+- `python3 tools/test_svd48_protocol.py`: `PASS`, 3/3.
+- `python3 -m py_compile tools/*.py`: `PASS`.
+- Las herramientas de calibración Hall y barrido rechazaron ejecuciones sin
+  `--confirm-elevated` antes de abrir red o crear archivos.
+- ESP-IDF 5.4.1 fullclean build: `PASS` for `esp32s3`, app `0x101700`, smallest
+  OTA slot `0x600000`, 83% free (`E2`).
+- `idf.py size`: IRAM `16383/16384`, DIRAM `104991/341760`, total image
+  `1054344`; IRAM pressure remains open.
+- Parsed 16 JSON files, validated row width for 19 evidence CSVs, checked every
+  relative Markdown link and confirmed documentation-index coverage.
+- Local secret-value scan checked configured `.env` values against commit
+  candidates without printing them: no match.
+
+### Failed or Unexpected
+
+- No test failed. The audit found that `svd48_read_inventory.py` still typed
+  signed speed/thermal/current scalars as `u16`; the tool and affected generated
+  labels were corrected while preserving raw words.
+
+### Remaining
+
+- Complete `SAFE-011`: remove direct maintenance `SET_SPEED` or route it through
+  the common state/authority/TTL actuator coordinator.
+- Complete firmware/API/backend migration for actual speed `0.1 RPM`
+  (`SVD-009`); build 19 typed telemetry remains raw/mislabelled.
+- Power-cycle the SVD48 and perform read-only comparison to prove final restored
+  persistence. Do not begin the next hardware session with movement.
+- Complete stop latency, RC/dead-man/source loss, stale/offline/fault, physical
+  cutoff, coexistence and soak gates before any floor plan.
+- Version/vendor the official SV-Config catalog or document a reproducible legal
+  acquisition path before treating the tooling catalog as a release input.
+
+### Deferred
+
+- Production identity/HMAC/TLS, signed firmware, Secure Boot, flash/NVS
+  encryption and key provisioning remain required before delivery or operation
+  on an untrusted network.
+- Typed profile storage, full SVD48 maintenance jobs and final tuning UI remain
+  in their existing workstreams; the raw editor is not promoted by this commit.
+
+### Rollback
+
+- Revert the resulting repository commit to remove source/tool/document changes;
+  build artifacts are ignored and may be regenerated.
+- A Git revert does not alter the physically restored SVD48 or installed ESP
+  image. Hardware rollback must use the retained baseline inventory, explicit
+  readback and the elevated procedure; never replay the `5/1` gear experiment.

@@ -14,6 +14,8 @@ This directory is the execution record for the multi-robot configuration program
 - `05_SAFE_CONFIGURATION_WRITE_PLAN.md`: prioritized path to guarded SVD48 writes,
   JSON pin/profile activation, firmware contract and backend-first delivery.
 - `06_SIMULATED_QA_FAULT_INJECTION_PLAN.md`: deterministic host QA, fake bus/clock, safety invariants, and communication fault matrix.
+- `07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md`: exact current commit scope,
+  completed evidence, open validation and release blockers.
 - `COMPATIBILITY_MATRIX.md`: proven firmware/web/profile/controller combinations and schema rules.
 - `SESSION_LOG.md`: immutable chronological handoffs from Codex sessions and human test runs.
 - `adr/`: cross-repository architecture decisions and their rationale.
@@ -21,6 +23,10 @@ This directory is the execution record for the multi-robot configuration program
 - `templates/SESSION_ENTRY.md`: required handoff format for each implementation session.
 
 The web repository owns its own consumer-side plan under `web_controll_esp_svd48/docs/process/`.
+
+The repository-wide documentation classification and precedence map is
+`../DOCUMENTATION_INDEX.md`. Read it when a dated report and a current contract
+appear to disagree.
 
 The canonical machine-readable profile contract is
 `../schemas/robot-profile.schema.json`. Examples under `../examples/` marked

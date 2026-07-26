@@ -2576,6 +2576,14 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
             print_locked(handle, "ERR USAGE SET_SPEED n rpm\n");
             return;
         }
+        const float max_rpm = robot_control_get_max_wheel_rpm(handle->config.robot);
+        if (fabsf((float)rpm) > max_rpm) {
+            print_locked(handle,
+                         "ERR SET_SPEED_OUT_OF_RANGE REQUESTED:%d MAX_RPM:%.1f\n",
+                         rpm,
+                         (double)max_rpm);
+            return;
+        }
         esp_err_t err = robot_control_set_motor_speed(handle->config.robot, motor, rpm);
         if (err == ESP_OK) {
             print_locked(handle, "OK MOTOR_%u RPM_TARGET:%d\n", motor, rpm);

@@ -9,6 +9,13 @@ en una estructura C de cuatro motores. El contrato normativo del perfil está en
 `docs/schemas/robot-profile.schema.json` y el primer fixture físico en
 `docs/examples/robot-profile-differential-2wd-one-svd48.json`.
 
+Clarificación 2026-07-25: esta es la arquitectura objetivo, no una afirmación de
+que el runtime ya la aplique. Build 19 conserva entradas directas de movimiento
+por USB y una excepción temporal `maintenance_lan SET_SPEED` autenticada, sin
+TTL. La desviación está registrada en ADR-0004 y debe eliminarse o pasar por el
+coordinador de estado/autoridad/actuadores antes de uso en piso o producto
+(`SAFE-011`).
+
 El avance, las pruebas y los handoffs se registran en `docs/process/`. Si este
 documento contradice el código actual, el código representa el comportamiento
 existente y esta documentación representa la migración pendiente; la diferencia
@@ -232,8 +239,8 @@ adaptador llama directamente a SVD48 o servos.
 
 ### Canal `control_lan`
 
-`maintenance_lan` conserva discovery, diagnóstico, perfiles y configuración. No
-se habilita `MOVE_VEL` dentro de su dispatcher ASCII. El movimiento LAN entra por
+`maintenance_lan` conserva discovery, diagnóstico, perfiles y configuración. El
+objetivo no habilita movimiento dentro de su dispatcher ASCII. El movimiento LAN entra por
 un servicio separado, por defecto UDP `32322`, con mensajes compactos:
 
 ```json

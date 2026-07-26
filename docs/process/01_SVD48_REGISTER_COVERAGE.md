@@ -2,7 +2,9 @@
 
 Date: 2026-07-17
 
-Status: implementation in progress with protocol evidence `E1/E2`; hardware verification remains incomplete.
+Status: implementation in progress with protocol `E1/E2` and partial
+controller/elevated-bench `E4/E5` evidence. Typed runtime catalog, scaled-speed
+contract, persistence power cycle and production write workflow remain open.
 
 Primary sources:
 
@@ -12,6 +14,7 @@ Primary sources:
 - `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md`
 - `components/svd48/svd48.c`
 - `components/serial_gateway/serial_gateway.c`
+- `docs/process/evidence/svd48_id2_xml_inventory_2026-07-21_restored_original_baseline.json`
 
 The public manuals refer to SVD48V30A/SVD48V50A family behavior. Local hardware is treated as compatible only where observation confirms it.
 
@@ -46,7 +49,10 @@ Implemented:
 
 Missing or unsafe:
 
-- Typed float and generic 32-bit codecs.
+- Runtime-integrated typed parameter codecs/catalog. The XML inventory tool
+  already decodes observed float/int32/uint32 values high-word-first.
+- Correct physical-unit propagation for actual speed: firmware build 19 still
+  stores/prints the signed `0.1 RPM` word as whole `RPM` (`SVD-009`).
 - Physical evidence that each local controller firmware emits the documented exception forms/codes.
 - Parameter metadata, range/access validation, persistence semantics, and controller-firmware capability detection.
 - A formal `MAINTENANCE` state, exclusive operation ownership, expiry and
@@ -54,8 +60,10 @@ Missing or unsafe:
   state-machine permit.
 - Typed change-set validation, complete hard ceilings, rollback and audit. The
   provisional raw path only captures old/readback words for one command.
-- Controller save (`0x3100`) and power-cycle verification workflow.
-- Calibration workflows.
+- Complete controller save/power-cycle verification workflow. `0x3100=1` was
+  acknowledged after restoration, but the final persistence power cycle is open.
+- Production calibration workflows. Engineering capture tooling exists, but both
+  2026-07-21 Hall calibrations ended in failed state `2`.
 - Reliable health meaning for `svd48_poll_once()`: it can return success even if all drives fail.
 
 ## Register Matrix
@@ -72,14 +80,27 @@ Evidence:
 - `docs/process/evidence/svd48_id2_inventory_2026-07-20.md`
 - `docs/process/evidence/SVD48_ID2_CURRENT_STATE_SUMMARY.md`
 
-The capture confirms board/software identity, all documented motor/PID/motion
-fields, live telemetry, encoder fields and most Hall fields. It also confirms
-that this firmware revision does not expose gear teeth, controller-direct PPM or
-CAN/RS232 active-upload configuration. Later write/read testing confirmed M2 Hall
-calibration current at symmetric address `0x5625`; manual addresses `0x5605` and
-`0x5609` are unsupported on this revision.
-Raw float patterns strongly support high-word-first IEEE-754, but an independent
-SV-Config comparison is still required before PID writes.
+The capture confirms board/software identity, the originally cataloged
+motor/PID/motion fields, live telemetry, encoder fields and most Hall fields. It
+also confirms that this firmware revision does not expose controller-direct PPM
+or CAN/RS232 active-upload configuration. A later audit of the official
+SV-Config XML located the channel-specific gear fields at `0x5030/0x5034` (M1)
+and `0x5031/0x5035` (M2); live reads and writes confirmed them. Later testing also
+confirmed M2 Hall calibration current at symmetric address `0x5625`; manual
+addresses `0x5605` and `0x5609` are unsupported on this revision.
+Official XML plus live read/write/readback and restoration evidence confirms
+high-word-first IEEE-754 for the observed electrical/PID fields. This does not
+authorize broad PID writes; typed ranges, maintenance ownership and persistence
+are still required.
+
+### Full official XML capture (2026-07-21)
+
+`tools/svd48_xml_inventory.py` parsed the official SV-Config XML and captured
+339/339 declared parameters from controller ID 2/software `0x0131`. Before/after
+and restored-baseline CSV/JSON evidence is under `docs/process/evidence/`. It
+resolved gear, M2 Hall current, telemetry scaling and additional board/PID/filter
+fields, but the XML catalog file itself is not yet vendored/versioned in this
+repository (`SVD-005`).
 
 ### Vehicle, throttle, brake, and remote control
 
@@ -87,7 +108,9 @@ SV-Config comparison is still required before PID writes.
 | ------------------ | --------------------------------------------- | --------------------- | ---------------------------------------- | ------------- | -------------------------------------------------------------- |
 | `0x2200`           | Maximum acceleration                          | `u16 RW`              | Raw access; observed read                | `OBSERVED`    | Catalog/read; write only if needed                             |
 | `0x2201`           | Wheel diameter mm                             | `u16 RW`              | Partial typed read/write                 | `OBSERVED`    | Catalog/read; validate whether controller or ESP owns geometry |
-| `0x2202`, `0x2203` | Motor/wheel gear teeth                        | `u16 RW`              | Partial typed attempts; rejected locally | `SUSPECT`     | Read-only/unsupported until captured                           |
+| `0x2202`, `0x2203` | Legacy/manual motor/wheel gear candidates     | `u16 RW`              | Rejected by software `0x0131`             | `UNSUPPORTED` | Do not use                                                     |
+| `0x5030`, `0x5034` | M1 driving/driven wheel teeth                 | `u16 RW`              | Live read/write confirmed                 | `OBSERVED`    | Correct KK16 setup is `1/5`; guarded typed support required    |
+| `0x5031`, `0x5035` | M2 driving/driven wheel teeth                 | `u16 RW`              | Live read/write confirmed                 | `OBSERVED`    | Correct KK16 setup is `1/5`; guarded typed support required    |
 | `0x2280..0x2283`   | Input type and PPM baselines                  | `u16 RW`              | Raw only                                 | `MANUAL_ONLY` | Defer unless controller-direct PPM is required                 |
 | `0x2000..0x2002`   | Throttle dead zone/curve/point count          | `u16 RW`              | Raw only                                 | `MANUAL_ONLY` | Defer                                                          |
 | `0x2010..0x2013`   | Normal-mode throttle force/ramp/speed         | `u16 RW`              | Raw only                                 | `MANUAL_ONLY` | Defer                                                          |
@@ -115,7 +138,7 @@ SV-Config comparison is still required before PID writes.
 | `0x3009` | Maximum bus voltage in 0.1 V | `u16 RW` | Raw only | `MANUAL_ONLY` | High-priority read; write needs battery-specific ceilings |
 | `0x300A` | Overload timeout ms | `u16 RW` | Raw only | `MANUAL_ONLY` | Read first |
 | `0x300B` | Power-on encoder calibration | manual table unclear | Raw only | `SUSPECT` | Read experiment only |
-| `0x3100` | Save parameters to flash | `u16 WO` | Raw write possible, no workflow | `MANUAL_ONLY` | Required for verified persistence workflow |
+| `0x3100` | Save parameters to flash | `u16 WO` | Guarded command; ACK observed | `OBSERVED` | Power-cycle persistence workflow still required |
 | `0x3180` | In-position/heartbeat flag | `u16 RO` | Raw only | `MANUAL_ONLY` | Optional read diagnostic |
 
 Never expose writes to `0x3001`, `0x3006`, or `0x3008` until a recovery path exists for a controller that disappears from the current bus settings.
@@ -135,9 +158,9 @@ M1/M2 pairs are shown together.
 
 | M1 / M2 | Meaning | Type/range | Current use | Confidence | MVP decision |
 | --- | --- | --- | --- | --- | --- |
-| `0x5000` / `0x5002` | Lq | `float32 0..0.1 H` | Raw words | `MANUAL_ONLY` | Read after float verification; defer write |
-| `0x5008` / `0x500A` | Ld | `float32 0..0.1 H` | Raw words | `MANUAL_ONLY` | Read after float verification; defer write |
-| `0x5010` / `0x5012` | Rs | `float32 0..127.99 ohm` | Raw words | `MANUAL_ONLY` | Read after float verification; defer write |
+| `0x5000` / `0x5002` | Lq | `float32 0..0.1 H` | XML-decoded; raw write/readback/restoration | `OBSERVED` | Read-only product path until motor data and typed job exist |
+| `0x5008` / `0x500A` | Ld | `float32 0..0.1 H` | XML-decoded; raw write/readback/restoration | `OBSERVED` | Read-only product path until motor data and typed job exist |
+| `0x5010` / `0x5012` | Rs | `float32 0..127.99 ohm` | XML-decoded; raw write/readback/restoration | `OBSERVED` | Read-only product path until motor data and typed job exist |
 | `0x5018` / `0x5019` | Pole pairs | `u16 1..128` | Partial typed read/write | `OBSERVED` for local channel | First guarded write candidate |
 | `0x501C` / `0x501D` | Maximum speed RPM | `u16` | Raw only | `MANUAL_ONLY` | First guarded write candidate after readback |
 | `0x5020` / `0x5021` | Maximum Iq current A | `u16 0..512` | Raw only | `MANUAL_ONLY` | Candidate with compiled ceiling well below manual max |
@@ -159,9 +182,9 @@ M1/M2 pairs are shown together.
 
 | M1 / M2 | Meaning | Type/range | Current use | Confidence | MVP decision |
 | --- | --- | --- | --- | --- | --- |
-| `0x5200` / `0x5202` | Speed Kp | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | MVP guarded write after float/persistence evidence |
-| `0x5208` / `0x520A` | Speed Ki | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | MVP guarded write after float/persistence evidence |
-| `0x5210` / `0x5212` | Speed Kd | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | MVP guarded write after float/persistence evidence |
+| `0x5200` / `0x5202` | Speed Kp | `float32 0..127.999` | Raw write/readback and restoration observed | `OBSERVED` | Typed bounded maintenance job plus persistence evidence pending |
+| `0x5208` / `0x520A` | Speed Ki | `float32 0..127.999` | Raw write/readback and restoration observed | `OBSERVED` | Typed bounded maintenance job plus persistence evidence pending |
+| `0x5210` / `0x5212` | Speed Kd | `float32 0..127.999` | Raw write/readback and restoration observed | `OBSERVED` | Typed bounded maintenance job plus persistence evidence pending |
 | `0x5218` / `0x521A` | Position Kp | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | Defer write |
 | `0x5220` / `0x5222` | Position Ki | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | Defer write |
 | `0x5228` / `0x522A` | Position Kd | `float32 0..127.999` | Raw words | `MANUAL_ONLY` | Defer write |
@@ -185,7 +208,7 @@ The manuals further claim PID parameters are persisted when both motors stop and
 | `0x5404/05` | Motor temperature, 0.1 C | `i16 RO` | Polled | `IMPLEMENTED` | Retain |
 | `0x5408/09` | MOS temperature, 0.1 C | `i16 RO` | Polled | `IMPLEMENTED` | Corrected in build 18 after live/XML verification |
 | `0x540C/0D` | Bus voltage, 0.1 V | `u16 RO` | Polled | `IMPLEMENTED` | Corrected in build 18; add configured warning/fault interpretation |
-| `0x5410/11` | Actual speed RPM | `i16 RO` | Fast polled | `IMPLEMENTED` | Retain |
+| `0x5410/11` | Actual speed, 0.1 RPM | `i16 RO` | Fast polled, firmware scaling pending | `OBSERVED` | Divide raw value by 10; correct typed firmware field |
 | `0x5414/15` | Actual current, 0.1 A | `i16 RO` | Fast polled | `IMPLEMENTED` | Retain |
 | `0x5418..0x541B` | Positions | `i32 RO` | Polled high-word first | `IMPLEMENTED` | Verify physical scaling per motor/profile |
 | `0x5420..0x5423` | Error codes | `u32 RO` | Polled | `IMPLEMENTED` | Add decoded error catalog |
@@ -205,10 +228,10 @@ The manuals further claim PID parameters are persisted when both motors stop and
 
 | M1 / M2 | Meaning | Type/access | Current use | Confidence | MVP decision |
 | --- | --- | --- | --- | --- | --- |
-| `0x5600` / `0x5601` | Calibration command | `u16 RW` | Raw only | `MANUAL_ONLY` | Hazardous workflow; defer |
+| `0x5600` / `0x5601` | Calibration command | `u16 RW` | Engineering tool/live attempts | `OBSERVED` | Both channels failed; production workflow and motor data required |
 | `0x5620` / `0x5621` | 120/60 degree installation | enum `u16 RW` | Partial typed read | partly `OBSERVED` | Read; guarded write later |
-| `0x5624` / `0x5605` or `0x5609` | Calibration current | `u16 RW` | Raw only | M2 `SUSPECT` | No write until sniffed |
-| `0x5640..47` / `0x5650..57` | Eight-angle table | 8 x `i16 RW` | Raw reads limited; no bulk write | `MANUAL_ONLY` | Read after validation; defer write |
+| `0x5624` / `0x5625` | Calibration current | `u16 RW` | Live read/write | `OBSERVED` | Guarded calibration workflow only |
+| `0x5640..47` / `0x5650..57` | Eight-angle table | 8 x `i16 RW` | Full reads; M1 Q15 writes observed, M2 writes partly rejected | `OBSERVED/SUSPECT` | Read-only product path; do not infer calibration success |
 | `0x5680` / `0x5681` | Sensor temperature | `i16 RO` | Raw only | `MANUAL_ONLY` | Read-only |
 | `0x5684` / `0x5685` | Calibration status | enum `u16 RO` | Raw only | `MANUAL_ONLY` | Required later |
 | `0x5688` / `0x5689` | Hall status | `u16 RO` | Partial typed read | local values conflict with documented `0..7` | `SUSPECT` interpretation |
@@ -247,12 +270,12 @@ The user manual documents bits in the 32-bit motor error field around `0x5420/0x
 
 | ID | Experiment | Preconditions | Expected evidence | Write risk |
 | --- | --- | --- | --- | --- |
-| `SVD-EXP-001` | Sniff SV-Config reading one known float | Motor stopped/power isolated | Exact request, response, word/byte order, decoded value | none |
-| `SVD-EXP-002` | Sniff one PID float write and readback | Restrained motor, saved baseline | `0x06` vs `0x10`, ordering, immediate/persistent behavior | high |
-| `SVD-EXP-003` | Probe `0x2202/03` with `0x03`, `0x06`, `0x10`, modes varied | Full backup; stopped | Valid/exception frames and firmware version | medium |
+| `SVD-EXP-001` | Establish one known float order | Motor stopped/power isolated | `DONE` via official XML + matching live raw values; passive wire sniff still optional | none |
+| `SVD-EXP-002` | One PID float write and readback | Restrained motor, saved baseline | `PARTIAL`: FC16 raw write/readback/restoration captured; automatic persistence pending | high |
+| `SVD-EXP-003` | Probe legacy `0x2202/03` and locate actual gear fields | Full backup; stopped | `DONE`: legacy rejected; XML/live `0x5030/31/34/35`, correct `1/5` | medium |
 | `SVD-EXP-004` | Trigger invalid read/write | No movement | Actual exception functions/codes (`0x90`, `0x83`, `0x86`) | low |
-| `SVD-EXP-005` | Verify M2 encoder and Hall disputed addresses | Stopped | Address-by-address read and SV-Config capture | low until write |
-| `SVD-EXP-006` | Save benign parameter with `0x3100=1`, power cycle, readback | Backup and power control | Persistence timeline and recovery | medium |
+| `SVD-EXP-005` | Verify M2 encoder and Hall disputed addresses | Stopped | `PARTIAL`: XML/live M2 current `0x5625`; M2 Hall-table write restrictions preserved | low until write |
+| `SVD-EXP-006` | Save benign parameter with `0x3100=1`, power cycle, readback | Backup and power control | `IN_PROGRESS`: save ACK captured; final post-restore power cycle pending | medium |
 | `SVD-EXP-007` | Observe automatic PID persistence after all motors stop | Restrained | Before/write/stop/power-cycle values | high |
 | `SVD-EXP-008` | Validate position counts per motor and wheel revolution | Wheel marked/elevated | Counts/rev at motor and output; gearbox relationship | medium |
 | `SVD-EXP-009` | Capture slave ID/baud change through SV-Config | Spare controller/recovery adapter | Exact safe migration sequence | high |
@@ -263,9 +286,11 @@ Every capture must record controller product/software/hardware version, drive ID
 ## Implementation Order
 
 1. `SVD-001/002`: parser/error fidelity and tests.
-2. `SVD-003`: `0x10` framing, ACK parser and one-attempt transaction with host golden vectors. It is provisionally exposed by `WRITE_REGS ... CONFIRM`; physical SVD48 evidence remains pending.
-3. Execute `SVD-EXP-001/004/005`.
-4. `SVD-004/005`: typed codecs and catalog with confidence metadata.
+2. `SVD-003`: `0x10` framing, ACK parser and one-attempt transaction with host
+   golden vectors plus physical readback evidence; formal fault injection remains.
+3. Complete `SVD-EXP-004/006` and preserve the completed/partial evidence above.
+4. `SVD-004/005/009`: integrate typed codecs/catalog and correct actual-speed
+   units across firmware/backend/UI.
 5. `SVD-006/007`: read-only inventory/group reads/drift.
 6. Expose read-only firmware/backend contracts and compare USB/LAN output.
 7. Implement `SVD-020/021` maintenance/change-set infrastructure.

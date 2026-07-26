@@ -106,7 +106,7 @@ Edit `main/app_version.h`.
 For a real update, increase:
 
 ```c
-#define FW_BUILD_NUMBER 8
+#define FW_BUILD_NUMBER <NEXT_BUILD_NUMBER>
 ```
 
 Keep these stable unless you intentionally changed product identity:
@@ -238,6 +238,10 @@ For a real update:
 BOTFARMS_OTA_TOKEN="choose-a-long-dev-token" \
   python3 tools/ota_announce.py --server-port 8080 --manifest /api/firmware/latest --action update
 ```
+
+The script resolves the token from `--token`, then the exported environment,
+then `BOTFARMS_OTA_TOKEN` in the repository `.env` (which is ignored by Git).
+Do not print the token to verify it and never commit `.env`.
 
 The ESP32 listens on UDP `32320`. It ignores packets with no token or a wrong token, writes the announced server/manifest to NVS only after authentication, and uses the packet source IP as the OTA server host. `update` is still an explicit action and still refuses to run unless the robot is safe for OTA.
 

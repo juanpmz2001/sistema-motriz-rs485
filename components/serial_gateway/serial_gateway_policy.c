@@ -46,7 +46,10 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
     if ((arg_is(argv[0], "GET_SPEED") || arg_is(argv[0], "GET_MOTOR")) && argc == 2) {
         return true;
     }
-    if (arg_is(argv[0], "STOP") && argc == 2 && arg_is(argv[1], "ALL")) {
+    if (arg_is(argv[0], "STOP") && argc == 2) {
+        return true;
+    }
+    if (arg_is(argv[0], "SET_SPEED") && argc == 3) {
         return true;
     }
     if (arg_is(argv[0], "READ_REG") && (argc == 3 || argc == 4)) {

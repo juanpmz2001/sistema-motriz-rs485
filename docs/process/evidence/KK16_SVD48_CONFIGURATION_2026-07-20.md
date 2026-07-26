@@ -1,5 +1,11 @@
 # KK16 SVD48 Configuration - 2026-07-20
 
+Historical status: this report records intermediate configuration and tests. It
+is superseded for current controller state by
+`SVD48_RESTORE_TO_INITIAL_2026-07-21.md`. Post-session XML evidence also showed
+that `0x5410/0x5411` is signed `0.1 RPM`; the older firmware printed its raw word
+as whole RPM. Speed observations below are corrected to preserve that scale.
+
 ## Scope
 
 - Controller: SVD48, Modbus ID 2, software `0x0131`.
@@ -63,9 +69,9 @@ M1 automatic Hall calibration was attempted three times:
 
 | Configured current | Observed behavior | Result |
 | ---: | --- | --- |
-| 3 A | Approximately 5-6 RPM, about 1.0-1.3 A telemetry | Failed (`0x5684=2`) |
-| 6 A | Approximately 5-6 RPM, about 2.3-2.7 A telemetry | Failed (`0x5684=2`) |
-| 15 A | Approximately 0-3 RPM, peak about 3.4 A telemetry | Failed (`0x5684=2`) |
+| 3 A | Firmware raw speed 5-6, approximately 0.5-0.6 RPM; about 1.0-1.3 A | Failed (`0x5684=2`) |
+| 6 A | Firmware raw speed 5-6, approximately 0.5-0.6 RPM; about 2.3-2.7 A | Failed (`0x5684=2`) |
+| 15 A | Firmware raw speed 0-3, approximately 0-0.3 RPM; peak about 3.4 A | Failed (`0x5684=2`) |
 
 After every attempt M1 returned to zero command/current/RPM with no motor error.
 M2 calibration was deliberately not started after M1 repeatedly failed.
@@ -75,7 +81,7 @@ the physical UVW-to-Hall phase relationship, Hall signal sequence and connector
 integrity first. The SVD48 manual identifies incorrect UVW/Hall order and wrong
 motor parameters as causes of startup/calibration problems.
 
-## Final State
+## Intermediate State At This Point
 
 - ESP firmware build 15, OTA state valid, partition `ota_1`.
 - Robot `SAFE_IDLE`, `MOTION_ACTIVE:0`.
@@ -94,7 +100,7 @@ M1 and M2 were then calibrated once each at the persisted 15 A calibration-curre
 setting. Both produced the same result:
 
 - calibration ran for about five seconds;
-- wheel speed remained approximately 3-6 RPM;
+- firmware raw speed remained 3-6, approximately `0.3-0.6 RPM`;
 - measured current was approximately 2.5-3.5 A;
 - the channel stopped without a motor error;
 - final calibration status was `2` (failed).
@@ -117,8 +123,10 @@ With explicit operator approval, M1 and M2 maximum speed was temporarily changed
 from 10 to 50 RPM. Both channels were calibrated sequentially at 15 A configured
 calibration current:
 
-- M1 reached approximately 33-34 RPM and 2.9-3.7 A telemetry, then failed.
-- M2 reached approximately 33-34 RPM and 2.8-4.0 A telemetry, then failed.
+- M1 reached firmware raw speed 33-34, approximately `3.3-3.4 RPM`, and
+  2.9-3.7 A telemetry, then failed.
+- M2 reached firmware raw speed 33-34, approximately `3.3-3.4 RPM`, and
+  2.8-4.0 A telemetry, then failed.
 - Both channels stopped cleanly and retained zero raw motor errors.
 - Final angle tables remained populated and mutually consistent.
 
@@ -126,11 +134,10 @@ This result rules out the 10 RPM limit as the primary cause. Both maximum-speed
 registers were restored to 10 RPM, verified by readback, and `0x3100=1` was
 acknowledged to save the final configuration.
 
-The KK16 5:1 gearbox ratio is not stored in this SVD48. Documented gear-tooth
-registers `0x2202/0x2203` return unsupported-register exception `0x108` on
-software `0x0131`. Do not encode the ratio by falsifying pole pairs or motor KV;
-apply it in the robot profile/kinematics until a controller-supported parameter is
-independently identified.
+The legacy gear candidates `0x2202/0x2203` return unsupported-register exception
+`0x108` on software `0x0131`. Later official-XML/live work identified the actual
+per-channel fields at `0x5030/31/34/35` and confirmed driving/driven `1/5`. Do not
+encode the ratio by falsifying pole pairs or motor KV.
 
 A dedicated write-only-compatible test was later performed with
 `SET_SVD48_GEAR_RATIO 2 1 5 CONFIRM`. The controller rejected the FC16 write with

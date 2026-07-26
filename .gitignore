@@ -5,3 +5,4 @@ sdkconfig.old
 ota_release/
 __pycache__/
 *.pyc
+.obsidian/

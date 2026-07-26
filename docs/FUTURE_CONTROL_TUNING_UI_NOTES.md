@@ -4,6 +4,12 @@ Date: 2026-05-12
 
 Purpose: keep a visible note that Toño should eventually have a dedicated interface for experimenting with controller parameters such as proportional, integral and differential gains.
 
+Status update 2026-07-25: a provisional raw register editor and LAN tooling now
+exist, and observed PID/electrical floats are confirmed high-word-first. They do
+not satisfy this target: typed catalog keys, exclusive maintenance jobs, hard
+ceilings, dedupe, rollback, persistence and audit remain required before a
+product tuning UI.
+
 ## Future Feature
 
 Build a local UI that allows controlled tuning of SVD48 parameters related to:
@@ -54,4 +60,3 @@ Create a read-only page that displays current PID-related values and marks each 
 - `manual`: listed in the UU Motor manual but not yet observed.
 - `suspect`: manual address/type may be wrong or firmware dependent.
 - `captured`: confirmed by sniffing SV-Config traffic.
-

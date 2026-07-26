@@ -4,6 +4,12 @@ Fecha: 2026-07-19
 
 Estado: `IN_PROGRESS`. Complementa `04_OFF_GROUND_TEST_MATRIX.md`: ya existe el arnes CMake/CTest, fake clock/event sink y suites puras de estado, autoridad simultanea `RC > LAN > Bluetooth` y cinemática diferencial. Faltan integración del coordinador/gate, fake SVD48/bus, change sets, perfil JSON canonico, fuzzing y las capas ESP/backend/HIL.
 
+Actualización 2026-07-25: build 19 y la campaña física añadieron evidencia XML,
+raw write/readback, Hall, gear y velocidad, pero no sustituyen las capas
+simuladas pendientes. La política LAN ahora contiene una excepción temporal
+`SET_SPEED`; los tests deben demostrar explícitamente que se elimina/gatea y que
+una pérdida de cliente no puede dejar consigna activa (`SAFE-011`).
+
 ## Objetivo
 
 Detectar durante desarrollo, sin motores reales, regresiones que puedan:
@@ -54,7 +60,7 @@ cmake/host_tests/BotfarmsHostTest.cmake
 tools/run_host_tests.sh
 ```
 
-`./tools/run_host_tests.sh` configura un build temporal, compila con `-Wall -Wextra -Wpedantic -Werror`, ejecuta CTest y conserva el oraculo Python independiente de frames SVD48. La ejecucion build 13 del 2026-07-19 paso 6/6 pruebas normal y 6/6 con ASan/UBSan (`detect_leaks=0` por restriccion `ptrace` del entorno).
+`./tools/run_host_tests.sh` configura un build temporal, compila con `-Wall -Wextra -Wpedantic -Werror`, ejecuta CTest y conserva el oráculo Python independiente de frames SVD48. Build 19 pasó 7/7 normal y 7/7 con ASan/UBSan el 2026-07-25 (`detect_leaks=0` por restricción `ptrace` del entorno).
 
 Cobertura parcial actual:
 
@@ -273,11 +279,13 @@ La propiedad critica no es "el software siempre logra detener el motor"; con bus
 | `QA-WRITE-014` | save/power loss fixture | active/runtime/persisted nunca se confunden |
 | `QA-WRITE-015` | raw mode en release/LAN | capability ausente y rechazo antes de bus |
 
-`QA-WRITE-015` remains the production target. Build 14 intentionally carries a
-temporary authenticated-LAN raw editor. Its automated subset must additionally
+`QA-WRITE-015` remains the production target. Build 19 carries a temporary
+authenticated-LAN raw editor plus the ADR-0004 direct `SET_SPEED` exception. Its
+automated subset must additionally
 cover confirmation, actuation denylist, known one-word ranges, exact target
 correlation, pre-read/readback parsing and `unknown_do_not_retry`. It must be
-removed or placed behind an explicit engineering capability before
+removed or placed behind an explicit engineering capability; direct speed must
+be rejected or routed through TTL/state/authority before
 `QA-WRITE-015` can pass.
 
 ## Suite PPM GPIO14

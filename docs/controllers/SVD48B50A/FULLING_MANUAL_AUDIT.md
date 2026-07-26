@@ -2,6 +2,12 @@
 
 Date: 2026-07-20
 
+Follow-up (2026-07-25): this remains a valid applicability audit of the Fulling
+single-axis family, but its gear-address conclusion was superseded by the
+official dual-SVD48V SV-Config XML. The connected controller exposes M1
+driving/driven teeth at `0x5030/0x5034` and M2 at `0x5031/0x5035`; live tests
+confirmed KK16 `1/5`. The Fulling manual itself did not supply that answer.
+
 ## Sources Reviewed
 
 - Fulling Motor official SVD4812RC-AA product page:
@@ -45,7 +51,7 @@ the observed protocol map or hardware topology.
 | Parameter protocol | Fulling object dictionary/UART/CANopen | Modbus-like `0x03/0x06/0x10` | No |
 | Motor initialization | `SaveMot`, reboot, `InitCtrl`, `SaveCtrl` | SVD48V register workflow | Concept only |
 | Third-party motor data | Explicit complete list | Partial corresponding fields exist | Yes, as requirements |
-| Mechanical gearbox | No matching SVD48V tooth registers | `0x2202/0x2203` documented but rejected | No new solution |
+| Mechanical gearbox | No matching dual-SVD48V tooth registers | Legacy `0x2202/0x2203` rejected; SV-Config XML later identified `0x5030/31/34/35` | Fulling source not reusable; dual-controller XML/live evidence applies |
 
 ## Useful Additional Information
 
@@ -110,10 +116,10 @@ from UUMOTOR/Fulling, then verify units and float word order before writing.
 ## Gear-Ratio Finding
 
 The Fulling manual contains an electronic gear ratio for scaling command pulses.
-That is not the KK16 mechanical gearbox and does not map to SVD48V
-`0x2202/0x2203`. The connected software `0x0131` rejected those two registers for
-both read and FC16 write with Modbus exception `0x02`. No Fulling source found in
-this audit provides an alternate compatible address for the dual SVD48V.
+That is not the KK16 mechanical gearbox and does not map to the connected dual
+SVD48V. The connected software `0x0131` rejected legacy `0x2202/0x2203` for both
+read and FC16 write. No Fulling source found in this audit provided an alternate;
+the later official SV-Config XML supplied the actual `0x5030/31/34/35` map.
 
 ## Recommended Manufacturer Request
 
@@ -129,6 +135,6 @@ Ask UUMOTOR/Fulling for a KK16 + SVD48V30A/50A parameter export or, at minimum:
 - the correct SVD48V software/firmware version and register map for reduction ratio;
 - whether motor parameters must be saved/rebooted before Hall calibration.
 
-Until that information is available, keep wheels elevated, retain the 10 RPM
-limit, and do not perform a loaded movement test based only on populated Hall
-tables.
+Until that information is available, keep wheels elevated, retain a conservative
+limit no higher than the current firmware's temporary `15 RPM` ceiling, and do
+not perform a loaded movement test based only on populated Hall tables.

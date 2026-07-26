@@ -1,5 +1,11 @@
 # SVD48 KK16 Motor Identification - 2026-07-20
 
+Historical status: the identified values in this report were later superseded by
+the requested restoration to the original pre-parameterization register words.
+See `SVD48_RESTORE_TO_INITIAL_2026-07-21.md` for the last restoration record.
+This report remains evidence of what the identification routine returned; it is
+not the current configured motor model.
+
 ## Setup
 
 - ESP32 firmware: build 17, target `esp32s3`, partition `ota_1`, OTA valid.

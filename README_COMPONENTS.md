@@ -7,6 +7,8 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 - `docs/skills/SVD48B50A_SKILL.md`
 - `docs/ROBOT_PROFILES_AND_SVD48_CONFIGURATION_PLAN.md`
 - `docs/schemas/robot-profile.schema.json`
+- `docs/DOCUMENTATION_INDEX.md`
+- `docs/process/07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md`
 
 ## Active Components
 
@@ -23,7 +25,7 @@ This file used to describe the first ESP-IDF migration with Bluetooth and PPM fa
 - `components/wifi_manager`: Wi-Fi station manager used by manual OTA, automatic manifest checks, and low-priority auto-connect/reconnect.
 - `components/ota_manager`: OTA manifest validation, inactive-slot download verification, manual update, rollback state, and automatic manifest-only checks.
 - `components/ota_announce`: authenticated UDP LAN announce listener for no-USB OTA server discovery.
-- `components/maintenance_lan`: authenticated UDP LAN maintenance listener for diagnostics, telemetry, `STOP ALL`, register reads and provisional confirmed SVD48 configuration writes without USB. Movement, runtime actuation registers, sensitive ESP configuration mutation and destructive OTA remain blocked.
+- `components/maintenance_lan`: authenticated UDP LAN maintenance listener for diagnostics, telemetry, `STOP n|ALL`, register reads and provisional confirmed SVD48 configuration writes without USB. Build 19 temporarily also permits direct `SET_SPEED n rpm` up to `+/-15 RPM` for elevated bench diagnosis. That path has no TTL/dead-man or authority arbitration and must not be treated as product LAN control; `MOVE_VEL`, `ENABLE`, known raw actuation registers, sensitive ESP configuration mutation and destructive OTA remain blocked.
 - `components/control_lan`: separate bounded UDP ingress on port `32322` for typed arm/command/disarm/stop events. It is compiled but deliberately not started or connected to movement yet.
 
 The root `CMakeLists.txt` explicitly includes the project component tree, including the compiled-but-disabled authority, kinematics and control-ingress foundations. The active runtime dependency graph is rooted in `main/CMakeLists.txt`, which requires `svd48`, `robot_control`, `robot_safety`, `robot_state`, `serial_gateway`, `ibus_receiver`, `config_manager`, Wi-Fi/OTA services, and `maintenance_lan`.

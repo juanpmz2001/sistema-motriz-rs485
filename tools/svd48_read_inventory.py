@@ -45,6 +45,17 @@ def catalog() -> list[ReadTarget]:
     def scalars(group: str, entries: list[tuple[int, str]], confidence: str = "manual") -> None:
         items.extend(target(group, name, address, confidence=confidence) for address, name in entries)
 
+    def typed_scalars(
+        group: str,
+        entries: list[tuple[int, str]],
+        value_type: str,
+        confidence: str = "manual",
+    ) -> None:
+        items.extend(
+            target(group, name, address, value_type=value_type, confidence=confidence)
+            for address, name in entries
+        )
+
     scalars("throttle", [
         (0x2000, "throttle_dead_zone"), (0x2001, "throttle_curve_mode"),
         (0x2002, "throttle_curve_points"),
@@ -77,9 +88,12 @@ def catalog() -> list[ReadTarget]:
         (0x2100, "remote_mode"), (0x2101, "remote_direction"),
         (0x2102, "throttle_stroke"), (0x2103, "brake_stroke"),
         (0x2130, "vehicle_speed"), (0x2131, "battery_level"),
-        (0x2132, "vehicle_power"), (0x2133, "m1_temperature"),
-        (0x2134, "m2_temperature"), (0x2135, "drive_temperature"),
+        (0x2132, "vehicle_power"),
     ], "suspect")
+    typed_scalars("remote_vehicle", [
+        (0x2133, "m1_temperature"), (0x2134, "m2_temperature"),
+        (0x2135, "drive_temperature"),
+    ], "i16", "suspect")
     scalars("vehicle", [
         (0x2200, "maximum_acceleration"), (0x2201, "wheel_diameter_mm"),
         (0x2202, "motor_teeth"), (0x2203, "wheel_teeth"),
@@ -94,6 +108,10 @@ def catalog() -> list[ReadTarget]:
         (0x3007, "can_baud_enum"), (0x3008, "control_input_source"),
         (0x3009, "maximum_bus_voltage_dv"), (0x300A, "overload_timeout_ms"),
         (0x300B, "power_on_encoder_calibration"),
+        (0x300C, "communication_timeout_ms"),
+        (0x300D, "undervoltage_protection_dv"),
+        (0x300E, "motor_powerup_enable"),
+        (0x300F, "differential_mechanism"),
         (0x3100, "save_parameters_command"), (0x3180, "heartbeat_or_in_position"),
     ], "manual_or_suspect")
     for index, address in enumerate(range(0x3200, 0x3218, 2)):
@@ -115,6 +133,8 @@ def catalog() -> list[ReadTarget]:
         (0x5024, "m1_kv_tenth_rpm_per_v"), (0x5025, "m2_kv_tenth_rpm_per_v"),
         (0x5028, "m1_rotation_direction"), (0x5029, "m2_rotation_direction"),
         (0x502C, "m1_sensor_type"), (0x502D, "m2_sensor_type"),
+        (0x5030, "m1_driving_wheel_teeth"), (0x5031, "m2_driving_wheel_teeth"),
+        (0x5034, "m1_driven_wheel_teeth"), (0x5035, "m2_driven_wheel_teeth"),
     ])
     scalars("motion_config", [
         (0x5100, "m1_control_mode"), (0x5101, "m2_control_mode"),
@@ -136,6 +156,21 @@ def catalog() -> list[ReadTarget]:
     ]:
         items.append(target("pid", name, address, 2, "float32_words"))
     scalars("pid", [(0x5240, "m1_speed_dead_zone"), (0x5241, "m2_speed_dead_zone")])
+    for address, name in [
+        (0x5248, "m1_speed_acc_kp"), (0x524A, "m2_speed_acc_kp"),
+        (0x5250, "m1_speed_acc_ki"), (0x5252, "m2_speed_acc_ki"),
+        (0x5258, "m1_speed_acc_kd"), (0x525A, "m2_speed_acc_kd"),
+    ]:
+        items.append(target("pid", name, address, 2, "float32_words", "sv_config"))
+    scalars("pid_filter", [
+        (0x5260, "m1_position_kd_filter"), (0x5262, "m2_position_kd_filter"),
+        (0x5264, "m1_speed_kd_filter"), (0x5266, "m2_speed_kd_filter"),
+        (0x5268, "m1_acc_kd_filter"), (0x526A, "m2_acc_kd_filter"),
+        (0x526C, "m1_speed_feedback_filter"), (0x526E, "m2_speed_feedback_filter"),
+        (0x5270, "m1_acc_feedback_filter"), (0x5272, "m2_acc_feedback_filter"),
+        (0x5274, "m1_current_command_filter"), (0x5276, "m2_current_command_filter"),
+        (0x5278, "m1_speed_loop_bypass"), (0x527A, "m2_speed_loop_bypass"),
+    ], "sv_config")
 
     scalars("command_state", [
         (0x5300, "m1_control_command"), (0x5301, "m2_control_command"),
@@ -148,12 +183,14 @@ def catalog() -> list[ReadTarget]:
     ])
     scalars("telemetry", [
         (0x5400, "m1_status"), (0x5401, "m2_status"),
-        (0x5404, "m1_motor_temperature_dc"), (0x5405, "m2_motor_temperature_dc"),
-        (0x5408, "m1_bus_voltage_dv"), (0x5409, "m2_bus_voltage_dv"),
-        (0x540C, "m1_mos_temperature_dc"), (0x540D, "m2_mos_temperature_dc"),
-        (0x5410, "m1_actual_speed_rpm"), (0x5411, "m2_actual_speed_rpm"),
-        (0x5414, "m1_actual_current_da"), (0x5415, "m2_actual_current_da"),
+        (0x540C, "m1_bus_voltage_dv"), (0x540D, "m2_bus_voltage_dv"),
     ])
+    typed_scalars("telemetry", [
+        (0x5404, "m1_motor_temperature_dc"), (0x5405, "m2_motor_temperature_dc"),
+        (0x5408, "m1_mos_temperature_dc"), (0x5409, "m2_mos_temperature_dc"),
+        (0x5410, "m1_actual_speed_tenth_rpm"), (0x5411, "m2_actual_speed_tenth_rpm"),
+        (0x5414, "m1_actual_current_da"), (0x5415, "m2_actual_current_da"),
+    ], "i16", "sv_config")
     items.extend([
         target("telemetry", "m1_position", 0x5418, 2, "i32"),
         target("telemetry", "m2_position", 0x541A, 2, "i32"),
@@ -165,27 +202,29 @@ def catalog() -> list[ReadTarget]:
         (0x5500, "m1_calibration_command"), (0x5501, "m2_calibration_command"),
         (0x5504, "encoder_lines_or_bits"),
         (0x5508, "m1_installation_direction"), (0x5509, "m2_installation_direction"),
-        (0x550C, "m1_encoder_bias_deg"), (0x550D, "m2_encoder_bias_deg"),
-        (0x5580, "m1_encoder_temperature_dc"), (0x5581, "m2_encoder_temperature_dc"),
         (0x5584, "m1_encoder_calibration_status"), (0x5585, "m2_encoder_calibration_status"),
     ], "manual_or_suspect")
+    typed_scalars("encoder", [
+        (0x550C, "m1_encoder_bias_deg"), (0x550D, "m2_encoder_bias_deg"),
+        (0x5580, "m1_encoder_temperature_dc"), (0x5581, "m2_encoder_temperature_dc"),
+    ], "i16", "sv_config")
     scalars("hall", [
         (0x5600, "m1_calibration_command"), (0x5601, "m2_calibration_command"),
-        (0x5605, "m2_calibration_current_candidate_a"),
-        (0x5609, "m2_calibration_current_candidate_b"),
         (0x5620, "m1_installation_120_or_60"), (0x5621, "m2_installation_120_or_60"),
-        (0x5624, "m1_calibration_current"),
-    ], "manual_or_suspect")
+        (0x5624, "m1_calibration_current"), (0x5625, "m2_calibration_current"),
+    ], "sv_config")
     items.extend([
         target("hall", "m1_angle_table", 0x5640, 8, "i16[8]"),
         target("hall", "m2_angle_table", 0x5650, 8, "i16[8]"),
     ])
     scalars("hall", [
-        (0x5680, "m1_sensor_temperature_dc"), (0x5681, "m2_sensor_temperature_dc"),
         (0x5684, "m1_calibration_status"), (0x5685, "m2_calibration_status"),
         (0x5688, "m1_hall_status"), (0x5689, "m2_hall_status"),
-        (0x568C, "m1_current_angle_deg"), (0x568D, "m2_current_angle_deg"),
     ], "observed_or_manual")
+    typed_scalars("hall", [
+        (0x5680, "m1_sensor_temperature_dc"), (0x5681, "m2_sensor_temperature_dc"),
+        (0x568C, "m1_current_angle_deg"), (0x568D, "m2_current_angle_deg"),
+    ], "i16", "sv_config")
     return items
 
 

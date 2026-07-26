@@ -30,7 +30,7 @@ La presencia de `robot_state_model`, su servicio mutex, `command_authority` y
 instancia como ruta de movimiento ni existe aún un coordinador único que haga el
 gate inmediatamente antes del I/O.
 
-## Implementación Disponible En Build 13
+## Implementación Introducida En Build 13 Y Presente En Build 19
 
 - `command_authority_model` implementa prioridad `RC > LAN > Bluetooth`, TTL,
   dead-man, secuencia, historial acotado fail-closed de streams retirados,
@@ -46,8 +46,11 @@ gate inmediatamente antes del I/O.
   tamaño, stream/sequence y límites de velocidad; solo emite eventos tipados. El
   componente está compilado pero no se inicia hasta conectar gate, autoridad,
   perfil y coordinador.
-- `main`, USB `MOVE_VEL`, `robot_control`, RC y Bluetooth siguen en la ruta
-  heredada. Por tanto no hay autorización de movimiento LAN ni `GATE-SAFE`.
+- `main`, USB `MOVE_VEL` y `robot_control` siguen en la ruta heredada. PPM/RC no
+  genera movimiento y Bluetooth no está conectado al árbitro. `control_lan`
+  tampoco autoriza movimiento, pero build 19 añadió una excepción directa
+  `maintenance_lan SET_SPEED` para banco, sin TTL ni `GATE-SAFE`. ADR-0004 la
+  documenta y `SAFE-011` exige retirarla/gatearla antes de piso/producto.
 
 ## Inventario Físico
 

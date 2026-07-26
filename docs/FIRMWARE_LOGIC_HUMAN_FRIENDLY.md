@@ -1,6 +1,6 @@
 # Lógica del Firmware Explicada para Humanos
 
-Fecha: 2026-07-19
+Fecha de última revisión: 2026-07-25
 
 Este documento explica qué hace el firmware sin asumir conocimientos de C/C++. Separa cuidadosamente el comportamiento que existe hoy del comportamiento objetivo descrito en los planes.
 
@@ -77,7 +77,7 @@ crear driver SVD48 con:
 crear robot_control con:
     geometría fija RAFA 1.60m x 0.70m
     4 motores
-    máximo 300 RPM
+    máximo temporal 15 RPM
     servos deshabilitados
 
 enviar STOP ALL de mejor esfuerzo al arrancar
@@ -155,17 +155,17 @@ No significa cero. No significa motor detenido. No significa controlador sano.
 Ejemplo:
 
 ```text
-última lectura válida RPM = 500
+última lectura válida raw_speed_d10 = 500 (aprox. 50.0 RPM)
 se desconecta RS485
 después de 1 segundo:
-    RPM guardada puede seguir diciendo 500
+    el raw guardado puede seguir diciendo 500
     STALE = 1
 ```
 
 La representación correcta es:
 
 ```text
-valor=500, freshness=STALE, age=1200ms
+raw_d10=500, rpm=50.0, freshness=STALE, age=1200ms
 ```
 
 No:
@@ -346,12 +346,21 @@ un formulario web de banco, pero sigue sin sesión exclusiva, catálogo completo
 hard ceilings, deduplicación, rollback ni persistencia verificada. Nunca se debe
 reintentar un resultado `UNKNOWN`/`ACKED_UNVERIFIED` sin leer primero.
 
+Build 19 contiene además una excepción temporal para diagnóstico con ruedas
+elevadas: `maintenance_lan` acepta `SET_SPEED n rpm` y `STOP n|ALL`. La consigna
+queda limitada a `+/-15 RPM`, pero **no vence** si desaparece el cliente o el
+Wi-Fi. No existe dead-man, TTL ni arbitraje en esa ruta; una consigna exitosa
+puede seguir activa hasta recibir otra consigna/stop o hasta que actúe otra
+condición de seguridad. Por eso no es un canal de movimiento productivo.
+
 ## Movimiento Actual Simplificado
 
 Para `SET_SPEED`:
 
 ```text
 validar motor
+rechazar si |rpm| > 15
+limitar nuevamente al máximo de robot_control
 escribir nueva RPM
 enviar START
 si falla:
@@ -442,10 +451,12 @@ LAN --------> mailbox LAN ----------+--> arbitro --> safety --> kinematics --> I
 Bluetooth --> mailbox Bluetooth ----+
 ```
 
-`maintenance_lan` sigue siendo diagnostico/configuracion. Un `control_lan`
-separado recibe solamente comandos compactos con stream, secuencia y TTL, y los
-publica en el mailbox LAN. No se habilita movimiento dentro del parser ASCII de
-mantenimiento.
+El diseño objetivo mantiene `maintenance_lan` como diagnóstico/configuración. Un
+`control_lan` separado recibe solamente comandos compactos con stream, secuencia
+y TTL, y los publica en el mailbox LAN. Ese diseño todavía no está activo. La
+excepción directa `SET_SPEED` de build 19 contradice temporalmente esta frontera
+y debe retirarse o quedar detrás del coordinador antes de cualquier prueba de
+piso/producto (`SAFE-011`, ADR-0004).
 
 En cada ciclo rapido:
 

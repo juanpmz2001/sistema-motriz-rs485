@@ -2,7 +2,10 @@
 
 Date: 2026-07-17
 
-Overall status: `IN_PROGRESS`; host/build subset has passed, no hardware row has passed in this implementation session.
+Overall status: `IN_PROGRESS`. Host/build baselines and a limited build-19
+elevated SVD48 diagnosis have evidence, but the mandatory safety, authority,
+latency, persistence and complete elevated campaign remain open. Nothing in this
+matrix authorizes a floor test.
 
 This matrix must pass before creating a floor-test plan. It does not authorize floor operation.
 
@@ -56,7 +59,7 @@ Stop immediately on unexpected motion, wrong wheel/servo mapping, inability to s
 
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| `TEST-HOST-001` | Firmware clean build | Build with supported ESP-IDF/toolchain | Success; sizes within OTA slots | `E2` | `PASS 2026-07-19` |
+| `TEST-HOST-001` | Firmware clean build | Build with supported ESP-IDF/toolchain | Success; sizes within OTA slots | `E2` | `PASS 2026-07-25` (build 19, fullclean) |
 | `TEST-HOST-002` | SVD48 protocol suite | Run CRC/frame/parser/codec/catalog tests | All golden and malformed cases pass | `E1` | `IN_PROGRESS` |
 | `TEST-HOST-003` | Profile validation suite | Run every valid/invalid/migration/corruption fixture | Stable exact results | `E1` | `NOT_STARTED` |
 | `TEST-HOST-004` | Kinematic suite | Run all strategy/sign/saturation/NaN fixtures | Targets match independently calculated fixtures | `E1` | `IN_PROGRESS` (differential passes) |
@@ -111,6 +114,38 @@ Incremental evidence from firmware build 14 (2026-07-20):
   the absent-drive read to HTTP `409`; backend actuation validation returned HTTP
   `400` before transport. No physical SVD48 write was attempted.
 
+Incremental evidence from firmware build 19 (2026-07-21):
+
+- The gateway and `robot_control` enforced a temporary absolute `+/-15 RPM`
+  ceiling; a 16 RPM request was rejected before actuation (elevated-motion
+  evidence, but the complete `E5` setup record is incomplete).
+- Official SV-Config XML inventory read 339/339 declared parameters from ID 2,
+  software `0x0131`. It confirmed high-word-first observed floats, gear fields
+  `0x5030/31/34/35`, M2 Hall current `0x5625`, telemetry address/scales and
+  additional PID/filter fields (`E4`).
+- Confirmed raw FC06/FC16 writes exercised current/limits/PID/Hall/gear with old
+  values and readback. Both Hall calibrations ended failed (`status=2`). Inverted
+  gear `5/1` caused oscillation, overload `0x00000800`, and controller loss until
+  power cycle. It must not be repeated (elevated-motion evidence; not a complete
+  `E5` campaign record).
+- All writable words present in the original 2026-07-20 snapshot were restored;
+  final save `0x3100=1` was acknowledged. M2 Hall-table words that software
+  `0x0131` rejects and fields absent from the original scan cannot be claimed as
+  restored. Final post-restore power-cycle persistence remains open (`E4`).
+- `maintenance_lan` temporarily allowed `SET_SPEED`/`STOP` for this campaign.
+  That path has no TTL/dead-man/authority gate. Its removal/gating is a release
+  blocker (`SAFE-011`, ADR-0004), not a completed LAN-control feature.
+
+Build-19 source regression evidence (2026-07-25):
+
+- Host CTest passed 7/7 normally and 7/7 with ASan/UBSan (`E1`).
+- The independent Python SVD48 oracle passed 3/3 and all tools compiled with
+  `py_compile`.
+- A fullclean ESP-IDF 5.4.1 build passed for `esp32s3`; app binary `0x101700`
+  fits the `0x600000` OTA slot with 83% free (`E2`).
+- `idf.py size` reports IRAM `16383/16384` (1 byte free) and DIRAM
+  `104991/341760`; IRAM pressure remains an explicit operational risk.
+
 ## C. ESP Without SVD48/Motors
 
 | ID | Test | Action | Expected | Evidence | Status |
@@ -137,22 +172,24 @@ Incremental evidence from firmware build 14 (2026-07-20):
 
 ## D. SVD48 Read-Only Bus Tests
 
-Motor power should be isolated where controller communication permits; otherwise wheels remain removed/free and movement commands are forbidden.
+Motor power should be isolated where controller communication permits; otherwise
+wheels remain removed/free and movement commands are forbidden except for a
+separately approved elevated-motion test row with all required controls.
 
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | `TEST-SVD-001` | Controller inventory | Read IDs/product/software/hardware/boot versions | Stable identity per physical drive | `E4` | `DONE` for ID 2 (`0x0131/0x0300/0x0103/0x0101`) |
 | `TEST-SVD-002` | Duplicate/wrong ID | Configure harness/mock duplicate or query absent ID | Structured exception/timeout; no bus lockup | `E4` | `NOT_STARTED` |
-| `TEST-SVD-003` | Full verified parameter read | Read every catalog `OBSERVED/IMPLEMENTED` field | Values typed, ranged, timestamped, no writes | `E4` | `IN_PROGRESS` (187 groups captured; final typed catalog/range semantics pending) |
+| `TEST-SVD-003` | Full verified parameter read | Read every catalog `OBSERVED/IMPLEMENTED` field | Values typed, ranged, timestamped, no writes | `E4` | `IN_PROGRESS` (339/339 official XML parameters captured; versioned runtime catalog/range semantics pending) |
 | `TEST-SVD-004` | Manual-only read survey | Read safe manual fields in approved ranges | Value or preserved exception stored with controller version | `E4` | `DONE` for ID 2/software `0x0131` |
 | `TEST-SVD-005` | USB/LAN parity | Read identical groups over both transports | Same typed values/result codes within timestamp tolerance | `E4` | `NOT_STARTED` |
-| `TEST-SVD-006` | Float fixture | Compare typed float read with SV-Config capture | Exact word order/value confirmed | `E4` | `IN_PROGRESS` (raw patterns strongly support high-word-first; SV-Config comparison pending) |
+| `TEST-SVD-006` | Float fixture | Compare typed float read with SV-Config capture | Exact word order/value confirmed | `E4` | `IN_PROGRESS` (official XML/live read/write/restoration confirms high-word-first for observed fields; shared runtime fixture/API pending) |
 | `TEST-SVD-007` | Exception fidelity | Issue approved invalid read/write to spare/bench drive | Function and exception code preserved end to end | `E4` | `NOT_STARTED` |
 | `TEST-SVD-008` | CRC/noise handling | Inject corrupt/truncated/wrong-slave responses in harness | Retry/timeout metrics and no wrong data acceptance | `E2/E4` | `NOT_STARTED` |
 | `TEST-SVD-009` | One drive absent | Disconnect one controller during polling | Other controller remains fresh; absent drive backs off; safety state explicit | `E4/E5` | `NOT_STARTED` |
 | `TEST-SVD-010` | Bus saturation | Run maximum approved telemetry/config reads | Stop class remains bounded; no watchdog/reset | `E4/E5` | `NOT_STARTED` |
 | `TEST-SVD-011` | Position scale | Rotate known motor/wheel turns manually or at minimal speed | Counts/revolution and sign recorded per channel | `E4/E5` | `NOT_STARTED` |
-| `TEST-SVD-012` | Error decode baseline | Read zero/nonzero error/status fields | Raw and decoded representation agree | `E4` | `IN_PROGRESS` (raw zero errors captured; nonzero/decode fixture pending) |
+| `TEST-SVD-012` | Error decode baseline | Read zero/nonzero error/status fields | Raw and decoded representation agree | `E4` | `IN_PROGRESS` (zero baseline and overload `0x00000800` captured; complete decoded catalog/fixtures pending) |
 
 ## E. Profile and Drift Tests
 
@@ -185,7 +222,7 @@ calibration.
 
 ### F0. Provisional Raw Editor Acceptance
 
-These rows validate the build-14 escape hatch; passing them does not mark the
+These rows validate the build-19 escape hatch; passing them does not mark the
 target guarded job tests below as complete.
 
 | ID | Test | Action | Expected | Evidence | Status |
@@ -193,11 +230,11 @@ target guarded job tests below as complete.
 | `TEST-WRITE-P001` | USB/LAN parity | Read the same benign register through both transports | Same drive/start/count/words | `E3/E4` | `NOT_STARTED` |
 | `TEST-WRITE-P002` | Confirm required | Omit or alter `CONFIRM` | Rejected before RS485 write | `E2/E4` | `IN_PROGRESS` (fake/web and real LAN rejection passed; traced controller bus pending) |
 | `TEST-WRITE-P003` | Actuation denylist | Try `0x5300/01`, `0x5304/05`, `0x5308/09` | Rejected before RS485 write | `E2/E4` | `DONE` for build 14 policy (`E2/E3`; no controller needed) |
-| `TEST-WRITE-P004` | Single benign readback | Change one backed-up low-risk word | old/request/readback exact; `VERIFIED:1` | `E4` | `NOT_STARTED` |
-| `TEST-WRITE-P005` | Two-word readback | Write two known raw words, then read | exact order and values; no blind retry | `E4` | `NOT_STARTED` |
+| `TEST-WRITE-P004` | Single benign readback | Change one backed-up low-risk word | old/request/readback exact; `VERIFIED:1` | `E4` | `DONE` for multiple build-19 bench fields; production typed workflow remains separate |
+| `TEST-WRITE-P005` | Two-word readback | Write two known raw words, then read | exact order and values; no blind retry | `E4` | `DONE` for observed float word pairs and restoration |
 | `TEST-WRITE-P006` | Ambiguous result | Drop write ACK/readback response | UI says result uncertain and forbids blind retry | `E2/E4` | `IN_PROGRESS` (fake LAN/API passed; physical response loss pending) |
-| `TEST-WRITE-P007` | PID float order | Read known PID through SV-Config/ESP and compare both orders | one captured order becomes evidence; no PID write before it | `E4` | `NOT_STARTED` |
-| `TEST-WRITE-P008` | Persistence | Read, write, stop/save as approved, power-cycle, read | exact persistence result recorded per field | `E4` | `NOT_STARTED` |
+| `TEST-WRITE-P007` | PID float order | Read known PID through SV-Config/ESP and compare both orders | one captured order becomes evidence; no PID write before it | `E4` | `DONE` for observed XML fields: high-word-first; typed fixture still tracked by `SVD-004` |
+| `TEST-WRITE-P008` | Persistence | Read, write, stop/save as approved, power-cycle, read | exact persistence result recorded per field | `E4` | `IN_PROGRESS` (save ACK captured; final restored-baseline power-cycle read pending) |
 
 ### F1. Target Guarded Job
 
@@ -225,9 +262,9 @@ Begin at the smallest command that produces observable movement and enforce low 
 
 | ID | Test | Action | Expected | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| `TEST-MAP-001` | Individual wheel identity | Command one enabled logical motor at a time | Only expected physical wheel moves | `E5` | `NOT_STARTED` |
+| `TEST-MAP-001` | Individual wheel identity | Command one enabled logical motor at a time | Only expected physical wheel moves | `E5` | `IN_PROGRESS` (M1/M2 individual diagnosis captured; formal corner/profile mapping record pending) |
 | `TEST-MAP-002` | Individual direction | Minimal positive/negative command per wheel | Physical forward convention and telemetry sign match profile | `E5` | `NOT_STARTED` |
-| `TEST-MAP-003` | Individual stop | Stop each moving wheel | Command zero/status/RPM converge within bound | `E5` | `NOT_STARTED` |
+| `TEST-MAP-003` | Individual stop | Stop each moving wheel | Command zero/status/RPM converge within bound | `E5` | `IN_PROGRESS` (zero/readback captured; stop latency bound not measured) |
 | `TEST-MAP-004` | Servo identity | Move each servo by small positive/negative angle | Only expected corner moves in expected direction | `E5` | `NOT_STARTED` |
 | `TEST-MAP-005` | Servo center/trim | Command neutral and measure wheel angle | Within accepted alignment tolerance | `E5` | `NOT_STARTED` |
 | `TEST-MAP-006` | Servo limits | Approach software min/max in steps | Never contacts mechanical stop or exceeds pulse ceiling | `E5` | `NOT_STARTED` |
@@ -269,6 +306,7 @@ Begin at the smallest command that produces observable movement and enforce low 
 | `TEST-SAFE-023` | No stale fallback after RC loss | Keep an older LAN/BT command, then lose active RC while moving | STOP + fault; no lower-source command applies until ACK/re-arm/fresh epoch | `E1/E5` | `NOT_STARTED` |
 | `TEST-SAFE-024` | LAN TTL loss | Stop LAN heartbeat while moving and BT has an older command | STOP + fault within bound; no fallback to BT | `E1/E5` | `NOT_STARTED` |
 | `TEST-SAFE-025` | USB bypass removal | Invoke every legacy USB movement command in conflicting states | Each enters the arbiter/gate or is explicitly disabled; none writes directly | `E1/E3/E5` | `NOT_STARTED` |
+| `TEST-SAFE-026` | Maintenance-LAN bench bypass removal | Drop client/Wi-Fi after a nonzero engineering command, then test final implementation | Build 19 hazard is reproduced only under controlled elevated conditions; released firmware routes through TTL/state/authority or rejects direct `SET_SPEED` | `E1/E3/E5` | `NOT_STARTED`; critical release blocker `SAFE-011`, do not intentionally run loss-with-motion until coordinator exists |
 
 ## I. Backend, LAN, and Deferred Frontend Tests
 
@@ -277,7 +315,7 @@ Begin at the smallest command that produces observable movement and enforce low 
 | `TEST-WEB-001` | Production unauthenticated access | Call future production REST/WS without identity | Rejected by production trust layer | `E2/E3` | `DEFERRED` |
 | `TEST-WEB-002` | Production role policy | Use future read-only/operator/admin fixtures | Each sees only negotiated actions | `E2` | `DEFERRED` |
 | `TEST-WEB-003` | Production CSRF/origin | Cross-origin state-changing request/WS | Rejected | `E2` | `DEFERRED` |
-| `TEST-WEB-004` | Generic command defense | Submit blocked motion/raw/config commands in LAN mode | Backend and firmware both reject with matching policy code | `E2/E3` | `IN_PROGRESS` (movement and actuation blocked; full generic policy matrix pending) |
+| `TEST-WEB-004` | Generic command defense | Submit blocked motion/raw/config commands in LAN mode | Backend and firmware both enforce the documented current policy | `E2/E3` | `IN_PROGRESS` (build 19 intentionally allows capped `SET_SPEED`; UI/backend must label or disable it, and product policy must remove/gate it) |
 | `TEST-WEB-005` | Truthful device error | Cause SVD timeout/exception | HTTP/UI show failure, never success with hidden `ERR` | `E2/E4` | `IN_PROGRESS` (absent-drive timeout mapped to HTTP `409` over USB/LAN; real exception pending) |
 | `TEST-WEB-006` | Two browser telemetry | Subscribe from two clients | One backend poll stream; both receive correlated typed samples | `E2/E4` | `NOT_STARTED` |
 | `TEST-WEB-007` | Concurrent maintenance jobs | Two clients apply different change sets | One firmware job runs; other gets explicit busy/conflict | `E2/E3` | `NOT_STARTED` |

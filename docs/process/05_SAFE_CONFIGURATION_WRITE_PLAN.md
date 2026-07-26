@@ -9,6 +9,14 @@ readback y editor web. Todavía faltan coordinador/gate runtime, adaptadores de
 fuentes, catálogo tipado completo, operación exclusiva, perfil JSON y writes de
 producción.
 
+Actualización 2026-07-25: build 19 añadió un límite temporal de `15 RPM`,
+inventario oficial XML de 339 parámetros y herramientas de captura Hall/speed.
+Hubo write/readback físico de PID, límites, Hall y gear, seguido por restauración
+de todos los RW presentes en la captura original. Esto aporta evidencia, pero no
+convierte el acceso raw en un servicio productivo. Además, `maintenance_lan`
+permite temporalmente `SET_SPEED` sin TTL; esa desviación crítica se rastrea como
+`SAFE-011`/ADR-0004.
+
 ## Avance Verificado
 
 - `components/robot_state/robot_state_model.c` implementa seis estados, inhibits,
@@ -19,14 +27,15 @@ producción.
 - `tests/` aporta CMake/CTest, fake clock y event sink.
 - `svd48_write_registers_by_id()` valida FC `0x10` y hace un solo intento para no
   repetir a ciegas un write cuyo ACK se perdió.
-- `./tools/run_host_tests.sh` pasa 7/7 y ESP-IDF 5.4.1 compila build 14 para
-  `esp32s3`.
+- `./tools/run_host_tests.sh` pasa 7/7 normal y 7/7 con ASan/UBSan; un build
+  fullclean ESP-IDF 5.4.1 de build 19 pasa para `esp32s3` (`E1/E2`, 2026-07-25).
 - El write provisional exige `CONFIRM`, bloquea registros de actuación, consulta
   el stopped heuristic, captura old value, escribe y verifica readback. FC
   `0x10` no hace retry ciego.
 - El backend web ya ofrece `/api/svd48/register/read` y
   `/api/svd48/register/write`; la UI de banco muestra words y ambas
-  interpretaciones float. El orden float PID sigue sin evidencia física.
+  interpretaciones float. XML oficial, inventarios y write/readback/restauración
+  confirman high-word-first para los campos PID/eléctricos observados.
 
 Esto no autoriza movimiento ni configura por sí solo un controlador físico. El
 vertical raw es utilizable únicamente con ruedas elevadas y corte disponible;
@@ -81,8 +90,8 @@ para el prototipo LAN. Los secretos nunca se incluyen en el robot JSON.
 | Estado | modelo puro no integrado | una ruta puede mover mientras otra detiene |
 | Fuentes | sin árbitro único | stale, prioridad y preempción no están definidas runtime |
 | Movimiento | target-before-START y fail-stop best effort | no consulta gate; apply sigue secuencial |
-| SVD48 write | raw confirmado FC `0x06/0x10`, old value y readback | sin catálogo completo, job, dedupe, rollback o save verificado |
-| LAN | token; read/STOP y raw config confirmado | no transporta JSON grande ni change sets idempotentes |
+| SVD48 write | raw confirmado FC `0x06/0x10`, old value/readback; save ACK observado | sin catálogo runtime, job, dedupe, rollback o persistencia tras power cycle |
+| LAN | token; read/STOP, raw config y excepción temporal `SET_SPEED` a `+/-15 RPM` | `SET_SPEED` no tiene TTL/dead-man/gate; no transporta JSON grande ni change sets idempotentes |
 | Perfil | literales en `main.c` | topología/pines/geometría no son configurables |
 | Backend | transporte serial/LAN y endpoints raw de registros con tests LAN fake | faltan dominio de perfiles/jobs, tests serial/fault completos y HIL |
 

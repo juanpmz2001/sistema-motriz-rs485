@@ -5,6 +5,18 @@ Firmware repo: `/mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/si
 Baseline commit: `213223d Enable OTA rollback validation`  
 Scope: Iteration 9.5-A documentation only.
 
+Historical notice (reviewed 2026-07-25): all sizes, map sections and
+recommendations in this file belong to the named Iteration 9.5 baseline. They do
+not describe build 19. Re-run `idf.py size`, inspect the current map and use the
+current checklist before making a memory/IRAM decision.
+
+Build-19 follow-up measured on 2026-07-25 after `idf.py fullclean` followed by
+`idf.py build`: app binary `0x101700`, 83% of each `0x600000` OTA slot free;
+`idf.py size`
+still reports IRAM `16383/16384` (1 byte free), DIRAM `104991/341760`, Flash Code
+`771938` and total image `1054344` bytes. The detailed attribution below remains
+historical, but the IRAM-capacity risk itself is still current.
+
 ## 1. Executive Summary
 
 The firmware after Iteration 9 is functional for lab use: manual OTA works, rollback is enabled, post-boot validation is proven, RS485 control still works, and the 16 MB OTA partition layout has very large flash margin.

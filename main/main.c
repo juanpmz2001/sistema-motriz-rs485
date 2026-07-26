@@ -189,7 +189,7 @@ void app_main(void)
         .wheelbase_m = 1.60f,
         .track_width_m = 0.70f,
         .wheel_radius_m = 0.10f,
-        .max_wheel_rpm = 300.0f,
+        .max_wheel_rpm = 15.0f,
         .enable_steering_servos = false,
         .steering_servo_pins = { STEER_FL_PIN, STEER_FR_PIN, STEER_RL_PIN, STEER_RR_PIN },
         .servo_min_us = 1000,

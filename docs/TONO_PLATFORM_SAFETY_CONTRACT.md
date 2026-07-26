@@ -1,6 +1,8 @@
 # Toño Platform Safety Contract
 
-This document captures the current low-level platform contract for the ESP32-S3 firmware. It is intentionally scoped to the supervised prototype state of the project.
+This document captures the current low-level platform contract for the ESP32-S3
+firmware, reviewed against build 19 on 2026-07-25. It is intentionally scoped to
+the supervised elevated-bench prototype state of the project.
 
 ## Current Boundary
 
@@ -11,7 +13,9 @@ The ESP32-S3 firmware owns hardware-adjacent behavior:
 - Legacy independent-steering calculations remain available, but steering PWM is disabled by the current RAFA defaults.
 - Wi-Fi configuration and OTA diagnostics/update flow.
 - The ASCII serial gateway used by a PC or Jetson-side supervisor in lab conditions.
-- Authenticated LAN maintenance for diagnostics/telemetry, `STOP ALL`, and provisional confirmed raw SVD48 configuration writes.
+- Authenticated LAN maintenance for diagnostics/telemetry, `STOP n|ALL`,
+  provisional confirmed raw SVD48 configuration writes, and a temporary direct
+  `SET_SPEED n rpm` elevated-bench exception capped at `+/-15 RPM`.
 
 The ESP32-S3 does not currently own:
 
@@ -23,16 +27,28 @@ The ESP32-S3 does not currently own:
 
 ## Current Command Authority
 
-Current movement authority is `SERIAL_ASCII`.
+The active runtime has direct command entry points rather than one authoritative
+arbiter. `PLATFORM_STATUS` still reports the compatibility label
+`AUTHORITY:SERIAL_ASCII`, but authenticated maintenance LAN can also invoke the
+temporary direct `SET_SPEED` path.
 
 - Any client with access to the ESP32 console can send movement and maintenance commands.
-- A LAN maintenance client can send diagnostics/telemetry, `STOP ALL`, reads and confirmed SVD48 configuration writes. It still blocks movement, runtime-actuation registers, sensitive ESP configuration mutation and destructive OTA commands with `ERR LAN_COMMAND_BLOCKED`.
+- A LAN maintenance client can send diagnostics/telemetry, `STOP n|ALL`, reads,
+  confirmed SVD48 configuration writes and temporary direct `SET_SPEED` up to
+  `+/-15 RPM`. It blocks `MOVE_VEL`, `ENABLE`, `CLEAR_FAULT`, raw writes to known
+  runtime-actuation registers, sensitive ESP configuration mutation and
+  destructive OTA commands with `ERR LAN_COMMAND_BLOCKED`.
+- The LAN `SET_SPEED` exception has no lease, heartbeat, dead-man, authority
+  arbitration or automatic stop on network/client loss. Token authentication and
+  a speed ceiling do not solve that hazard. It is permitted only for supervised
+  elevated diagnosis with a physical cutoff and must be removed/gated before
+  floor or product operation (`SAFE-011`).
 - `STOP n|ALL` is always the expected immediate software stop path.
 - Raw register commands are elevated-bench maintenance tools. They pre-read and verify readback but do not yet provide an exclusive maintenance state, complete typed ranges, persistence or rollback.
 - PPM GPIO14 is observed by diagnostics and RC-loss safety only. It is not current movement authority and never auto-arms this firmware.
 - OTA update is blocked unless `robot_control_is_safe_for_ota()` sees no active command and no online/non-stale motor above the safe RPM threshold.
 
-This is acceptable only for supervised prototype testing. The approved target is
+This is acceptable only for supervised elevated-bench testing. The approved target is
 not a Jetson-only authority: RC, LAN backend and Bluetooth may all be connected,
 but one ESP-owned arbiter enforces `RC > LAN > Bluetooth`, command TTL,
 stop-before-switch and no stale fallback. Any future Jetson/backend participates
@@ -60,6 +76,8 @@ Not implemented yet:
 Current highest-priority work:
 
 - Wire the existing pure state model into every actuator output.
+- Remove or gate the temporary `maintenance_lan SET_SPEED` bypass behind the
+  same TTL/authority/state coordinator (`SAFE-011`).
 - Add command TTL and simultaneous `RC > LAN > Bluetooth` arbitration.
 - Add emergency-class stop scheduling and fault latch integration.
 - Replace compile-time topology with the validated canonical robot JSON.

@@ -30,3 +30,12 @@ Required fields:
 ```
 
 An ADR records why a decision was made. The process work item and tests still record whether it was implemented successfully.
+
+Current records:
+
+- `0001-management-and-motion-boundaries.md`: accepted target boundary.
+- `0002-canonical-json-robot-profile.md`: accepted profile ownership/model.
+- `0003-simultaneous-command-source-arbitration.md`: accepted target authority.
+- `0004-temporary-maintenance-lan-bench-actuation.md`: temporary build-19
+  engineering exception; prohibited for floor/product use and tracked by
+  `SAFE-011`.

@@ -47,6 +47,7 @@ esp_err_t robot_control_stop_all(robot_control_handle_t handle);
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t motor, int16_t rpm);
+float robot_control_get_max_wheel_rpm(robot_control_handle_t handle);
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps);
 esp_err_t robot_control_poll_once(robot_control_handle_t handle);
 void robot_control_set_trace_enabled(robot_control_handle_t handle, bool enabled);

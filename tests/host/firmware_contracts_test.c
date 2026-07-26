@@ -291,6 +291,8 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *identify_start[] = { "SVD48_IDENTIFY", "1", "M2", "START", "confirm" };
     const char *identify_missing_confirm[] = { "SVD48_IDENTIFY", "1", "M2", "START" };
     const char *move[] = { "MOVE_VEL", "1", "0", "0" };
+    const char *set_speed[] = { "SET_SPEED", "2", "5" };
+    const char *set_speed_bad_shape[] = { "SET_SPEED", "2" };
     const char *stop_one[] = { "STOP", "0" };
     const char *stop_all[] = { "STOP", "ALL" };
 
@@ -309,7 +311,9 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(5, identify_start));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, identify_missing_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(4, move));
-    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, stop_one));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, set_speed));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, set_speed_bad_shape));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
     return true;

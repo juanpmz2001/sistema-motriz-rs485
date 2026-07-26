@@ -1,6 +1,13 @@
-# SVD48 ID 2 Current State Summary
+# SVD48 ID 2 State Snapshot Before Parameterization
 
 Capture date: 2026-07-20
+
+This is an immutable interpretation of the pre-parameterization snapshot, not a
+claim about the controller's current state. The 2026-07-21 experiments and final
+restoration are documented in `SVD48_BENCH_DIAGNOSIS_2026-07-21.md` and
+`SVD48_RESTORE_TO_INITIAL_2026-07-21.md`. Later XML evidence also corrected the
+gear addresses, M2 Hall-current address, MOS/bus labels and actual-speed scale as
+noted below.
 
 Source files:
 
@@ -60,14 +67,15 @@ order produces impossible magnitudes:
 The controller wheel diameter is `100 mm`. The current RAFA firmware reference
 uses wheel radius `0.10 m`, equivalent to `200 mm` diameter. This is a material
 configuration mismatch that must be measured before changing either side.
-Registers `0x2202/0x2203` for gear teeth are unsupported on this firmware, so no
-controller gear ratio was recoverable.
+Legacy registers `0x2202/0x2203` are unsupported on this firmware. The original
+scanner therefore did not capture gear, but later official-XML/live evidence
+located it at `0x5030/31/34/35`. Its pre-parameterization value remains unknown.
 
 ## PID Values
 
-The raw word patterns consistently support high-word-first IEEE-754. This is
-strong hardware evidence but should still be compared with SV-Config before the
-first PID write.
+The raw word patterns consistently support high-word-first IEEE-754. Later
+official-XML inventories and exact raw restoration confirmed that order for
+these observed PID/electrical fields.
 
 | Loop parameter | M1 | M2 |
 | --- | ---: | ---: |
@@ -85,8 +93,8 @@ first PID write.
 
 - Hall installation is `0/0`, documented as 120-degree installation.
 - Hall calibration status is `0/0`, documented as success.
-- Hall calibration current M1 is `15 A`; the manual's M2 candidate addresses are
-  unsupported, so M2 calibration current remains unknown.
+- Hall calibration current is `15 A` on both channels. M2 is `0x5625`; the
+  original scanner's legacy candidates were invalid.
 - M1 angle table: `0, 44, 103, 164, 224, 283, 345, 0` degrees.
 - M2 angle table: `0, 44, 103, 164, 224, 283, 346, 0` degrees.
 - Encoder lines/bits register is `1024`; installation directions are `0/0` and
@@ -99,10 +107,10 @@ first PID write.
 - Control commands: `0/0` (stop).
 - Given speed: `0/0 RPM`.
 - Given current: `0/0` during the inventory capture.
-- Actual speed: `0/0 RPM`.
+- Actual speed raw: `0/0` in `0.1 RPM`, therefore `0.0/0.0 RPM`.
 - Motor errors: `0x00000000 / 0x00000000`.
-- Bus voltage during capture: approximately `22.4/22.5 V`.
-- MOS temperature: `53.6 C` on both channels.
+- MOS temperature during capture: approximately `22.4/22.5 C` (`0x5408/09`).
+- Bus voltage: approximately `53.6 V` (`0x540C/0x540D`).
 
 Values requiring caution:
 
@@ -117,12 +125,14 @@ Values requiring caution:
 
 ## Unsupported On This Controller Revision
 
-- Gear teeth: `0x2202/0x2203`.
+- Legacy gear candidates: `0x2202/0x2203`. Actual gear fields
+  `0x5030/31/34/35` were absent from this scanner and discovered later.
 - Controller-direct throttle/PPM: `0x2280..0x2283`.
 - Save command readback: `0x3100` because it is write-only.
 - CAN active-upload records: `0x3200..0x3216`.
 - RS232 active-upload configuration: `0x3300..0x330E`.
-- Suspect M2 Hall calibration-current addresses: `0x5605/0x5609`.
+- Legacy M2 Hall calibration-current candidates: `0x5605/0x5609`; actual field
+  `0x5625` was discovered later.
 
 Every unsupported response is retained verbatim in the complete JSON/Markdown
 capture. No unsupported field should be shown as zero in the UI.

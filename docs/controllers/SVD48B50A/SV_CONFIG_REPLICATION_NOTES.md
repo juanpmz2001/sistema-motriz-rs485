@@ -1,12 +1,23 @@
 # SV-Config Replication Notes
 
-Date: 2026-05-08
+Initial date: 2026-05-08
+Last evidence review: 2026-07-25
 
-Current constraint: the ESP32-S3/controller is not connected, so these notes are based on the UU Motor manuals, previous observed reads, and physical measurements. Do not attempt live serial communication from this note.
+Original 2026-05-08 constraint: the ESP32-S3/controller was not connected, so
+the initial notes were based on manuals, previous reads and physical
+measurements. Do not infer present hardware availability from this historical
+sentence or attempt live communication merely because this document exists.
 
 Later hardware work and the Fulling documentation audit supersede that historical
 constraint. See `FULLING_MANUAL_AUDIT.md` and the dated evidence under
 `docs/process/evidence/` before changing live parameters.
+
+The official SV-Config XML was subsequently inspected and all 339 declared
+parameters were read successfully from controller ID 2/software `0x0131`. This
+resolved several earlier uncertainties: floats are high-word-first for the
+observed catalog, M2 Hall calibration current is `0x5625`, actual speed uses
+`0.1 RPM`, and the gear fields are `0x5030/31/34/35`. The dated hypotheses below
+remain useful history only where the follow-up sections do not replace them.
 
 ## Pole-Pair Inference From Physical Speed
 
@@ -129,7 +140,9 @@ M2:
 
 - `0x5601`: calibration command.
 - `0x5621`: Hall installation, `0=120 deg`, `1=60 deg`.
-- `0x5605` / `0x5609`: manual lists calibration-current-like fields here; treat this as suspicious until verified against SV-Config traffic.
+- `0x5625`: calibration current, uint16, range `0..50 A`; confirmed from the
+  official SV-Config XML and live read/write. Legacy candidates `0x5605/0x5609`
+  are invalid on software `0x0131`.
 - `0x5650`: angle table, 8 signed int16 angle values.
 - `0x5681`: encoder temperature.
 - `0x5685`: calibration status.
@@ -140,23 +153,30 @@ M2:
 
 - `0x2200`: maximum acceleration, unit `A/s`.
 - `0x2201`: wheel diameter, unit `mm`.
-- `0x2202`: number of motor teeth, range `1..32767`.
-- `0x2203`: number of wheel teeth, range `1..32767`.
+- `0x2202/0x2203`: legacy manual-derived candidates; invalid on observed
+  software `0x0131`.
+- `0x5030/0x5031`: M1/M2 driving-wheel teeth.
+- `0x5034/0x5035`: M1/M2 driven-wheel teeth.
 
 SV-Config says "Number of driven and driving gears" configures the reduction ratio, and that the given speed is after the reduction ratio.
 
-Observed issue on Toño: controller ID `0x02` accepted reads of `0x2200/0x2201`, but returned invalid-register exceptions for `0x2202/0x2203`. Since SV-Config can change these values, possibilities to verify later:
+The earlier possibilities around write-only fields, FC `0x10` blocks and
+indirection were closed by the official XML and live tests. Software `0x0131`
+rejects `0x2202/0x2203`; use the channel-specific `0x5030/31/34/35` fields. The
+correct observed KK16 setting is driving/driven `1/5`. A temporary `5/1` write
+caused violent speed oscillation and overload fault `0x00000800`; it was not
+saved and must not be repeated.
 
-- SV-Config may use a different address map for this firmware revision.
-- SV-Config may write those fields as part of a larger `0x10` multi-register parameter block instead of individual `0x03/0x06` transactions.
-- SV-Config may use a parameter-list indirection through the `0x3300..0x330E` parameter register address list.
-- Some fields may be write-only, mode-gated, or only valid under a specific control input/interface mode.
-- The manual may have a typo or version mismatch for these addresses.
+## Telemetry Corrections From Official XML
 
-Subsequent build-16 testing bypassed pre-read and sent FC `0x10` values `1/5`
-directly. Software `0x0131` rejected the write with exception `0x02`; the fields
-are not merely write-only. The current Fulling SVD48RC manual documents only an
-unrelated electronic pulse gear and provides no alternate dual-SVD48V address.
+- `0x5408/0x5409`: MOS temperature, signed `0.1 C`.
+- `0x540C/0x540D`: bus voltage, unsigned `0.1 V`.
+- `0x5410/0x5411`: actual speed, signed `0.1 RPM`.
+
+Some early captures and firmware responses swapped the thermal/voltage labels or
+printed the raw speed word as whole RPM. Interpret historical raw words using
+the addresses and scales above. Firmware build 19 still has the typed-speed label
+defect tracked as `SVD-009`.
 
 ## Third-Party Motor Data Required
 
@@ -189,9 +209,10 @@ mechanical data are confirmed. Do not tune Hall again or overwrite current
    - Read Hall status, current angle and angle table.
    - Log all TX/RX hex frames.
 
-4. Reverse-engineer the missing SV-Config details:
+4. Preserve and extend the SV-Config catalog evidence:
    - Put a passive sniffer on the PC-to-controller RS485 A/B lines while changing only one SV-Config field at a time.
-   - Capture `Read param`, `Write param`, gear teeth changes, Hall calibration, Lq/Ld/Rs writes and PID writes.
+   - Capture `Read param`, `Write param`, Hall calibration and any field whose XML
+     definition does not match live behavior.
    - Decode slave ID, function code, start register, quantity, payload, and CRC.
    - Update `SVD48B50A_SKILL.md` with verified frames.
 

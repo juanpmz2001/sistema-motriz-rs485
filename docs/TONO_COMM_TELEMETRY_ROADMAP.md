@@ -2,6 +2,13 @@
 
 Date: 2026-05-12
 
+Historical status (reviewed 2026-07-25): this roadmap predates the active
+`docs/process/` plans and the official SV-Config XML capture. It remains useful
+for intent, but current contracts and priorities live in `API.md`,
+`process/00_MASTER_PLAN.md` and `process/07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md`.
+Later evidence resolved gear at `0x5030/31/34/35`, M2 Hall current at `0x5625`,
+MOS/bus mapping and actual speed `0.1 RPM`; older questions below are historical.
+
 This document organizes the next features requested for the ESP32-S3 firmware, the SVD48 RS485 driver and the local web interface. It is intentionally a planning document: no hardware communication should be attempted from this document.
 
 Related references:
@@ -14,7 +21,7 @@ Related references:
 - `docs/controllers/SVD48B50A/SVD48V-PC-software-manual-V1.1.pdf`
 - `docs/FUTURE_CONTROL_TUNING_UI_NOTES.md`
 
-## Current Development Assumptions
+## Development Assumptions At The 2026-05-12 Checkpoint
 
 - For firmware-level development, flashing and fast serial diagnostics are easier with the ESP32-S3 connected to the development PC.
 - For deployment validation, the ESP32-S3 must be connected to the Jetson and the web container must use the Jetson USB serial device.
@@ -129,7 +136,7 @@ Estimated work:
 
 ## 3. SV-Config Replication
 
-Current confirmed information:
+Information confirmed at that checkpoint:
 
 - SV-Config communicates with the controller over serial at `115200`.
 - The controller supports Modbus-like RS485 frames with functions `0x03`, `0x06` and `0x10`.
@@ -137,12 +144,18 @@ Current confirmed information:
 - Prior observations on Toño:
   - `0x5018` active M1 pole pairs read as `24` in an earlier session.
   - `0x502C` active M1 sensor type read as `1/HALL`.
-  - `0x2202/0x2203` returned invalid-register exceptions through our path, even though SV-Config exposes gear teeth fields.
+  - `0x2202/0x2203` returned invalid-register exceptions. Later XML/live work
+    showed these were legacy candidates and located the real fields at
+    `0x5030/31/34/35`.
 
 Important interpretation:
 
-- It is very plausible that SV-Config can change fields we failed to read because it may use a different register map, `0x10` multi-register writes, an indirect parameter table, mode-gated access, or firmware-version-specific addresses.
-- "SV-Config can do it" proves it is reachable over the controller serial interface, but it does not prove that our current individual `READ_REG 0x2202` frame is the correct way to reach it.
+- This hypothesis was later resolved for gear: SV-Config uses a different
+  channel-specific register map (`0x5030/31/34/35`). Other XML/live
+  discrepancies still require field-specific evidence.
+- The later result confirms the original caution: an SV-Config field does not
+  prove that a guessed `READ_REG 0x2202` address is correct. XML/catalog evidence
+  identified the actual channel-specific fields instead.
 - To know exactly what SV-Config does, we need a frame capture of SV-Config talking to the controller while changing one field at a time.
 
 Safe implementation path:
@@ -400,4 +413,3 @@ Complexity: High.
 3. Should CSV export start with only the selected telemetry motor, or include all motors present in the ESP `GET_MOTOR` stream?
 4. For the docs tab, do you prefer "PDF first", "searchable register table first", or both in the first pass?
 5. Should chart PNG export include only the chart, or chart plus current metric cards and wheel visualization?
-

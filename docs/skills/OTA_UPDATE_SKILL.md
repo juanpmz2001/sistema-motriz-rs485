@@ -171,7 +171,10 @@ BOTFARMS_OTA_TOKEN=<redacted> python3 tools/ota_announce.py --target <ESP_IP> --
 BOTFARMS_OTA_TOKEN=<redacted> python3 tools/ota_announce.py --target <ESP_IP> --server-port 8080 --manifest /api/firmware/latest --action update --timeout 90
 ```
 
-Do not paste the real token into logs or final answers. If `.env` contains `BOTFARMS_OTA_TOKEN`, load it without printing it.
+Do not paste the real token into logs or final answers. `tools/ota_announce.py`
+already resolves `--token`, then the exported environment, then
+`BOTFARMS_OTA_TOKEN` from the ignored repository `.env`; no shell export is
+required when that file is configured. Never print the value to verify it.
 
 After `update`, wait for the ESP to return:
 

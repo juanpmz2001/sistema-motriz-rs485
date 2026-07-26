@@ -9,6 +9,7 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
 
 
 DEFAULT_TARGET = "255.255.255.255"
@@ -16,10 +17,25 @@ DEFAULT_ANNOUNCE_PORT = 32320
 DEFAULT_SERVER_PORT = 8080
 DEFAULT_MANIFEST_PATH = "/api/firmware/latest"
 ANNOUNCE_TYPE = "botfarms_ota_offer"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def env_file_value(name: str) -> str:
+    try:
+        lines = (REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in lines:
+        if "=" not in raw or raw.lstrip().startswith("#"):
+            continue
+        key, value = raw.split("=", 1)
+        if key.strip() == name:
+            return value.strip().strip('"').strip("'")
+    return ""
 
 
 def build_payload(args: argparse.Namespace) -> bytes:
-    token = args.token or os.environ.get("BOTFARMS_OTA_TOKEN")
+    token = args.token or os.environ.get("BOTFARMS_OTA_TOKEN") or env_file_value("BOTFARMS_OTA_TOKEN")
     if not token:
         raise SystemExit("Provide --token or set BOTFARMS_OTA_TOKEN")
     if args.server_port <= 0 or args.server_port > 65535:

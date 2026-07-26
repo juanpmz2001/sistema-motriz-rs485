@@ -14,7 +14,16 @@ Read `docs/skills/SVD48B50A_SKILL.md` before changing any RS485 register behavio
 - Motor indices are zero-based: `MOTOR_0`..`MOTOR_3`.
 - Default mapping: drive ID 1 M1/M2 -> motors 0/1, drive ID 2 M1/M2 -> motors 2/3.
 
-LAN maintenance uses the same ASCII command strings inside JSON requests, but applies policy `LAN_SAFE`. It allows diagnostics/telemetry and `STOP ALL`; movement, direct writes, sensitive config mutation and destructive OTA commands return `ERR LAN_COMMAND_BLOCKED <command>`.
+LAN maintenance uses the same ASCII command strings inside JSON requests, but applies policy `LAN_SAFE`. The current allowlist is:
+
+- no-argument diagnostics: `PING`, `VERSION`, `PLATFORM_STATUS`, `SAFETY_STATUS`, `CONFIG_STATUS`, `WIFI_STATUS`, `OTA_CONFIG`, `OTA_ANNOUNCE_STATUS`, `OTA_ROLLBACK_STATUS`, `OTA_AUTO_STATUS`, `IBUS_STATUS`, `IBUS_CHANNELS`, `POLL_ONCE`, and `MAINT_LAN_STATUS`;
+- telemetry/read: `GET_SPEED`, `GET_MOTOR`, `READ_REG`, and `GET_SVD48_CONFIG`;
+- stop/temporary bench actuation: `STOP n|ALL` and `SET_SPEED n rpm`;
+- confirmed engineering operations: `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, legacy `SET_SVD48_GEAR_RATIO`, and `SVD48_IDENTIFY`/`SVD48_IDENTIFY_STATUS` with their documented argument/confirmation shapes.
+
+Everything else returns `ERR LAN_COMMAND_BLOCKED <command>`. In particular, LAN blocks `MOVE_VEL`, `ENABLE`, `CLEAR_FAULT`, Wi-Fi/token/config provisioning, and OTA download/update commands. Raw writes also have a second denylist for the known actuation registers.
+
+`SET_SPEED` is a temporary build-19 elevated-bench exception, not the intended LAN motion architecture. It is token-authenticated and capped at `+/-15 RPM`, but it has no command TTL, dead-man, source arbitration, latched runtime gate, or automatic stop on client/network loss. A successful nonzero command can remain active until another stop/speed command or a separate safety condition intervenes. Do not use this path for floor or unattended operation; see ADR-0004 and `SAFE-011`.
 
 ## Commands
 
@@ -28,15 +37,20 @@ Success reports `OUTCOME:ACKED_UNVERIFIED WRITE_ONLY:1`: the Modbus write was
 acknowledged, but readback is impossible by definition. Verify persistence with a
 controlled SVD48 power cycle and parameter reread.
 
-### `SET_SVD48_GEAR_RATIO drive_id motor_teeth wheel_teeth CONFIRM`
+### `SET_SVD48_GEAR_RATIO drive_id motor_teeth wheel_teeth CONFIRM` (legacy)
 
 Attempts the documented gear-tooth write at `0x2202/0x2203` without a pre-read,
 for SVD48 revisions that expose these registers as write-only. It requires a
 stopped robot and positive tooth counts. Successful writes use readback when
 supported; otherwise the result is explicitly `ACKED_UNVERIFIED`.
 
-SVD48 software `0x0131` rejects both reads and FC16 writes with exception `0x02`,
-so this command cannot configure gear ratio on that revision.
+SVD48 software `0x0131` rejects both reads and FC16 writes at those legacy
+addresses with exception `0x02`, so this command cannot configure gear ratio on
+that revision. The official SV-Config XML and later live tests identified the
+real channel-specific fields as M1 driving/driven `0x5030/0x5034` and M2
+`0x5031/0x5035`. The correct observed KK16 values are `1/5`. There is no typed,
+guarded command for those fields yet; use only backed-up confirmed raw writes in
+an approved elevated-bench procedure.
 
 ```text
 PING
@@ -153,7 +167,8 @@ If the command dispatcher emits an `ERR` line, the envelope is also an error. `d
 
 ### Compiled, Inactive `control_lan` Contract
 
-Build 13 contains a separate parser for the future LAN motion path. It requires
+Introduced in build 13 and still present in build 19, this separate parser is the
+future LAN motion path. It requires
 `type:"botfarms_control_command"`, `protocol_version:"1.0"`, `request_id`, the
 maintenance token, `stream_id`, an exact increasing integer `sequence`, and one
 of `arm`, `command`, `disarm`, or `stop`. A command also requires bounded finite
@@ -293,7 +308,8 @@ Trace lines include:
 
 CRC remains `init=0xFFFF`, `poly=0xA001`, transmitted as high byte then low byte.
 
-For `WIFI_SET`, trace output redacts the password. For `OTA_ANNOUNCE_TOKEN_SET`, trace output redacts the token.
+For `WIFI_SET`, trace output redacts the password. For
+`OTA_ANNOUNCE_TOKEN_SET` and `MAINT_TOKEN_SET`, trace output redacts the token.
 
 ```text
 POLL_ONCE
@@ -317,7 +333,12 @@ This is provisional bench containment, not the target typed parameter service. I
 GET_SVD48_CONFIG drive_id [M1|M2|ALL]
 ```
 
-Reads the motor configuration registers used for PY6514/PYD6514 validation: `0x5018/0x5019` pole pairs, `0x502C/0x502D` sensor type, `0x2201` wheel diameter, `0x2202/0x2203` gear teeth, and Hall status/install registers.
+Reads the legacy motor-configuration summary used for early PY6514/PYD6514
+validation: `0x5018/0x5019` pole pairs, `0x502C/0x502D` sensor type, `0x2201`
+wheel diameter, legacy gear candidates `0x2202/0x2203`, and Hall
+status/install registers. It does **not** read the real per-channel gear fields
+`0x5030/0x5031/0x5034/0x5035`; use `READ_REG` or the XML inventory tool until
+`SVD-006` replaces this command with typed data.
 
 The command treats gear reads as optional and currently ignores Hall-read errors, so zero-valued Hall fields are not proof that the controller returned zero. Use trace/raw evidence for diagnosis until the typed parameter API represents unsupported/exception/unknown values explicitly (`SVD-006`).
 
@@ -327,13 +348,25 @@ Use the optional channel argument when only one channel is physically configured
 APPLY_PY6514_CONFIG drive_id [M1|M2|ALL] CONFIRM
 ```
 
-Writes the current Botfarms Toño hypothesis to one or both SVD48 channels: pole pairs `10`, sensor type `1/HALL`, wheel diameter `330 mm`, motor teeth `1`, wheel teeth `5`. This command does not enforce a stopped state, capture old values, verify readback, save with `0x3100`, or roll back a partial failure; `0x2202/0x2203` are already known to be unsupported on one observed controller. Treat it as hazardous bench-only legacy access and keep motor power mechanically safe. It must be replaced by `SVD-020/021/023` before production configuration. For the historical bench setup with only controller `0x02` M1 active, the narrow form was `APPLY_PY6514_CONFIG 0x02 M1 CONFIRM`.
+Writes the historical Botfarms Toño hypothesis to one or both SVD48 channels:
+pole pairs `10`, sensor type `1/HALL`, wheel diameter `330 mm`, and legacy gear
+candidates `0x2202/0x2203`. This command does not provide the guarded typed
+change-set workflow and the gear addresses are wrong for observed software
+`0x0131`. Treat it as deprecated hazardous bench-only access; do not use it for
+the connected KK16 controller. It must be replaced by `SVD-020/021/023` before
+production configuration.
 
 ```text
 GET_SPEED n
 ```
 
-Returns current RPM for motor `n`.
+Returns the current typed speed field for motor `n`.
+
+Known build-19 contract defect (`SVD-009`): SVD48 registers `0x5410/0x5411` are
+signed values in `0.1 RPM`, but the firmware stores and prints the raw word under
+the label `RPM` without dividing by 10. Therefore `RPM:34` currently means
+approximately `3.4 RPM`, not `34 RPM`. Do not use this field as a physical-speed
+safety threshold until the firmware/API/tool migration is complete.
 
 Example:
 
@@ -346,7 +379,13 @@ DATA MOTOR_0 RPM:1450 STALE:0 ONLINE:1
 GET_MOTOR n
 ```
 
-Returns full telemetry for motor `n`: RPM, current in 0.1 A, status, bus voltage in 0.1 V, motor/MOS temperatures in 0.1 C, encoder position, controller error code, online flag and stale flag. It also reports `COMM_ERR` (the current `svd48_status_t`) and the last preserved controller exception as `EXC_FUNC`, `EXC_CODE`, and `EXC_AGE_MS`. Exception fields remain historical after communication recovers; use `COMM_ERR` and age to distinguish current from prior failure.
+Returns full telemetry for motor `n`: the currently mislabelled raw speed value
+described above, current in 0.1 A, status, bus voltage in 0.1 V, motor/MOS
+temperatures in 0.1 C, encoder position, controller error code, online flag and
+stale flag. It also reports `COMM_ERR` (the current `svd48_status_t`) and the last
+preserved controller exception as `EXC_FUNC`, `EXC_CODE`, and `EXC_AGE_MS`.
+Exception fields remain historical after communication recovers; use `COMM_ERR`
+and age to distinguish current from prior failure.
 
 The response also includes `STEER_DEG`, which is the last commanded steering angle for that logical wheel. It is not an independent steering sensor reading.
 
@@ -354,7 +393,12 @@ The response also includes `STEER_DEG`, which is the last commanded steering ang
 SET_SPEED n rpm
 ```
 
-Writes the signed RPM target before sending `START`. If either operation fails, firmware attempts to stop that motor and returns an error.
+Writes the signed RPM target before sending `START`. The current firmware rejects
+requests outside `+/-15 RPM` and `robot_control` clamps to the same ceiling as a
+second boundary. If either operation fails, firmware attempts to stop that motor
+and returns an error. This command is available over serial and, temporarily,
+authenticated maintenance LAN; neither route currently passes through the
+planned latched state/authority coordinator.
 
 ```text
 ENABLE n|ALL
@@ -408,6 +452,10 @@ Firmware errors include the ESP-IDF `esp_err_t` value in hex when useful.
 ## Safety Defaults
 
 - `STOP ALL` writes zero speed and stop commands to all four logical motors.
+- The compile-time command ceiling is currently `15 RPM`; this is a temporary
+  bench limit, not a validated mechanical operating limit.
 - Telemetry is stale when no valid sample arrives within 1000 ms.
 - The gateway serializes RS485 through the `svd48` driver; PC commands and telemetry polling do not write to UART concurrently.
-- Direct speed commands and `MOVE_VEL` start motors automatically. Use `STOP` to disable motor motion.
+- Direct speed commands and `MOVE_VEL` start motors automatically. There is no
+  general movement-command TTL in the active runtime. Use `STOP` to disable motor
+  motion and do not rely on Wi-Fi/client disconnect as a stop mechanism.

@@ -4,7 +4,13 @@ Date: 2026-05-09
 Firmware repo: `/mnt/windows/Users/juanp/OneDriveShouldDie/Documents/BotFarms/sistema-motriz-rs485`  
 Web/backend repo: `/home/jp/Documents/botfarms/web_controll_esp_svd48`
 
-Status note: this is a historical implementation plan. The current firmware in this repo has progressed beyond Iteration 10.5: `FW_BUILD_NUMBER` is `10`, the active target is `esp32s3`, the active partition table is `partitions_ota_16mb.csv`, rollback is enabled, Wi-Fi reconnect, OTA announce and LAN maintenance run as low-priority maintenance services, and automatic OTA is limited to manifest-only checks plus `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, and `OTA_AUTO_INTERVAL`. Earlier sections that say "current" preserve the state observed during that iteration; Section 16 summarizes the current next decision.
+Status note (reviewed 2026-07-25): this is a historical implementation plan, not
+the current release checklist. Source firmware is build `19`, target `esp32s3`,
+using `partitions_ota_16mb.csv` with rollback. Wi-Fi reconnect, OTA announce and
+LAN maintenance remain low-priority services; automatic OTA remains
+manifest-only. Earlier sections that say “current” preserve their iteration.
+Use `docs/skills/OTA_UPDATE_SKILL.md`, `ota_documentation_for_dummies.md` and
+`docs/process/07_CURRENT_STATUS_AND_RELEASE_CHECKLIST.md` for current operation.
 
 ## 1. Executive Summary
 
@@ -3128,9 +3134,9 @@ Optional but useful:
 - [ ] Serial reflash recovery path verified.
 - [ ] Automatic OTA writes are disabled.
 
-## 16. Recommended Next Decision
+## 16. Historical Recommendation After Iteration 10.5
 
-Current completed baseline:
+Completed baseline at that historical checkpoint:
 
 1. Iteration 0 restored the ESP-IDF toolchain, measured the board and documented the original firmware state.
 2. Iteration 1 added firmware version metadata and the `VERSION` serial command.
@@ -3174,7 +3180,7 @@ Main risks before the next code iteration:
 
 - Physical flash and configured flash are now both `16MB`; future iterations must not regress `CONFIG_ESPTOOLPY_FLASHSIZE`, the selected CSV, or slot sizing.
 - IRAM is currently `16383 / 16384` bytes because the fixed first 16 KB bucket is full. Future iterations must monitor `IRAM`, `DIRAM .text`, total `DIRAM`, full `.iram0.text` from the map file, `Flash Code`, and total image size.
-- New `IRAM_ATTR`, `ESP_INTR_FLAG_IRAM`, IRAM-safe driver options, low-level SPI flash/cache/MMU changes, heap/FreeRTOS placement changes, and converting the active PPM input to cache-off/IRAM-safe execution are blocked unless separately audited. Build 14 uses a non-IRAM GPIO ISR and keeps PPM outside the motion path.
+- New `IRAM_ATTR`, `ESP_INTR_FLAG_IRAM`, IRAM-safe driver options, low-level SPI flash/cache/MMU changes, heap/FreeRTOS placement changes, and converting the active PPM input to cache-off/IRAM-safe execution are blocked unless separately audited. At build 14, PPM used a non-IRAM GPIO ISR and remained outside the motion path; remeasure the current build instead of treating that snapshot as current usage.
 - Wrong USB port could cause failed diagnostics.
 - Partition migration is already complete, but any future partition edit remains high risk and requires full build, partition-table and boot validation.
 - OTA must be blocked unless robot safety state is known.

@@ -6,6 +6,11 @@ Also read `docs/controllers/SVD48B50A/SV_CONFIG_REPLICATION_NOTES.md` before cha
 Read `docs/controllers/SVD48B50A/FULLING_MANUAL_AUDIT.md` before using Fulling
 sources. The 2025 Fulling SVD48 manual is for a related single-axis RC family and
 its addresses/procedures are not directly compatible with the dual SVD48V.
+For the latest connected-controller evidence, read
+`docs/process/evidence/SVD48_BENCH_DIAGNOSIS_2026-07-21.md` and
+`docs/process/evidence/SVD48_RESTORE_TO_INITIAL_2026-07-21.md`. The latter is
+the current parameter-restoration record; earlier dated captures are snapshots,
+not a live-state claim.
 
 ## Default Robot Topology
 
@@ -31,15 +36,23 @@ its addresses/procedures are not directly compatible with the dual SVD48V.
 
 - M1/M2 motor pole pairs: M1 `0x5018`, M2 `0x5019`; range `1..128`.
 - M1/M2 sensor type: M1 `0x502C`, M2 `0x502D`; `0=encoder`, `1=Hall`, `2=string encoder`.
-- Vehicle/wheel parameters used by SV-Config for geared motors: wheel diameter `0x2201` mm, motor teeth `0x2202`, wheel teeth `0x2203`. For PY6514 initial hypothesis use diameter `330`, motor teeth `1`, wheel teeth `5` for ratio `5:1`.
-- Observed on Toño hardware: drive ID `2` accepts `0x2200` and `0x2201`, but returns an invalid-register exception for `0x2202/0x2203`. Do not assume every SV-Config field is exposed on every controller firmware revision.
-- Software `0x0131` also rejects a direct FC `0x10` write of `1/5` to
-  `0x2202/0x2203`; these fields are not write-only on this revision. Keep the 5:1
-  gearbox in the robot profile unless the manufacturer supplies a compatible map.
+- Shared wheel diameter is `0x2201` mm. The older manual-derived gear candidates
+  `0x2202/0x2203` are invalid on software `0x0131` for both reads and FC `0x10`;
+  do not use the legacy `SET_SVD48_GEAR_RATIO` command on this controller.
+- The official SV-Config XML and live tests established the real per-channel gear
+  fields: M1 driving `0x5030`, M2 driving `0x5031`, M1 driven `0x5034`, M2 driven
+  `0x5035`. The observed correct KK16 configuration is driving/driven `1/5` on
+  both channels. An inverted `5/1` test caused severe oscillation, motor-overload
+  fault `0x00000800`, and loss of RS485 response until power cycle. Never infer
+  register order from the verbal ratio alone.
 - Before another KK16 Hall calibration, obtain line-line resistance/inductance,
   back-EMF or rotor-side KV, torque constant, rotor inertia, Hall spacing and phase
   sequence. Fulling's third-party motor procedure treats these as prerequisites.
-- Hall installation/status: M1/M2 installation `0x5620/0x5621`; Hall status `0x5688/0x5689`; current Hall angle `0x568C/0x568D`.
+- Hall installation/status: M1/M2 installation `0x5620/0x5621`; calibration
+  current `0x5624/0x5625`; calibration status `0x5684/0x5685`; Hall state
+  `0x5688/0x5689`; current Hall angle `0x568C/0x568D`. Status values are
+  `0=success`, `1=calibrating`, `2=failed`. Both channels ended at `2` in the
+  2026-07-21 tests; populated angle tables do not make those calibrations valid.
 - Historical physical speed test: with configured pole pairs `48`, command `1 RPM`, measured wheel period `12.75 s/rev`; inferred actual pole pairs are about `10.2`. This is a hypothesis, not a motor datasheet fact: observed configurations have also contained `24` and an experiment used `48`. Verify each robot/motor before staging a pole-pair change; never auto-apply `10` from this note.
 - Mode: M1 `0x5100`, M2 `0x5101`; `0=speed`, `1=position`, `2=torque`, `3=voltage`, `4=skateboard`, `5=kart`.
 - Accel/decel/smoothing: M1 `0x5108/0x510C/0x5110`; M2 `0x5109/0x510D/0x5111`.
@@ -48,9 +61,12 @@ its addresses/procedures are not directly compatible with the dual SVD48V.
 - Given current 0.1A: M1 `0x5308`, M2 `0x5309`, signed int16.
 - Actual status: M1 `0x5400`, M2 `0x5401`; `0=stop`, `1=running`.
 - Motor temp 0.1C: M1 `0x5404`, M2 `0x5405`.
-- Bus voltage 0.1V: M1 `0x5408`, M2 `0x5409`.
-- MOS temp 0.1C: M1 `0x540C`, M2 `0x540D`.
-- Actual speed RPM: M1 `0x5410`, M2 `0x5411`.
+- MOS temp 0.1C: M1 `0x5408`, M2 `0x5409`.
+- Bus voltage 0.1V: M1 `0x540C`, M2 `0x540D`.
+- Actual speed 0.1 RPM: M1 `0x5410`, M2 `0x5411`. Divide the signed raw value
+  by 10 for physical RPM. Build 19 still stores/prints this raw value as `RPM` in
+  typed telemetry (`SVD-009`), so `GET_SPEED`/`GET_MOTOR` must not be interpreted
+  literally until that contract is migrated.
 - Actual current 0.1A: M1 `0x5414`, M2 `0x5415`.
 - Position/encoder int32: M1 `0x5418`, M2 `0x541A`.
 - Error code uint32: M1 `0x5420`, M2 `0x5422`.
@@ -72,5 +88,13 @@ its addresses/procedures are not directly compatible with the dual SVD48V.
 - Treat every requested-function-plus-`0x80` response as a controller exception and preserve both exception function and code. The pure parser and `0x83/0x86/0x90` fixtures are in `svd48_protocol.c` and `tests/host/firmware_contracts_test.c`; retain those tests when extending transactions.
 - `svd48_write_registers_by_id()` is a bus primitive, not authorization. The current MVP exposes it indirectly through `WRITE_REGS ... CONFIRM` for elevated bench use only, with an actuation denylist, stopped heuristic, old-value capture, one FC `0x10` attempt and exact readback. Do not broaden that provisional surface or call it production-safe until `robot_state`, exclusive maintenance ownership, typed catalog/ranges, deduplication, persistence, rollback and audit are enforced.
 - Decode signed 16-bit values as two's complement.
-- Current position/error telemetry decoding assumes high register first, then low register. Do not generalize that assumption to `float`, position commands, CAN records, or other 32-bit parameters until SV-Config traffic/golden fixtures verify each wire type.
+- Current position/error telemetry decoding uses high register first, then low
+  register. Official XML plus 339-field live inventories also confirm
+  high-word-first IEEE-754 for the observed PID/electrical fields, but new 32-bit
+  families still require catalog evidence rather than a blanket assumption.
 - Publish stale telemetry when no valid sample has arrived within the configured stale timeout.
+- Build 19 temporarily allows authenticated `maintenance_lan SET_SPEED` up to
+  `+/-15 RPM`. It has no TTL/dead-man/authority gate and can leave a command
+  active after client/network loss. Use only under the elevated-bench procedure
+  with a physical cutoff; remove/gate it before product or floor use (ADR-0004,
+  `SAFE-011`).

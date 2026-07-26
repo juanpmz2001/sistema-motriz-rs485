@@ -4,7 +4,9 @@ Date: 2026-05-07
 
 Read through the ESP32-S3 USB serial gateway after flashing the firmware with raw register commands.
 
-Current bench setup: only controller ID `0x02` is connected, and only its `M1` channel is configured.
+Historical setup for this capture: only controller ID `0x02` was connected, and
+only its `M1` channel was configured. Do not treat this sentence as current
+topology; later captures found both ID 2 channels online.
 
 ## Commands Used
 
@@ -44,7 +46,12 @@ READ_REG 2 0x568C 2
 
 The active responding controller M1 channel is configured for Hall sensors, but not for the current PY6514/PYD6514 hypothesis of `10` pole pairs. Its M1 pole-pair register reports `24`.
 
-The manual and SV-Config mention reduction-ratio parameters via motor/wheel teeth, but this observed controller rejected `0x2202/0x2203` over RS485. Treat the `5:1` gear ratio as a robot-side calibration unless these registers are confirmed on another firmware revision or through a different register map.
+The early manual-derived candidates `0x2202/0x2203` are invalid on software
+`0x0131`. The official SV-Config XML later established the actual
+channel-specific fields: M1 uses driving/driven teeth `0x5030/0x5034`, and M2
+uses `0x5031/0x5035`. Live read/write tests confirmed `1/5` as the correct KK16
+configuration. A temporary inverted `5/1` experiment caused severe speed
+oscillation and fault `0x00000800`; it must never be used for this drivetrain.
 
 The measured UI calibration of about `62.1` counts per wheel turn is consistent with a telemetry position stream that is not exposing all theoretical three-Hall edge transitions after the wheel gearbox. Continue using physical calibration for wheel angle/distance until the controller's exact position counter semantics are confirmed.
 
@@ -73,8 +80,10 @@ Important updates versus the earlier capture:
 - The current Hall status read is `103/103`, not the earlier `345/0`; this field
   is dynamic and outside the documented `0..7`, so its interpretation remains
   suspect.
-- Gear teeth, controller-direct PPM, CAN/RS232 active-upload blocks and the two
-  suspect M2 calibration-current addresses are unsupported on this revision.
+- The original gear candidates `0x2202/0x2203`, controller-direct PPM,
+  CAN/RS232 active-upload blocks and the two suspect M2 calibration-current
+  addresses are unsupported on this revision. Gear configuration is available
+  instead at `0x5030/31/34/35`.
 
 ## 2026-07-20 KK16 Electrical Identification
 
@@ -88,3 +97,12 @@ were applied with exact float readback and acknowledged save:
 
 Full commands, raw results, old/new words and remaining persistence test are in
 `docs/process/evidence/SVD48_KK16_MOTOR_IDENTIFICATION_2026-07-20.md`.
+
+## 2026-07-21 Restoration Boundary
+
+Later Hall/PID/gear diagnosis changed multiple fields temporarily, then restored
+every writable word present in the original 2026-07-20 inventory. Therefore the
+identified L/R values above are historical and are not the final restored
+values. Use `docs/process/evidence/SVD48_RESTORE_TO_INITIAL_2026-07-21.md` as
+the last restoration record. Its final save was acknowledged, but persistence
+after a new SVD48 power cycle remains pending.

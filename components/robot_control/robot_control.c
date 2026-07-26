@@ -311,7 +311,8 @@ esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t m
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, rpm);
+    const int16_t applied_rpm = clamp_rpm((float)rpm, handle->config.max_wheel_rpm);
+    esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, applied_rpm);
     if (err != ESP_OK) {
         esp_err_t stop_err = svd48_stop_motor(handle->config.svd48, motor);
         ESP_LOGE(TAG,
@@ -333,8 +334,13 @@ esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t m
         return err;
     }
 
-    record_last_motor_rpm(handle, motor, rpm);
+    record_last_motor_rpm(handle, motor, applied_rpm);
     return ESP_OK;
+}
+
+float robot_control_get_max_wheel_rpm(robot_control_handle_t handle)
+{
+    return handle ? handle->config.max_wheel_rpm : 0.0f;
 }
 
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps)

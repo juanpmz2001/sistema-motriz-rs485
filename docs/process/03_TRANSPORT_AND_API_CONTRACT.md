@@ -56,6 +56,7 @@ browser -> HTTP /api/robot/command -> backend UDP request UUID
 | `TRANS-GAP-014` | LAN retries reuse an ID but firmware has no dedupe cache; OTA announce retries lack equivalent request identity | A retried mutating operation can execute more than once |
 | `TRANS-GAP-015` | Compatibility tools consume the first matching line without a reliable response terminator | Multi-line/unsolicited output can be attributed incompletely |
 | `TRANS-GAP-016` | OTA announce can update NVS before action validation and builds some JSON manually | Invalid/retried input can mutate state; unescaped output can be malformed |
+| `TRANS-GAP-017` | Build 19 permits direct `SET_SPEED` through `maintenance_lan` without TTL/dead-man/authority arbitration | A successful speed can remain active after LAN/client loss; this blocks floor/product use until `SAFE-011` removes or gates the bypass |
 
 ## Structured Management Result
 
@@ -213,24 +214,32 @@ Capabilities are domain actions, not raw command strings:
 
 Backend policy must mirror firmware for early rejection and good UX, but firmware remains authoritative.
 
-### Provisional Bench Deviation (Build 14)
+### Provisional Bench Deviations (Build 19)
 
-To unblock the supervised MVP, authenticated maintenance LAN currently permits
+To unblock supervised elevated-bench diagnosis, authenticated maintenance LAN currently permits
 `READ_REG`, `WRITE_REG ... CONFIRM`, and `WRITE_REGS ... CONFIRM`. Firmware still
 blocks runtime-actuation addresses, checks its stopped heuristic, captures old
 words and verifies readback. The web backend mirrors known ranges for pole pairs,
 current, direction, sensor type and speed dead zone.
 
+Build 19 additionally permits `STOP n|ALL` and direct `SET_SPEED n rpm`, with an
+absolute `+/-15 RPM` firmware/gateway ceiling. This is a more serious temporary
+deviation: the ASCII maintenance path has no TTL, dead-man, authority epoch,
+latched state gate or automatic stop when the client/network disappears. It is
+restricted to a physically supervised elevated bench and tracked by ADR-0004 and
+`SAFE-011`.
+
 This is a documented temporary deviation from the target table above. It has no
 job ID/deduplication, exclusive `MAINTENANCE` owner, complete catalog, save or
 rollback. `OUTCOME:UNKNOWN`/`ACKED_UNVERIFIED` is terminal for that request: the
-client must read back and must not retry blindly. Movement remains denied in
-`maintenance_lan`.
+client must read back and must not retry blindly. `MOVE_VEL`, `ENABLE` and other
+movement APIs remain denied, but direct `SET_SPEED` is not denied in build 19.
 
 ## Separate LAN Motion Ingress
 
-`maintenance_lan` remains a management plane and must keep motion blocked in its
-ASCII command policy. Operational LAN movement uses `control_lan` on a separate
+The target architecture keeps `maintenance_lan` as a management plane with
+motion blocked in its ASCII command policy. Operational LAN movement uses
+`control_lan` on a separate
 configured port (draft default `32322`). It accepts only a compact fixed action:
 
 ```json
