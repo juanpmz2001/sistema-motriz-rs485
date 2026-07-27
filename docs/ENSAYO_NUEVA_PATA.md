@@ -66,7 +66,8 @@ Controla una sola pata con:
 - PWM de velocidad del DOCYKE en GPIO14, 50 Hz y neutro de 1500 us;
 - realimentación AS5600 analógica en GPIO4;
 - parada si se pierde el joystick durante 450 ms;
-- dirección bloqueada en neutro si la señal AS5600 no es válida.
+- durante la caracterización inicial, dirección manual abierta: eje X completo
+  mapea a 1000–2000 us; el AS5600 solo se registra y todavía no realimenta.
 
 Si no puede reutilizar credenciales Wi-Fi almacenadas, crea:
 

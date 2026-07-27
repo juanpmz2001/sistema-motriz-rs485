@@ -20,17 +20,14 @@ constexpr uint16_t DRIVE_SPEED_REG = 0x5304;    // M1
 
 constexpr uint32_t SERVO_HZ = 50;
 constexpr uint16_t SERVO_NEUTRAL_US = 1500;
-constexpr uint16_t SERVO_MAX_DELTA_US = 120;
-constexpr float STEER_RANGE_DEG = 45.0f;
-constexpr float STEER_KP_US_PER_DEG = 3.0f;
+constexpr uint16_t SERVO_MIN_US = 1000;
+constexpr uint16_t SERVO_MAX_US = 2000;
 constexpr uint32_t COMMAND_TIMEOUT_MS = 450;
 
 WebServer server(80);
 HardwareSerial rs485(2);
 
 bool armed = false;
-bool sensorZeroReady = false;
-float sensorZeroDeg = 0.0f;
 int joyX = 0;
 int joyY = 0;
 int commandedRpm = 0;
@@ -97,8 +94,7 @@ void commandMotor(int rpm) {
 }
 
 void setServoPulse(uint16_t pulseUs) {
-  pulseUs = constrain(pulseUs, SERVO_NEUTRAL_US - SERVO_MAX_DELTA_US,
-                      SERVO_NEUTRAL_US + SERVO_MAX_DELTA_US);
+  pulseUs = constrain(pulseUs, SERVO_MIN_US, SERVO_MAX_US);
   servoPulseUs = pulseUs;
   const uint32_t maxDuty = (1UL << 14) - 1;
   ledcWrite(STEER_PWM_PIN, uint32_t(pulseUs) * maxDuty / 20000UL);
@@ -112,13 +108,6 @@ bool readAngle(float &angle, uint32_t &period, float &duty) {
   duty = 100.0f * raw / 4095.0f;
   angle = 360.0f * raw / 4095.0f;
   return true;
-}
-
-float wrappedError(float target, float actual) {
-  float e = target - actual;
-  while (e > 180) e -= 360;
-  while (e < -180) e += 360;
-  return e;
 }
 
 String statusText() {
@@ -202,23 +191,10 @@ void loop() {
     return;
   }
 
-  float angle, duty;
-  uint32_t period;
-  bool sensorValid = readAngle(angle, period, duty);
-  if (!sensorZeroReady && sensorValid) {
-    sensorZeroDeg = angle;
-    sensorZeroReady = true;
-  }
-  if (!sensorValid || !sensorZeroReady) {
-    setServoPulse(SERVO_NEUTRAL_US);
-  } else {
-    float target = sensorZeroDeg + joyX * STEER_RANGE_DEG / 100.0f;
-    float error = wrappedError(target, angle);
-    if (fabsf(error) < 1.0f) setServoPulse(SERVO_NEUTRAL_US);
-    else setServoPulse(uint16_t(constrain(SERVO_NEUTRAL_US + error * STEER_KP_US_PER_DEG,
-                                         float(SERVO_NEUTRAL_US - SERVO_MAX_DELTA_US),
-                                         float(SERVO_NEUTRAL_US + SERVO_MAX_DELTA_US))));
-  }
+  // Modo manual abierto para caracterizar el DOCYKE en modo motor.
+  // El AS5600 se registra, pero no participa todavía en el mando.
+  if (abs(joyX) <= 2) setServoPulse(SERVO_NEUTRAL_US);
+  else setServoPulse(uint16_t(map(joyX, -100, 100, SERVO_MIN_US, SERVO_MAX_US)));
 
   int rpm = joyY * 30 / 100;
   if (abs(rpm) < 8) rpm = 0;
