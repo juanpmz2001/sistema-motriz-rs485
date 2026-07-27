@@ -52,3 +52,25 @@ La ficha indica PWM seleccionable de 115, 230, 460 o 920 Hz, con ciclo útil de
 
 Si `VALID:0`, confirmar que el AS5600 esté realmente programado con `OUTS=10`
 (PWM), que haya imán válido y que OUT no exceda 3.3 V en el GPIO del ESP.
+
+## Sketch con joystick iPhone
+
+El sketch autónomo está en `arduino/ensayo_nueva_pata/ensayo_nueva_pata.ino`.
+Controla una sola pata con:
+
+- joystick web: eje Y a tracción M1 del SVD48 ID 2, limitado inicialmente a
+  ±30 rpm;
+- RS485 UART2: RX GPIO16, TX GPIO17, 115200 8N1;
+- eje X a objetivo de dirección de ±45 grados;
+- PWM de velocidad del DOCYKE en GPIO14, 50 Hz y neutro de 1500 us;
+- realimentación AS5600 PWM en GPIO41;
+- parada si se pierde el joystick durante 450 ms;
+- dirección bloqueada en neutro si la señal AS5600 no es válida.
+
+Si no puede reutilizar credenciales Wi-Fi almacenadas, crea:
+
+```text
+SSID: NuevaPata
+Clave: nueva-pata
+URL: http://192.168.4.1
+```
