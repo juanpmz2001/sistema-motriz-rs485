@@ -20,8 +20,9 @@ constexpr uint16_t DRIVE_SPEED_REG = 0x5304;    // M1
 
 constexpr uint32_t SERVO_HZ = 50;
 constexpr uint16_t SERVO_NEUTRAL_US = 1500;
-constexpr uint16_t SERVO_MIN_US = 1000;
-constexpr uint16_t SERVO_MAX_US = 2000;
+// Rango oficial DOCYKE: PWM 0.5–2.5 ms a 50 Hz.
+constexpr uint16_t SERVO_MIN_US = 500;
+constexpr uint16_t SERVO_MAX_US = 2500;
 constexpr uint32_t COMMAND_TIMEOUT_MS = 450;
 
 WebServer server(80);

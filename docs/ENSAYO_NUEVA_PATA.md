@@ -71,7 +71,15 @@ Controla una sola pata con:
 - realimentación AS5600 analógica en GPIO4;
 - parada si se pierde el joystick durante 450 ms;
 - durante la caracterización inicial, dirección manual abierta: eje X completo
-  mapea a 1000–2000 us; el AS5600 solo se registra y todavía no realimenta.
+  mapea al rango oficial DOCYKE de 500–2500 us a 50 Hz; el AS5600 solo se
+  registra y todavía no realimenta.
+
+La ficha oficial guardada como
+`C:\Users\lmuno\Downloads\www_docyke_com_products_servo-motor.pdf` especifica:
+
+```text
+Magnetic encoder, PWM: 0.5-2.5ms/50HZ
+```
 
 Si no puede reutilizar credenciales Wi-Fi almacenadas, crea:
 
