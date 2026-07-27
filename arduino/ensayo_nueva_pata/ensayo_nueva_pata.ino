@@ -1,13 +1,19 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#if __has_include("wifi_secrets.h")
+#include "wifi_secrets.h"
+#else
+#define NUEVA_PATA_WIFI_SSID ""
+#define NUEVA_PATA_WIFI_PASSWORD ""
+#endif
 
 // Ensayo independiente: una pata tipo Toño.
 // Tracción SVD48 por RS485 y dirección externa DOCYKE + AS5600.
 constexpr uint8_t RS485_RX_PIN = 16;
 constexpr uint8_t RS485_TX_PIN = 17;
 constexpr uint8_t STEER_PWM_PIN = 14;
-constexpr uint8_t AS5600_PWM_PIN = 41;
+constexpr uint8_t AS5600_OUT_PIN = 4;
 constexpr uint8_t DRIVE_ID = 2;
 constexpr uint16_t DRIVE_CONTROL_REG = 0x5300;  // M1
 constexpr uint16_t DRIVE_SPEED_REG = 0x5304;    // M1
@@ -21,11 +27,6 @@ constexpr uint32_t COMMAND_TIMEOUT_MS = 450;
 
 WebServer server(80);
 HardwareSerial rs485(2);
-
-volatile uint32_t sensorLastRiseUs = 0;
-volatile uint32_t sensorPeriodUs = 0;
-volatile uint32_t sensorHighUs = 0;
-volatile uint32_t sensorSampleUs = 0;
 
 bool armed = false;
 bool sensorZeroReady = false;
@@ -103,26 +104,13 @@ void setServoPulse(uint16_t pulseUs) {
   ledcWrite(STEER_PWM_PIN, uint32_t(pulseUs) * maxDuty / 20000UL);
 }
 
-void IRAM_ATTR sensorEdge() {
-  uint32_t now = micros();
-  if (digitalRead(AS5600_PWM_PIN)) {
-    if (sensorLastRiseUs) sensorPeriodUs = now - sensorLastRiseUs;
-    sensorLastRiseUs = now;
-  } else if (sensorLastRiseUs) {
-    sensorHighUs = now - sensorLastRiseUs;
-    sensorSampleUs = now;
-  }
-}
-
 bool readAngle(float &angle, uint32_t &period, float &duty) {
-  noInterrupts();
-  uint32_t p = sensorPeriodUs, h = sensorHighUs, sample = sensorSampleUs;
-  interrupts();
-  period = p;
-  if (!sample || uint32_t(micros() - sample) > 250000 || p < 900 || p > 10000 || h > p) return false;
-  duty = 100.0f * h / p;
-  float n = constrain((duty - 2.9f) / 94.2f, 0.0f, 1.0f);
-  angle = n * 360.0f;
+  // OUTS=00 (valor de fábrica): OUT es analógico y radiométrico respecto a VCC.
+  // GPIO4 sí pertenece al ADC del ESP32-S3; GPIO41 no.
+  uint16_t raw = analogRead(AS5600_OUT_PIN);
+  period = raw;
+  duty = 100.0f * raw / 4095.0f;
+  angle = 360.0f * raw / 4095.0f;
   return true;
 }
 
@@ -144,7 +132,7 @@ String statusText() {
   s += "\nMOTOR_RPM:" + String(commandedRpm);
   s += "\nSERVO_US:" + String(servoPulseUs);
   s += "\nAS5600_VALID:" + String(valid ? 1 : 0);
-  if (valid) s += " ANGLE:" + String(angle, 1) + " DUTY:" + String(duty, 2) + " PERIOD_US:" + String(period);
+  if (valid) s += " ANGLE:" + String(angle, 1) + " ADC_PCT:" + String(duty, 2) + " ADC_RAW:" + String(period);
   return s;
 }
 
@@ -171,15 +159,17 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   rs485.begin(115200, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
-  pinMode(AS5600_PWM_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(AS5600_PWM_PIN), sensorEdge, CHANGE);
+  pinMode(AS5600_OUT_PIN, INPUT);
+  analogReadResolution(12);
+  analogSetPinAttenuation(AS5600_OUT_PIN, ADC_11db);
   if (!ledcAttach(STEER_PWM_PIN, SERVO_HZ, 14)) Serial.println("ERR LEDC");
   setServoPulse(SERVO_NEUTRAL_US);
   stopMotor();
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin();  // Reutiliza las credenciales almacenadas en NVS.
+  if (strlen(NUEVA_PATA_WIFI_SSID)) WiFi.begin(NUEVA_PATA_WIFI_SSID, NUEVA_PATA_WIFI_PASSWORD);
+  else WiFi.begin();  // Reutiliza credenciales almacenadas si no hay archivo local.
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 12000) delay(200);
   if (WiFi.status() != WL_CONNECTED) {

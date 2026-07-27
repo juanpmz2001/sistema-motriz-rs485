@@ -3,3 +3,5 @@ sdkconfig
 sdkconfig.old
 .env
 build-arduino-nueva-pata/
+nueva-pata-wifi-profile.xml
+arduino/ensayo_nueva_pata/wifi_secrets.h
