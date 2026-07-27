@@ -54,6 +54,10 @@ conectarse a GPIO4. El firmware aproxima:
 
 OUT nunca debe exceder 3,3 V en el GPIO del ESP.
 
+La revisión de diagnóstico también captura flancos digitales en GPIO4 y reporta
+`GPIO4_PWM_VALID`, `PERIOD_US`, `HIGH_US` y `DUTY`. Esto permite detectar si el
+AS5600 fue configurado previamente en modo PWM aunque se esté usando el pin OUT.
+
 ## Sketch con joystick iPhone
 
 El sketch autónomo está en `arduino/ensayo_nueva_pata/ensayo_nueva_pata.ino`.

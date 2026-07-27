@@ -27,6 +27,11 @@ constexpr uint32_t COMMAND_TIMEOUT_MS = 450;
 WebServer server(80);
 HardwareSerial rs485(2);
 
+volatile uint32_t gpio4LastRiseUs = 0;
+volatile uint32_t gpio4PeriodUs = 0;
+volatile uint32_t gpio4HighUs = 0;
+volatile uint32_t gpio4SampleUs = 0;
+
 bool armed = false;
 int joyX = 0;
 int joyY = 0;
@@ -100,6 +105,17 @@ void setServoPulse(uint16_t pulseUs) {
   ledcWrite(STEER_PWM_PIN, uint32_t(pulseUs) * maxDuty / 20000UL);
 }
 
+void IRAM_ATTR gpio4Edge() {
+  uint32_t now = micros();
+  if (digitalRead(AS5600_OUT_PIN)) {
+    if (gpio4LastRiseUs) gpio4PeriodUs = now - gpio4LastRiseUs;
+    gpio4LastRiseUs = now;
+  } else if (gpio4LastRiseUs) {
+    gpio4HighUs = now - gpio4LastRiseUs;
+    gpio4SampleUs = now;
+  }
+}
+
 bool readAngle(float &angle, uint32_t &period, float &duty) {
   // OUTS=00 (valor de fábrica): OUT es analógico y radiométrico respecto a VCC.
   // GPIO4 sí pertenece al ADC del ESP32-S3; GPIO41 no.
@@ -114,6 +130,16 @@ String statusText() {
   float angle = 0, duty = 0;
   uint32_t period = 0;
   bool valid = readAngle(angle, period, duty);
+  noInterrupts();
+  uint32_t pwmPeriod = gpio4PeriodUs;
+  uint32_t pwmHigh = gpio4HighUs;
+  uint32_t pwmSample = gpio4SampleUs;
+  interrupts();
+  uint32_t pwmAge = pwmSample ? uint32_t(micros() - pwmSample) : UINT32_MAX;
+  bool pwmValid = pwmSample && pwmAge < 250000 && pwmPeriod >= 900 &&
+                  pwmPeriod <= 10000 && pwmHigh <= pwmPeriod;
+  float pwmDuty = pwmValid ? 100.0f * pwmHigh / pwmPeriod : 0.0f;
+  float pwmAngle = pwmValid ? constrain((pwmDuty - 2.9f) / 94.2f, 0.0f, 1.0f) * 360.0f : 0.0f;
   IPAddress activeIp = WiFi.getMode() == WIFI_MODE_AP ? WiFi.softAPIP() : WiFi.localIP();
   String s = "ROBOT:NUEVA_PATA\nFW:NUEVA_PATA_0.1\nIP:" + activeIp.toString();
   s += "\nARMED:" + String(armed ? 1 : 0);
@@ -122,6 +148,9 @@ String statusText() {
   s += "\nSERVO_US:" + String(servoPulseUs);
   s += "\nAS5600_VALID:" + String(valid ? 1 : 0);
   if (valid) s += " ANGLE:" + String(angle, 1) + " ADC_PCT:" + String(duty, 2) + " ADC_RAW:" + String(period);
+  s += "\nGPIO4_PWM_VALID:" + String(pwmValid ? 1 : 0);
+  s += " PERIOD_US:" + String(pwmPeriod) + " HIGH_US:" + String(pwmHigh);
+  s += " DUTY:" + String(pwmDuty, 2) + " ANGLE:" + String(pwmAngle, 1);
   return s;
 }
 
@@ -151,6 +180,7 @@ void setup() {
   pinMode(AS5600_OUT_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(AS5600_OUT_PIN, ADC_11db);
+  attachInterrupt(digitalPinToInterrupt(AS5600_OUT_PIN), gpio4Edge, CHANGE);
   if (!ledcAttach(STEER_PWM_PIN, SERVO_HZ, 14)) Serial.println("ERR LEDC");
   setServoPulse(SERVO_NEUTRAL_US);
   stopMotor();
