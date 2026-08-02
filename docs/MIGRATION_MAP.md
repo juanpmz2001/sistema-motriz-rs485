@@ -50,7 +50,7 @@ flowchart LR
 ```
 
 Green nodes are implemented/active; amber nodes are implemented but dormant.
-There are no implemented profile, capability-port or coordinator components yet.
+The baseline diagram predates Iteration 2; the implemented profile, capability ports and coordinator are described below and do not alter the dormant state/authority nodes.
 
 ## Dependency problems to remove incrementally
 
@@ -63,3 +63,29 @@ There are no implemented profile, capability-port or coordinator components yet.
 Each dependency remains until its replacement has host tests and the active call
 path is migrated. Functional code is not deleted merely because a target exists.
 
+
+## Iteration 2 characterization and migration (2026-08-02)
+
+The individual write is `robot_control_set_motor_speed(handle, motor, int16_t rpm)`;
+the global stop was `robot_control_stop_all(handle)`. Servo writes are private
+`steering_set_angle()` calls during initialization and `MOVE_VEL`. RPM remains signed
+`int16_t`, externally limited to `±15 RPM`; logical motor indices remain `0..3`.
+
+Migrated call sites are boot `STOP ALL`, serial `SET_SPEED n rpm`, serial `STOP ALL`,
+and the repeated `robot_safety` stop. `maintenance_lan` reuses
+`serial_gateway_execute_command`, so its allowed `SET_SPEED`/`STOP ALL` follows the
+same route. The coordinator is the single writer **for these migrated operational
+paths**, not globally.
+
+Legacy hardware-changing paths still active are serial `ENABLE n|ALL` (including
+speed zero), `STOP n`, `CLEAR_FAULT n|ALL`, `MOVE_VEL`, confirmed register writes,
+SVD48 save/gear/identify/config helpers, OTA preparation, and private servo centering
+and steering inside `robot_control`. Read-only facade operations are max-RPM, motor
+telemetry, last-motion, OTA-safe query, trace query and register reads; polling and
+trace mutation are operational but do not command actuator setpoints.
+
+`main` now selects and validates `current_robot_profile`; pins, UART selection, drive
+IDs, endpoint/channel association, servo configuration, geometry and limits live in
+that immutable C profile. `robot_composition` builds four velocity/stoppable traction
+endpoints through the transitional legacy adapter. SVD48 wire protocol, retries,
+timeouts and polling were not changed.

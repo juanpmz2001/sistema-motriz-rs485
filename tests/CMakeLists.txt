@@ -87,3 +87,19 @@ set_tests_properties(svd48_protocol_reference_test PROPERTIES
     TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
 )
+
+botfarms_add_host_test(
+    NAME layered_actuation_test
+    SOURCES
+        host/layered_actuation_test.c
+        ../components/robot_capabilities/robot_capabilities.c
+        ../components/robot_profile/robot_profile.c
+        ../components/actuation_coordinator/actuation_coordinator.c
+        ../components/robot_control_endpoint_adapter/robot_control_endpoint_adapter.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_profile/include
+        ../components/actuation_coordinator/include
+        ../components/robot_control_endpoint_adapter/include
+    LINK_LIBRARIES m
+)

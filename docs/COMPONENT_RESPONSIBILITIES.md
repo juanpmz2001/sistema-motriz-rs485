@@ -189,3 +189,22 @@ return `esp_err_t`; pure models use domain enums. Exact APIs remain source-owned
 - **Thread safety/lifecycle/errors/tests:** Single-threaded boot construction; invalid
   profile keeps outputs disabled; host fixtures cover duplicates, conflicts and missing dependencies.
 
+
+## Iteration 2 implemented boundaries
+
+- **`robot_capabilities`:** portable typed RPM and stoppable ports, endpoint identity,
+  availability/criticality, and fixed registry. It has no ESP-IDF or legacy includes.
+- **`robot_profile`:** immutable `current_robot` data plus pure validation of schema,
+  capacity, IDs, pins, references, channels, capabilities, limits and geometry.
+- **`actuation_coordinator`:** synchronous, allocation-free command path after boot;
+  endpoint reports, total/failed/partial outcomes and best-effort rollback stop for a
+  critical partial apply. It is reentrant over an immutable registry; adapter ports
+  must serialize their device access. It creates no task.
+- **`robot_control_endpoint_adapter`:** explicitly transitional mapping from typed RPM
+  and stop operations to a legacy motor index. It contains no duplicated control logic.
+- **`robot_composition`:** composition-only component that validates the selected
+  profile, allocates adapter storage once at startup, registers endpoints and wires
+  the coordinator. It is the only new component binding the legacy facade callbacks.
+
+The coordinator is the single writer only for migrated speed/global-stop paths.
+Legacy maintenance, enable, individual stop, motion/servo and OTA paths remain.

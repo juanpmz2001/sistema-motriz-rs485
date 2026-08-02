@@ -11,6 +11,8 @@
 #include "ota_announce.h"
 #include "ota_manager.h"
 #include "robot_control.h"
+#include "robot_composition.h"
+#include "robot_profile.h"
 #include "robot_safety.h"
 #include "serial_gateway.h"
 #include "svd48.h"
@@ -18,21 +20,7 @@
 
 static const char *TAG = "main";
 
-// ESP32-S3 <-> UART-RS485 converter <-> two SVD48 drives.
-#define RS485_UART_PORT UART_NUM_2
-#define RS485_TX_PIN 17
-#define RS485_RX_PIN 16
-#define RS485_RTS_PIN UART_PIN_NO_CHANGE
-
-// Steering servo defaults. Change these to match the robot harness.
-#define STEER_FL_PIN 4
-#define STEER_FR_PIN 5
-#define STEER_RL_PIN 6
-#define STEER_RR_PIN 7
-
-// Tested FlySky FS-iA10B PPM input. Signal must be limited to 3.3 V.
-#define IBUS_UART_PORT UART_NUM_1
-#define IBUS_RX_PIN 14
+static const robot_profile_t *profile = NULL;
 
 static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
@@ -44,6 +32,7 @@ static ota_announce_handle_t ota_announce = NULL;
 static maintenance_lan_handle_t maintenance_lan = NULL;
 static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
+static robot_composition_t composition;
 
 static esp_err_t init_nvs(void)
 {
@@ -161,18 +150,19 @@ void app_main(void)
         ESP_LOGW(TAG, "OTA check manager disabled because Wi-Fi manager is unavailable");
     }
 
+    profile = robot_profile_current();
+    if (robot_profile_validate(profile) != ROBOT_PROFILE_VALID) {
+        handle_startup_failure("robot_profile", ESP_ERR_INVALID_ARG, pending_verify);
+        return;
+    }
     svd48_config_t svd48_config = {
-        .uart_port = RS485_UART_PORT,
-        .tx_pin = RS485_TX_PIN,
-        .rx_pin = RS485_RX_PIN,
-        .rts_pin = RS485_RTS_PIN,
-        .use_rs485_half_duplex = false,
-        .baud_rate = 115200,
-        .drive_ids = { 1, 2 },
-        .response_timeout_ms = 100,
-        .retries = 2,
-        .telemetry_period_ms = 30,
-        .stale_timeout_ms = 1000,
+        .uart_port = (uart_port_t)profile->rs485.uart_port,
+        .tx_pin = profile->rs485.tx_pin, .rx_pin = profile->rs485.rx_pin,
+        .rts_pin = profile->rs485.rts_pin, .use_rs485_half_duplex = profile->rs485.half_duplex,
+        .baud_rate = profile->rs485.baud_rate,
+        .drive_ids = { profile->rs485.drive_ids[0], profile->rs485.drive_ids[1] },
+        .response_timeout_ms = profile->rs485.response_timeout_ms, .retries = profile->rs485.retries,
+        .telemetry_period_ms = profile->rs485.telemetry_period_ms, .stale_timeout_ms = profile->rs485.stale_timeout_ms,
     };
 
     svd48 = svd48_init(&svd48_config);
@@ -186,17 +176,13 @@ void app_main(void)
 
     robot_control_config_t robot_config = {
         .svd48 = svd48,
-        .wheelbase_m = 1.60f,
-        .track_width_m = 0.70f,
-        .wheel_radius_m = 0.10f,
-        .max_wheel_rpm = 15.0f,
-        .enable_steering_servos = false,
-        .steering_servo_pins = { STEER_FL_PIN, STEER_FR_PIN, STEER_RL_PIN, STEER_RR_PIN },
-        .servo_min_us = 1000,
-        .servo_center_us = 1500,
-        .servo_max_us = 2000,
-        .servo_min_deg = -90.0f,
-        .servo_max_deg = 90.0f,
+        .wheelbase_m = profile->wheelbase_m, .track_width_m = profile->track_width_m,
+        .wheel_radius_m = profile->wheel_radius_m, .max_wheel_rpm = profile->max_wheel_rpm,
+        .enable_steering_servos = profile->steering_servos_enabled,
+        .steering_servo_pins = { profile->steering_servo_pins[0], profile->steering_servo_pins[1], profile->steering_servo_pins[2], profile->steering_servo_pins[3] },
+        .servo_min_us = profile->servo_min_us, .servo_center_us = profile->servo_center_us,
+        .servo_max_us = profile->servo_max_us, .servo_min_deg = profile->servo_min_deg,
+        .servo_max_deg = profile->servo_max_deg,
     };
 
     robot = robot_control_init(&robot_config);
@@ -209,7 +195,10 @@ void app_main(void)
         return;
     }
 
-    err = robot_control_stop_all(robot);
+    err = robot_composition_init(&composition, profile, robot);
+    if (err != ESP_OK) { handle_startup_failure("robot_composition", err, pending_verify); return; }
+    actuation_report_t boot_stop_report;
+    err = actuation_coordinator_stop_all(&composition.coordinator, &boot_stop_report) == ACTUATION_RESULT_SUCCESS ? ESP_OK : ESP_FAIL;
     if (err != ESP_OK) {
         ESP_LOGW(TAG,
                  "Boot stop was not acknowledged by every configured motor, err=0x%x; startup continues",
@@ -227,8 +216,8 @@ void app_main(void)
     }
 
     ibus_receiver_config_t ibus_config = {
-        .uart_port = IBUS_UART_PORT,
-        .rx_pin = IBUS_RX_PIN,
+        .uart_port = (uart_port_t)profile->rc_uart_port,
+        .rx_pin = profile->rc_rx_pin,
         .tx_pin = UART_PIN_NO_CHANGE,
         .baud_rate = 0,
         .stale_timeout_ms = 300,
@@ -244,13 +233,14 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG,
                  "RC receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
-                 IBUS_RX_PIN,
+                 profile->rc_rx_pin,
                  err);
         ibus_receiver = NULL;
     }
 
     robot_safety_config_t safety_config = {
         .robot = robot,
+        .actuation = &composition.coordinator,
         .ibus_receiver = ibus_receiver,
         .period_ms = 20,
         .rc_loss_timeout_ms = 150,
@@ -299,6 +289,8 @@ void app_main(void)
 
     serial_gateway_config_t gateway_config = {
         .robot = robot,
+        .actuation = &composition.coordinator,
+        .profile = profile,
         .config_manager = config_manager,
         .wifi_manager = wifi_manager,
         .ota_manager = ota_manager,

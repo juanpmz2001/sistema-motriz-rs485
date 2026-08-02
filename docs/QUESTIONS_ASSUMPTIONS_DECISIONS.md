@@ -180,3 +180,35 @@ on 2026-08-02. No item in this document authorizes hardware actuation.
 - **Reversibility:** High at adapter level.
 - **Files affected:** Documentation now; future external adapter only.
 
+
+## Iteration 2 decisions
+
+### D-004 — Ports are owned by the ports component
+
+Stable endpoint/capability contracts are portable C and implementation-neutral;
+application code consumes them while adapters implement them.
+
+### D-005 — Legacy adapter is a temporary strangler seam
+
+`robot_control_endpoint_adapter` maps endpoint IDs to unchanged logical motor indices.
+Only composition binds it to `robot_control`; later device adapters replace this seam.
+
+### D-006 — Initial build profile
+
+Q-006 is **ANSWERED FOR INITIAL IMPLEMENTATION** only: an immutable, schema-versioned
+C profile selected at build is validated before actuator construction. Production
+serialization, signing and field mutability remain OPEN.
+
+### D-007 — Synchronous coordinator
+
+The coordinator adds no FreeRTOS task and performs no per-command allocation. Its
+functions are reentrant over an immutable registry; device adapters retain bus
+serialization. Ordering/authority policy remains outside this iteration.
+
+### D-008 — First vertical slice
+
+Only individual `SET_SPEED` and global stops from boot, serial/LAN delegation and
+safety migrate. Q-001 through Q-005 remain OPEN and no authority/state/TTL policy is activated.
+
+Q-008's previous one-byte IRAM statement is an unverified inherited assertion in
+this environment. It requires a reproducible ESP-IDF 5.4.1 build/map comparison.

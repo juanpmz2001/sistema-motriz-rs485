@@ -1,4 +1,5 @@
 #include "serial_gateway.h"
+#include "robot_composition.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -2316,7 +2317,8 @@ static void handle_stop(serial_gateway_handle_t handle, int argc, char *argv[])
     }
 
     if (strcasecmp(argv[1], "ALL") == 0) {
-        esp_err_t err = robot_control_stop_all(handle->config.robot);
+        actuation_report_t report;
+        esp_err_t err = actuation_coordinator_stop_all(handle->config.actuation, &report) == ACTUATION_RESULT_SUCCESS ? ESP_OK : ESP_FAIL;
         if (err == ESP_OK) {
             print_locked(handle, "OK STOP ALL\n");
         } else {
@@ -2584,7 +2586,9 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
                          (double)max_rpm);
             return;
         }
-        esp_err_t err = robot_control_set_motor_speed(handle->config.robot, motor, rpm);
+        robot_endpoint_id_t endpoint_id = robot_composition_motor_endpoint_id(handle->config.profile, motor);
+        actuation_report_t report;
+        esp_err_t err = endpoint_id && actuation_coordinator_set_velocity_rpm(handle->config.actuation, endpoint_id, rpm, &report) == ACTUATION_RESULT_SUCCESS ? ESP_OK : ESP_ERR_INVALID_ARG;
         if (err == ESP_OK) {
             print_locked(handle, "OK MOTOR_%u RPM_TARGET:%d\n", motor, rpm);
         } else {
@@ -2759,7 +2763,7 @@ esp_err_t serial_gateway_execute_command(serial_gateway_handle_t handle,
 
 serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *config)
 {
-    if (!config || !config->robot) {
+    if (!config || !config->robot || !config->actuation || !config->profile) {
         return NULL;
     }
 

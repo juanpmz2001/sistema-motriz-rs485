@@ -38,18 +38,19 @@ are preferred over a universal Motor type or repository-wide C++ conversion.
 
 ```mermaid
 flowchart TD
-  classDef implemented fill:#d9f2d9,stroke:#287a28
-  classDef partial fill:#fff2cc,stroke:#9a7b00
-  classDef planned fill:#e8e8ff,stroke:#5555aa,stroke-dasharray: 5 5
-  EXT[External adapters: serial, maintenance LAN, RC]:::partial
-  APP[Application services: coordinator, routing, safety]:::planned
-  DOMAIN[Domain: state, authority, differential kinematics]:::partial
-  PORTS[Capability and transport ports]:::planned
-  DEVICE[Device adapters: SVD48 channels, PWM servo]:::planned
-  BUS[Buses: current UART/RS485 implementation]:::partial
-  BSP[Board support and ESP-IDF]:::planned
-  EXT --> APP --> DOMAIN --> PORTS --> DEVICE --> BUS --> BSP
+  DOMAIN[Domain: pure models] --> PORTS[Portable ports]
+  APP[Application: actuation coordinator] --> DOMAIN
+  APP --> PORTS
+  DEVICE[Device adapters] --> PORTS
+  DEVICE --> DRIVERS[Legacy robot_control / drivers]
+  DRIVERS --> TRANSPORTS[UART / RS485 / PWM]
+  EXTERNAL[Serial, LAN, safety callers] --> APP
+  COMPOSITION[Composition + validated C profile] --> APP
+  COMPOSITION --> DEVICE
+  COMPOSITION --> DRIVERS
+  COMPOSITION --> EXTERNAL
 ```
+
 
 The diagram is status-coded: green is active, amber is partial/dormant foundation,
 and dashed blue is planned.
@@ -177,3 +178,24 @@ No active component is removed before its replacement is tested. The detailed
 classification and unresolved policy questions are maintained in `MIGRATION_MAP.md`
 and `QUESTIONS_ASSUMPTIONS_DECISIONS.md`.
 
+
+
+## Iteration 2 executable status
+
+Implemented: portable RPM/stoppable capabilities, fixed endpoint registry, immutable
+validated `current_robot` C profile, synchronous coordinator, transitional
+`robot_control` adapter, and composition wiring. The real path is now:
+
+```mermaid
+flowchart LR
+  SERIAL[SET_SPEED / STOP ALL] --> COORD[actuation_coordinator]
+  SAFETY[robot_safety stop request] --> COORD
+  COORD --> ENDPOINT[typed traction endpoint]
+  ENDPOINT --> LEGACY[transitional robot_control adapter]
+  LEGACY --> CONTROL[existing robot_control]
+  CONTROL --> SVD[unchanged SVD48 driver]
+  LAN[maintenance_lan] --> SERIAL
+```
+
+The target replaces the transitional adapter with SVD48/PWM device adapters. The
+coordinator is not yet the global single writer because documented legacy paths remain.
