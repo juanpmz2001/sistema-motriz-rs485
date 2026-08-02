@@ -1,0 +1,1 @@
+idf_component_register(SRCS "robot_composition.c" INCLUDE_DIRS "include" REQUIRES actuation_coordinator robot_capabilities robot_profile robot_control robot_control_endpoint_adapter)
