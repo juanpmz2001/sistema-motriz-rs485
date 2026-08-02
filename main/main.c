@@ -110,7 +110,7 @@ void app_main(void)
              FW_TARGET,
              FW_VERSION,
              FW_BUILD_NUMBER);
-    ESP_LOGI(TAG, "Read docs/skills/SVD48B50A_SKILL.md before changing RS485 behavior");
+    ESP_LOGI(TAG, "Read docs/SVD48.md before changing RS485 behavior");
 
     ota_manager_boot_state_t boot_state;
     esp_err_t boot_state_err = ota_manager_get_boot_state(&boot_state);

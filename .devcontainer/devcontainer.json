@@ -1,5 +1,5 @@
 {
-	"name": "ESP-IDF QEMU",
+	"name": "BotFarms ESP-IDF 5.4.1",
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
@@ -16,6 +16,5 @@
 				"espressif.esp-idf-web"
 			]
 		}
-	},
-	"runArgs": ["--privileged"]
+	}
 }

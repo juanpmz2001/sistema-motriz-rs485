@@ -6,3 +6,8 @@ ota_release/
 __pycache__/
 *.pyc
 .obsidian/
+.cache/
+.pytest_cache/
+.venv/
+*.log
+.DS_Store
