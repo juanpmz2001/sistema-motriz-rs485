@@ -1,0 +1,10 @@
+choice BOTFARMS_ROBOT_PROFILE
+    prompt "BotFarms robot build profile"
+    default BOTFARMS_PROFILE_CURRENT_ROBOT
+
+config BOTFARMS_PROFILE_CURRENT_ROBOT
+    bool "Current robot (two dual-channel SVD48 devices)"
+
+config BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR
+    bool "Bench single SVD48 motor"
+endchoice

@@ -2,7 +2,8 @@
 
 ESP-IDF firmware for an ESP32-S3 connected to Fulling SVD48 motor drives over
 RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
-host-tested building blocks for a future profile-driven robot architecture.
+an active build-time robot profile, typed actuator ports and host-tested layered
+architecture foundations.
 
 > **Status: bench firmware, not a production motion controller.** Build 19 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
@@ -17,8 +18,10 @@ host-tested building blocks for a future profile-driven robot architecture.
 - Steering servo support exists but is disabled in the active configuration.
 - Wi-Fi reconnect, manifest checks, OTA announcements and maintenance LAN run as
   low-priority services. The main loop itself only sleeps.
-- Hardware configuration is currently compiled into `main/main.c`; runtime JSON
-  robot profiles have not been implemented.
+- Board, bus, device and endpoint configuration is selected from an immutable C
+  profile in `components/robot_profile`; runtime JSON loading is not implemented.
+- `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
+  port backed by the serialized `actuation_coordinator`.
 
 The intended architecture and the difference between active and dormant modules
 are documented in [Architecture](docs/ARCHITECTURE.md).
@@ -120,6 +123,12 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
 - A failed boot-time `STOP ALL` logs a warning and startup continues.
 - Offline or stale motor telemetry is not yet promoted to a safety fault.
 - Maintenance LAN has no command lease, authority arbitration or deadman.
+- The coordinator uses a mutex, not a priority-aware owner task; safety stop can
+  wait up to 500 ms behind an in-progress driver operation.
+- `ENABLE`, `MOVE_VEL`, fault clearing, OTA preparation and maintenance register
+  writes still bypass the coordinator.
+- The selectable single-motor profile is validation-only: the fixed legacy SVD48
+  runtime rejects it during startup and exposes no diagnostic service afterward.
 - Reported SVD48 speed still labels a raw 0.1 RPM register value as RPM.
 - Servo output has no position feedback and cannot prove physical position.
 - Clean ESP-IDF 5.4.1 build leaves only 1 byte of reported IRAM headroom.

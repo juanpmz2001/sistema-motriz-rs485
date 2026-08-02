@@ -1,5 +1,44 @@
 #include "robot_control_endpoint_adapter.h"
+
 #include <string.h>
-static robot_capability_error_t speed(robot_velocity_rpm_port_t*p,int16_t rpm){robot_control_endpoint_adapter_t*a=p?p->context:0;if(!a||!a->legacy||!a->set_speed)return ROBOT_CAP_INVALID_ARGUMENT;return a->set_speed(a->legacy,a->legacy_motor_index,rpm)==0?ROBOT_CAP_OK:ROBOT_CAP_IO_ERROR;}
-static robot_capability_error_t stop(robot_stoppable_port_t*p){robot_control_endpoint_adapter_t*a=p?p->context:0;if(!a||!a->legacy||!a->stop)return ROBOT_CAP_INVALID_ARGUMENT;return a->stop(a->legacy,a->legacy_motor_index)==0?ROBOT_CAP_OK:ROBOT_CAP_IO_ERROR;}
-bool robot_control_endpoint_adapter_init(robot_control_endpoint_adapter_t*a,void*legacy,uint8_t index,robot_endpoint_id_t id,const char*name,robot_endpoint_criticality_t criticality,int16_t min,int16_t max,robot_control_legacy_speed_fn sf,robot_control_legacy_stop_fn st){static const robot_velocity_rpm_ops_t vo={speed};static const robot_stoppable_ops_t so={stop};if(!a||!legacy||!name||!sf||!st||min>max)return false;memset(a,0,sizeof(*a));a->legacy=legacy;a->legacy_motor_index=index;a->set_speed=sf;a->stop=st;a->velocity=(robot_velocity_rpm_port_t){&vo,a,min,max};a->stoppable=(robot_stoppable_port_t){&so,a};a->endpoint=(robot_endpoint_t){id,name,ROBOT_CAPABILITY_VELOCITY_RPM|ROBOT_CAPABILITY_STOPPABLE,criticality,true,&a->velocity,&a->stoppable};return true;}
+
+static robot_capability_error_t set_speed(robot_velocity_rpm_port_t *port, int16_t rpm)
+{
+    robot_control_endpoint_adapter_t *adapter = port ? port->context : NULL;
+    if (!adapter || !adapter->legacy || !adapter->set_speed) return ROBOT_CAP_INVALID_ARGUMENT;
+    return adapter->set_speed(adapter->legacy, adapter->legacy_motor_index, rpm) == 0
+               ? ROBOT_CAP_OK : ROBOT_CAP_IO_ERROR;
+}
+
+static robot_capability_error_t stop(robot_stoppable_port_t *port)
+{
+    robot_control_endpoint_adapter_t *adapter = port ? port->context : NULL;
+    if (!adapter || !adapter->legacy || !adapter->stop) return ROBOT_CAP_INVALID_ARGUMENT;
+    return adapter->stop(adapter->legacy, adapter->legacy_motor_index) == 0
+               ? ROBOT_CAP_OK : ROBOT_CAP_IO_ERROR;
+}
+
+bool robot_control_endpoint_adapter_init(
+    robot_control_endpoint_adapter_t *adapter, void *legacy, uint8_t index,
+    robot_endpoint_id_t id, const char *name, robot_endpoint_criticality_t criticality,
+    int16_t min_rpm, int16_t max_rpm, robot_control_legacy_speed_fn speed_fn,
+    robot_control_legacy_stop_fn stop_fn)
+{
+    static const robot_velocity_rpm_ops_t velocity_ops = {.set_velocity_rpm = set_speed};
+    static const robot_stoppable_ops_t stoppable_ops = {.stop = stop};
+    if (!adapter || !legacy || !name || !speed_fn || !stop_fn || min_rpm > max_rpm) return false;
+    memset(adapter, 0, sizeof(*adapter));
+    adapter->legacy = legacy;
+    adapter->legacy_motor_index = index;
+    adapter->set_speed = speed_fn;
+    adapter->stop = stop_fn;
+    adapter->velocity = (robot_velocity_rpm_port_t){&velocity_ops, adapter, min_rpm, max_rpm};
+    adapter->stoppable = (robot_stoppable_port_t){&stoppable_ops, adapter};
+    adapter->endpoint.id = id;
+    adapter->endpoint.name = name;
+    adapter->endpoint.criticality = criticality;
+    adapter->endpoint.available = true;
+    adapter->endpoint.velocity_rpm = &adapter->velocity;
+    adapter->endpoint.stoppable = &adapter->stoppable;
+    return true;
+}

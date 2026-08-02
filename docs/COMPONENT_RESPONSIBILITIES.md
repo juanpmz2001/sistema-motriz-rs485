@@ -208,3 +208,16 @@ return `esp_err_t`; pure models use domain enums. Exact APIs remain source-owned
 
 The coordinator is the single writer only for migrated speed/global-stop paths.
 Legacy maintenance, enable, individual stop, motion/servo and OTA paths remain.
+
+## Iteration 3 corrected contracts
+
+`actuation_coordinator` is serialized, not reentrant. Its injected lock covers each
+complete apply, stop and rollback. `robot_composition` supplies a static FreeRTOS
+mutex with a 500 ms acquisition bound and owns fixed adapter storage. No caller may
+invoke actuation from an ISR or transport callback.
+
+`actuation_application_port` is the stable gateway-facing boundary. It preserves
+legacy motor indices only at this compatibility edge; composition translates them to
+endpoint IDs. Safety receives only its stop operation. `robot_profile` is now a
+neutral, host-testable metamodel and validator. `main`, not `robot_composition`,
+remains the complete firmware composition root.

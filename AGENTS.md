@@ -18,8 +18,13 @@ documentation in the same change whenever behavior or a public contract changes.
 
 ## Current constraints
 
-- The active robot topology is hardcoded in `main/main.c`.
-- No supported robot-profile schema or runtime parser exists yet.
+- The active topology comes from a build-selected immutable C profile. There is no
+  JSON/YAML loader or general runtime factory for every declared driver yet.
+- The current composition backend supports only the fixed two-drive SVD48 runtime;
+  the single-motor Kconfig profile intentionally fails startup until that driver is
+  separated.
+- `actuation_coordinator` serializes migrated speed and stop paths with a mutex, but
+  several active commands still write through the legacy `robot_control` facade.
 - `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are not
   part of the active runtime despite being compiled.
 - The firmware is bench-only until every release gate in `docs/SAFETY.md` passes.

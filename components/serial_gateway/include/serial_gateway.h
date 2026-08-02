@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "actuation_coordinator.h"
+#include "actuation_application_port.h"
 #include "config_manager.h"
 #include "esp_err.h"
 #include "ibus_receiver.h"
@@ -11,7 +11,6 @@
 #include "ota_manager.h"
 #include "robot_control.h"
 #include "robot_safety.h"
-#include "robot_profile.h"
 #include "serial_gateway_framing.h"
 #include "wifi_manager.h"
 
@@ -30,8 +29,7 @@ typedef void (*serial_gateway_output_fn_t)(void *ctx, const char *chunk);
 
 typedef struct {
     robot_control_handle_t robot;
-    actuation_coordinator_t *actuation;
-    const robot_profile_t *profile;
+    actuation_application_port_t *actuation;
     config_manager_handle_t config_manager;
     wifi_manager_handle_t wifi_manager;
     ota_manager_handle_t ota_manager;

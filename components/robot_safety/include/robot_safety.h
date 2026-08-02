@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "actuation_coordinator.h"
+#include "actuation_application_port.h"
 #include "esp_err.h"
 #include "ibus_receiver.h"
 #include "robot_control.h"
@@ -18,7 +18,7 @@ typedef struct robot_safety_t *robot_safety_handle_t;
 
 typedef struct {
     robot_control_handle_t robot; /* telemetry-only legacy dependency */
-    actuation_coordinator_t *actuation;
+    actuation_application_port_t *stop_port;
     ibus_receiver_handle_t ibus_receiver;
     uint32_t period_ms;
     uint32_t rc_loss_timeout_ms;

@@ -142,8 +142,7 @@ static void safety_task(void *arg)
             uint32_t elapsed_ms = (uint32_t)((now - last_stop_tick) * portTICK_PERIOD_MS);
             if (last_stop_tick == 0 || elapsed_ms >= handle->config.stop_repeat_ms) {
                 const char *reason = stop_for_fault ? "MOTOR_FAULT" : "RC_LOSS";
-                actuation_report_t report;
-                esp_err_t err = actuation_coordinator_stop_all(handle->config.actuation, &report) == ACTUATION_RESULT_SUCCESS ? ESP_OK : ESP_FAIL;
+                esp_err_t err = actuation_application_stop_all(handle->config.stop_port) == ACTUATION_APPLICATION_OK ? ESP_OK : ESP_FAIL;
                 record_stop(handle, reason, err);
                 last_stop_tick = now;
             }
@@ -162,7 +161,7 @@ static void safety_task(void *arg)
 
 esp_err_t robot_safety_init(const robot_safety_config_t *config, robot_safety_handle_t *out_handle)
 {
-    if (!config || !config->robot || !config->actuation || !out_handle) {
+    if (!config || !config->robot || !config->stop_port || !out_handle) {
         return ESP_ERR_INVALID_ARG;
     }
     *out_handle = NULL;

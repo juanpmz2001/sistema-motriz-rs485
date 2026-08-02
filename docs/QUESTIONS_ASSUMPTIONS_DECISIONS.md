@@ -212,3 +212,22 @@ safety migrate. Q-001 through Q-005 remain OPEN and no authority/state/TTL polic
 
 Q-008's previous one-byte IRAM statement is an unverified inherited assertion in
 this environment. It requires a reproducible ESP-IDF 5.4.1 build/map comparison.
+
+## Iteration 3 hardening decisions
+
+- **D-009 Coordinator serialization:** an injected lock port keeps the core portable;
+  the firmware composition supplies a static FreeRTOS mutex with a 500 ms acquire bound.
+- **D-010 Stop semantics:** physical endpoint stops occur once; only after total success
+  an isolated legacy hook clears body velocity, wheel RPM, steering command, sequence
+  and timestamp state. Partial stop retains a distinguishable partial commanded state.
+- **D-011 Neutral profile model:** board, buses, devices, channels, endpoints and optional
+  application geometry replace the fixed RS485/four-motor shape.
+- **D-012 Board validation:** explicit valid/reserved and input/output/PWM resource masks
+  replace numeric GPIO-range-only validation.
+- **D-013 Build selection:** Kconfig chooses a compiled profile and boot logs its name.
+- **D-014 Gateway inversion:** serial and maintenance paths depend on an application port;
+  safety depends on its stop subset, not composition or coordinator implementations.
+- **D-015 Transitional composition:** fixed storage replaces heap allocation; this component
+  remains an actuation sub-composition rather than claiming ownership of the full system.
+
+Q-001 through Q-005 remain OPEN. No new operational safety policy was inferred.

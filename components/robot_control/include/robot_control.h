@@ -44,6 +44,8 @@ void robot_control_deinit(robot_control_handle_t handle);
 
 esp_err_t robot_control_enable_all(robot_control_handle_t handle);
 esp_err_t robot_control_stop_all(robot_control_handle_t handle);
+/* Transitional: record a coordinated all-endpoint stop without issuing I/O. */
+esp_err_t robot_control_record_coordinated_stop(robot_control_handle_t handle);
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t motor, int16_t rpm);

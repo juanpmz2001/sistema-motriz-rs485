@@ -89,3 +89,22 @@ IDs, endpoint/channel association, servo configuration, geometry and limits live
 that immutable C profile. `robot_composition` builds four velocity/stoppable traction
 endpoints through the transitional legacy adapter. SVD48 wire protocol, retries,
 timeouts and polling were not changed.
+
+## Iteration 3 hardening
+
+Eliminated dependencies: `serial_gateway -> robot_profile`, `serial_gateway ->
+robot_composition`, `serial_gateway -> actuation_coordinator`, and safety actuation
+through the concrete coordinator. Both callers now use small application ports.
+The coordinator serializes the entire operation with an injected mutex; composition
+uses fixed adapter and static mutex storage. A successful coordinated global stop
+calls the isolated legacy state-reset hook without duplicating physical writes.
+
+The profile metamodel now represents board, zero-or-more buses, devices, channels,
+endpoints/capabilities, and optional application geometry. Host validation covers
+PWM-only and fake-CAN profiles without implementing those runtime drivers. Firmware
+Kconfig selects `current_robot` or `bench_single_svd48_motor`; the latter currently
+halts before diagnostic services because the unchanged legacy SVD48 driver requires
+two drives. Remaining actuation bypasses are enable/clear-fault/MOVE_VEL, maintenance
+register operations, OTA preparation, and servo behavior inside `robot_control`.
+`main` remains the full composition root; `robot_composition` is only the transitional
+legacy actuation sub-composition.

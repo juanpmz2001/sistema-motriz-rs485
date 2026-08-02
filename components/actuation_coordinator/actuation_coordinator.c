@@ -1,8 +1,161 @@
 #include "actuation_coordinator.h"
+
 #include <string.h>
-void actuation_coordinator_init(actuation_coordinator_t*c,robot_endpoint_registry_t*r){if(c)c->registry=r;}
-static void reset(actuation_report_t*r,size_t n){if(r){memset(r,0,sizeof(*r));r->requested=n;r->outcome=ACTUATION_RESULT_FAILURE;}}
-actuation_result_t actuation_coordinator_apply_velocity_rpm(actuation_coordinator_t*c,const actuation_velocity_request_t*q,size_t n,actuation_report_t*r){reset(r,n);if(!c||!c->registry||!q||!r||!n||n>ACTUATION_COORDINATOR_MAX_SETPOINTS)return ACTUATION_RESULT_FAILURE;for(size_t i=0;i<n;i++){robot_endpoint_t*e=robot_endpoint_registry_find(c->registry,q[i].endpoint_id);r->endpoints[i].endpoint_id=q[i].endpoint_id;r->endpoints[i].error=e?robot_velocity_set_rpm(e,q[i].rpm):ROBOT_CAP_UNAVAILABLE;if(r->endpoints[i].error==ROBOT_CAP_OK){r->endpoints[i].applied=true;r->applied++;continue;}if(e&&e->criticality==ROBOT_ENDPOINT_REQUIRED&&r->applied){for(size_t j=0;j<i;j++)if(r->endpoints[j].applied){robot_endpoint_t*a=robot_endpoint_registry_find(c->registry,q[j].endpoint_id);r->endpoints[j].rollback_stop_attempted=true;r->endpoints[j].rollback_stop_error=robot_endpoint_stop(a);}}r->outcome=r->applied?ACTUATION_RESULT_PARTIAL:ACTUATION_RESULT_FAILURE;return r->outcome;}r->outcome=ACTUATION_RESULT_SUCCESS;return r->outcome;}
-actuation_result_t actuation_coordinator_set_velocity_rpm(actuation_coordinator_t*c,robot_endpoint_id_t id,int16_t rpm,actuation_report_t*r){actuation_velocity_request_t q={id,rpm};return actuation_coordinator_apply_velocity_rpm(c,&q,1,r);}
-actuation_result_t actuation_coordinator_stop_endpoint(actuation_coordinator_t*c,robot_endpoint_id_t id,actuation_report_t*r){reset(r,1);if(!c||!c->registry||!r)return ACTUATION_RESULT_FAILURE;robot_endpoint_t*e=robot_endpoint_registry_find(c->registry,id);r->endpoints[0].endpoint_id=id;r->endpoints[0].error=e?robot_endpoint_stop(e):ROBOT_CAP_UNAVAILABLE;if(r->endpoints[0].error==ROBOT_CAP_OK){r->applied=1;r->endpoints[0].applied=true;r->outcome=ACTUATION_RESULT_SUCCESS;}return r->outcome;}
-actuation_result_t actuation_coordinator_stop_all(actuation_coordinator_t*c,actuation_report_t*r){reset(r,0);if(!c||!c->registry||!r)return ACTUATION_RESULT_FAILURE;for(size_t i=0;i<c->registry->count&&r->requested<ACTUATION_COORDINATOR_MAX_SETPOINTS;i++){robot_endpoint_t*e=c->registry->items[i];if(!robot_endpoint_has_capability(e,ROBOT_CAPABILITY_STOPPABLE))continue;size_t x=r->requested++;r->endpoints[x].endpoint_id=e->id;r->endpoints[x].error=robot_endpoint_stop(e);if(r->endpoints[x].error==ROBOT_CAP_OK){r->endpoints[x].applied=true;r->applied++;}}r->outcome=r->applied==r->requested?ACTUATION_RESULT_SUCCESS:(r->applied?ACTUATION_RESULT_PARTIAL:ACTUATION_RESULT_FAILURE);return r->outcome;}
+
+static void reset_report(actuation_report_t *report, size_t requested)
+{
+    if (!report) {
+        return;
+    }
+    memset(report, 0, sizeof(*report));
+    report->requested = requested;
+    report->outcome = ACTUATION_RESULT_FAILURE;
+}
+
+static bool acquire(const actuation_coordinator_t *coordinator)
+{
+    return coordinator->lock.acquire(coordinator->lock.context);
+}
+
+static void release(const actuation_coordinator_t *coordinator)
+{
+    coordinator->lock.release(coordinator->lock.context);
+}
+
+bool actuation_coordinator_init(actuation_coordinator_t *coordinator,
+                                robot_endpoint_registry_t *registry,
+                                const actuation_lock_port_t *lock)
+{
+    if (!coordinator || !registry || !lock || !lock->acquire || !lock->release) {
+        return false;
+    }
+    coordinator->registry = registry;
+    coordinator->lock = *lock;
+    return true;
+}
+
+static actuation_result_t apply_locked(actuation_coordinator_t *coordinator,
+                                       const actuation_velocity_request_t *requests,
+                                       size_t request_count,
+                                       actuation_report_t *report)
+{
+    for (size_t index = 0; index < request_count; ++index) {
+        const actuation_velocity_request_t *request = &requests[index];
+        robot_endpoint_t *endpoint = robot_endpoint_registry_find(
+            coordinator->registry, request->endpoint_id);
+        actuation_endpoint_result_t *result = &report->endpoints[index];
+        result->endpoint_id = request->endpoint_id;
+        result->error = endpoint ? robot_velocity_set_rpm(endpoint, request->rpm)
+                                 : ROBOT_CAP_UNAVAILABLE;
+        if (result->error == ROBOT_CAP_OK) {
+            result->applied = true;
+            ++report->applied;
+            continue;
+        }
+
+        if (endpoint && endpoint->criticality == ROBOT_ENDPOINT_REQUIRED) {
+            for (size_t applied = 0; applied < index; ++applied) {
+                actuation_endpoint_result_t *previous = &report->endpoints[applied];
+                if (!previous->applied) {
+                    continue;
+                }
+                robot_endpoint_t *previous_endpoint = robot_endpoint_registry_find(
+                    coordinator->registry, previous->endpoint_id);
+                previous->rollback_stop_attempted = true;
+                previous->rollback_stop_error = robot_endpoint_stop(previous_endpoint);
+            }
+        }
+        return report->applied ? ACTUATION_RESULT_PARTIAL : ACTUATION_RESULT_FAILURE;
+    }
+    return ACTUATION_RESULT_SUCCESS;
+}
+
+actuation_result_t actuation_coordinator_apply_velocity_rpm(
+    actuation_coordinator_t *coordinator,
+    const actuation_velocity_request_t *requests,
+    size_t request_count,
+    actuation_report_t *report)
+{
+    reset_report(report, request_count);
+    if (!coordinator || !coordinator->registry || !requests || !report ||
+        request_count == 0 || request_count > ACTUATION_COORDINATOR_MAX_SETPOINTS) {
+        return ACTUATION_RESULT_FAILURE;
+    }
+    if (!acquire(coordinator)) {
+        report->outcome = ACTUATION_RESULT_LOCK_TIMEOUT;
+        return report->outcome;
+    }
+    report->outcome = apply_locked(coordinator, requests, request_count, report);
+    release(coordinator);
+    return report->outcome;
+}
+
+actuation_result_t actuation_coordinator_set_velocity_rpm(
+    actuation_coordinator_t *coordinator,
+    robot_endpoint_id_t endpoint_id,
+    int16_t rpm,
+    actuation_report_t *report)
+{
+    const actuation_velocity_request_t request = {.endpoint_id = endpoint_id, .rpm = rpm};
+    return actuation_coordinator_apply_velocity_rpm(coordinator, &request, 1, report);
+}
+
+actuation_result_t actuation_coordinator_stop_endpoint(
+    actuation_coordinator_t *coordinator,
+    robot_endpoint_id_t endpoint_id,
+    actuation_report_t *report)
+{
+    reset_report(report, 1);
+    if (!coordinator || !coordinator->registry || !report) {
+        return ACTUATION_RESULT_FAILURE;
+    }
+    if (!acquire(coordinator)) {
+        report->outcome = ACTUATION_RESULT_LOCK_TIMEOUT;
+        return report->outcome;
+    }
+    robot_endpoint_t *endpoint = robot_endpoint_registry_find(coordinator->registry, endpoint_id);
+    report->endpoints[0].endpoint_id = endpoint_id;
+    report->endpoints[0].error = endpoint ? robot_endpoint_stop(endpoint) : ROBOT_CAP_UNAVAILABLE;
+    if (report->endpoints[0].error == ROBOT_CAP_OK) {
+        report->endpoints[0].applied = true;
+        report->applied = 1;
+        report->outcome = ACTUATION_RESULT_SUCCESS;
+    }
+    release(coordinator);
+    return report->outcome;
+}
+
+actuation_result_t actuation_coordinator_stop_all(actuation_coordinator_t *coordinator,
+                                                  actuation_report_t *report)
+{
+    reset_report(report, 0);
+    if (!coordinator || !coordinator->registry || !report) {
+        return ACTUATION_RESULT_FAILURE;
+    }
+    if (!acquire(coordinator)) {
+        report->outcome = ACTUATION_RESULT_LOCK_TIMEOUT;
+        return report->outcome;
+    }
+    for (size_t index = 0; index < coordinator->registry->count; ++index) {
+        robot_endpoint_t *endpoint = coordinator->registry->items[index];
+        if (!robot_endpoint_has_capability(endpoint, ROBOT_CAPABILITY_STOPPABLE)) {
+            continue;
+        }
+        actuation_endpoint_result_t *result = &report->endpoints[report->requested++];
+        result->endpoint_id = endpoint->id;
+        result->error = robot_endpoint_stop(endpoint);
+        if (result->error == ROBOT_CAP_OK) {
+            result->applied = true;
+            ++report->applied;
+        }
+    }
+    if (report->requested == 0) {
+        report->outcome = ACTUATION_RESULT_FAILURE;
+    } else if (report->applied == report->requested) {
+        report->outcome = ACTUATION_RESULT_SUCCESS;
+    } else if (report->applied > 0) {
+        report->outcome = ACTUATION_RESULT_PARTIAL;
+    }
+    release(coordinator);
+    return report->outcome;
+}

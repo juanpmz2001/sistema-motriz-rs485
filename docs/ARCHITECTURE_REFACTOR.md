@@ -1,11 +1,8 @@
 # Layered architecture refactor
 
-## Status and baseline
+## As-built architecture at Iteration 3
 
-This document is an implementation guide, not a claim that the target already
-exists. The current runtime remains the one described by `ARCHITECTURE.md` at base
-commit `ce5f1e2e5b4e784b0b877366be6f68b6778f14d1`. Phase 0 and the initial
-documentary portion of Phase 1 are complete; architectural code migration is planned.
+This document describes the executable layered foundation and distinguishes it from the remaining target. The requested base `c4594bb` was not present in this checkout; the equivalent supplied baseline was `d6f131b`.
 
 Baseline verification on 2026-08-02 found all seven CTest cases and all three
 Python SVD48 protocol tests passing. The documented `tools/run_host_tests.sh`
@@ -199,3 +196,70 @@ flowchart LR
 
 The target replaces the transitional adapter with SVD48/PWM device adapters. The
 coordinator is not yet the global single writer because documented legacy paths remain.
+
+
+## Iteration 3 hardened as-built architecture
+
+```mermaid
+flowchart LR
+  SG[serial_gateway] --> AP[actuation_application_port]
+  SAFE[robot_safety] --> AP
+  AP --> LC[legacy robot composition]
+  LC --> AC[actuation_coordinator + injected mutex]
+  AC --> EP[typed endpoint registry]
+  EP --> AD[robot_control endpoint adapter]
+  AD --> RC[legacy robot_control]
+```
+
+`serial_gateway` has no profile, composition, or coordinator dependency. The legacy
+composition owns fixed adapter storage and a statically allocated FreeRTOS mutex.
+The mutex covers complete multi-set, stop, and rollback operations. Calls from task
+context may block for at most 500 ms acquiring it; transport callbacks must not call
+the port. Driver timeouts execute while the lock is held, so a blocked driver delays
+other actuation but cannot permit interleaving.
+
+```mermaid
+classDiagram
+  RobotProfile --> Board
+  RobotProfile --> Bus
+  RobotProfile --> Device
+  RobotProfile --> Endpoint
+  RobotProfile --> ApplicationConfiguration
+  Device --> Bus
+  Endpoint --> Device
+  Endpoint --> Capability
+```
+
+```mermaid
+sequenceDiagram
+  participant Serial
+  participant Mutex
+  participant Coordinator
+  participant Safety
+  Serial->>Mutex: acquire SET_SPEED
+  Mutex-->>Serial: acquired
+  Serial->>Coordinator: complete set operation
+  Safety->>Mutex: acquire STOP ALL (wait)
+  Coordinator-->>Serial: result
+  Serial->>Mutex: release
+  Mutex-->>Safety: acquired
+  Safety->>Coordinator: complete STOP ALL
+  Coordinator-->>Safety: result
+  Safety->>Mutex: release
+```
+
+## Target architecture
+
+The next boundary replaces the transitional `robot_control` adapter with direct
+SVD48 device/channel adapters. No CAN runtime driver, ROS integration, authority,
+or new safety policy is implemented here.
+
+## Migration status
+
+Implemented now: neutral board/bus/device/endpoint/application profile model, driver
+compatibility validation, Kconfig profile choice, derived capability masks, injected
+coordinator lock, gateway application port, safety stop port, fixed composition
+storage, and successful-stop command-state reset. The legacy SVD48 driver still
+requires two configured controllers; the single-motor build profile therefore halts
+startup before serial/LAN diagnostics until that driver is separated. Individual
+`STOP n` now uses the same application port as global stop.

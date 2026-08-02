@@ -8,13 +8,15 @@ replacement for an independent emergency power path.
 
 ## Implemented behavior
 
-- Startup creates the SVD48 and robot facade, then issues a best-effort `STOP ALL`.
+- Startup validates the selected C profile, constructs the SVD48 endpoint adapters
+  and issues a best-effort global stop through the application port.
 - A priority-9 safety task runs every 20 ms.
 - After a valid RC frame has been seen, invalid RC for at least 150 ms activates
   RC-loss handling.
 - A nonzero error code from online, fresh SVD48 telemetry activates motor-fault
   handling.
-- While either condition remains active, `STOP ALL` is repeated every 500 ms.
+- While either condition remains active, a serialized global stop is requested every
+  500 ms.
 - OTA update checks `robot_control_is_safe_for_ota()` and prepares a stop before
   changing the boot partition.
 - Wi-Fi and maintenance failures do not block local firmware startup.
@@ -47,7 +49,8 @@ The following are blockers for a production baseline:
 | Boot stop failure | Warning; startup continues | Inhibit actuation and enter explicit fault |
 | Offline/stale drive | Ignored by motor-fault detection | Profile-aware degraded/fault policy |
 | Initial RC absence | RC loss starts only after first valid frame | Explicit startup/arming policy |
-| Command ownership | Serial/LAN can call robot control directly | Coordinator with source arbitration |
+| Command ownership | Speed and stop use a mutex-backed coordinator; other writes bypass it | Priority-aware single owner with source arbitration |
+| Stop latency | Safety can wait up to 500 ms for the coordinator mutex, plus driver timeouts | Measured bounded stop deadline with stop precedence |
 | Command lifetime | Maintenance speed has no TTL/deadman | Lease expiry forces stop |
 | LAN trust | Shared token and plaintext UDP | Replay protection, rotation and network threat model |
 | Servo feedback | PWM command only | Report command only or add independent feedback |

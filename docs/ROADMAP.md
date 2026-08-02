@@ -18,14 +18,17 @@ Available now:
   maintenance on a trusted development network.
 - SVD48 RS485 driver, serial diagnostics, PPM input and a reactive safety task.
 - Host-tested pure models for PPM, kinematics, robot state and command authority.
-- Documented requirements for a future profile contract.
+- A build-selected C profile for boards, buses, devices and typed endpoints, with
+  bounded host validation and a transitional SVD48 composition backend.
+- Application ports and a mutex-backed coordinator for speed and stop operations.
 
 Not available now:
 
-- A supported JSON schema, runtime profile loading, generic driver registry or
-  profile-aware health.
+- A supported JSON/YAML schema, generated/runtime profile pipeline, general driver
+  factory or profile-aware health.
 - A complete state machine integrated with all outputs.
-- A single coordinator with source arbitration, command leases and deadman.
+- A priority-aware single-owner coordinator with source arbitration, command leases
+  and deadman.
 - Product-qualified timing, security, fault handling or ROS transport.
 
 ## Ordered implementation slices
@@ -42,6 +45,8 @@ resource margins.
 
 ### 2. Profile contract and compiler
 
+- Complete the existing C-profile invariants and distinguish profiles accepted by
+  the schema from profiles executable by the available composition factories.
 - Redesign schema around buses, devices, typed endpoints, capabilities and
   required/optional/development policy.
 - Support fixtures for SVD48 differential drive, servo-only development, mixed
@@ -51,15 +56,16 @@ resource margins.
 - Version the schema and define migration rules.
 
 Exit: valid fixtures compile deterministically and invalid fixtures fail with
-specific errors. Firmware still uses the hardcoded profile during this slice.
+specific errors. Firmware continues using a build-selected immutable profile.
 
 ### 3. Composition root and driver ports
 
-- Reduce `main` to boot sequencing, profile selection, construction and task start.
-- Introduce small capability interfaces for velocity actuators, position actuators,
-  stop, feedback and faults.
-- Wrap the existing SVD48 and PWM implementations as adapters without changing
-  their proven wire behavior.
+- Finish reducing `main` to boot sequencing, profile selection, construction and
+  task start.
+- Extend the existing velocity, position and stop capabilities with feedback and
+  fault ports as supported drivers require them.
+- Replace the transitional `robot_control` adapter with direct SVD48 and PWM
+  adapters without changing their proven wire behavior.
 - Add a static driver registry selected by validated profile type names.
 
 Exit: the current robot runs through interfaces with no behavior regression; a
@@ -78,6 +84,8 @@ effects, and no output can activate before a valid state transition.
 
 ### 5. Single actuator coordinator
 
+- Replace the bounded mutex wait with a priority-aware owner/mailbox where stop has
+  explicit precedence over motion requests.
 - Integrate authority mailboxes for RC, serial engineering, LAN and future ROS.
 - Require sequence, timestamp/TTL and source policy on every motion command.
 - Make the coordinator the only runtime writer to actuator endpoints.

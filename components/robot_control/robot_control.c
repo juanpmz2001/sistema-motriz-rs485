@@ -285,6 +285,15 @@ esp_err_t robot_control_stop_all(robot_control_handle_t handle)
     return err;
 }
 
+esp_err_t robot_control_record_coordinated_stop(robot_control_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    record_stop_command(handle);
+    return ESP_OK;
+}
+
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
 {
     if (!handle || motor >= SVD48_MOTOR_COUNT) {

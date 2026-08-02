@@ -101,5 +101,11 @@ botfarms_add_host_test(
         ../components/robot_profile/include
         ../components/actuation_coordinator/include
         ../components/robot_control_endpoint_adapter/include
-    LINK_LIBRARIES m
+    LINK_LIBRARIES m pthread
 )
+
+add_test(
+    NAME dependency_contracts_test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tools/test_dependency_contracts.py"
+)
+set_tests_properties(dependency_contracts_test PROPERTIES LABELS "host;architecture")
