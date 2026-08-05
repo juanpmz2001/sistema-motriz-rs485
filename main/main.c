@@ -15,14 +15,12 @@
 #include "robot_profile.h"
 #include "robot_safety.h"
 #include "serial_gateway.h"
-#include "svd48.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "main";
 
 static const robot_profile_t *profile = NULL;
 
-static svd48_handle_t svd48 = NULL;
 static robot_control_handle_t robot = NULL;
 static serial_gateway_handle_t gateway = NULL;
 static config_manager_handle_t config_manager = NULL;
@@ -33,6 +31,29 @@ static maintenance_lan_handle_t maintenance_lan = NULL;
 static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
 static robot_composition_t composition;
+
+static float profile_max_abs_rpm(const robot_profile_t *selected_profile)
+{
+    int16_t maximum = 0;
+    for (size_t index = 0; selected_profile && index < selected_profile->endpoint_count;
+         ++index) {
+        const robot_endpoint_profile_t *endpoint =
+            &selected_profile->endpoints[index];
+        int16_t negative = endpoint->min_rpm < 0
+                               ? (int16_t)-endpoint->min_rpm
+                               : endpoint->min_rpm;
+        int16_t positive = endpoint->max_rpm < 0
+                               ? (int16_t)-endpoint->max_rpm
+                               : endpoint->max_rpm;
+        if (negative > maximum) {
+            maximum = negative;
+        }
+        if (positive > maximum) {
+            maximum = positive;
+        }
+    }
+    return maximum > 0 ? (float)maximum : 1.0f;
+}
 
 static esp_err_t init_nvs(void)
 {
@@ -151,38 +172,25 @@ void app_main(void)
     }
 
     profile = robot_profile_selected();
-    if (robot_profile_validate(profile) != ROBOT_PROFILE_VALID) {
-        handle_startup_failure("robot_profile", ESP_ERR_INVALID_ARG, pending_verify);
-        ota_manager_deinit(ota_manager);
-        wifi_manager_deinit(wifi_manager);
-        config_manager_deinit(config_manager);
-        return;
-    }
     ESP_LOGI(TAG, "Selected robot profile:%s", robot_profile_selected_name());
-    const robot_bus_profile_t *rs485_bus = robot_profile_find_bus_type(profile, ROBOT_BUS_UART_RS485);
     const robot_bus_profile_t *rc_bus = robot_profile_find_bus_type(profile, ROBOT_BUS_GPIO);
-    const robot_device_profile_t *drive0 = robot_profile_find_device_driver(profile, ROBOT_DRIVER_SVD48, 0);
-    const robot_device_profile_t *drive1 = robot_profile_find_device_driver(profile, ROBOT_DRIVER_SVD48, 1);
-    if (!rs485_bus || !rc_bus || !drive0 || !drive1) {
-        handle_startup_failure("legacy_runtime_profile", ESP_ERR_NOT_SUPPORTED, pending_verify);
-        ota_manager_deinit(ota_manager);
-        wifi_manager_deinit(wifi_manager);
-        config_manager_deinit(config_manager);
-        return;
-    }
-    svd48_config_t svd48_config = {
-        .uart_port = (uart_port_t)rs485_bus->peripheral,
-        .tx_pin = rs485_bus->pins[0], .rx_pin = rs485_bus->pins[1],
-        .rts_pin = UART_PIN_NO_CHANGE, .use_rs485_half_duplex = false,
-        .baud_rate = rs485_bus->rate,
-        .drive_ids = { drive0->address, drive1->address },
-        .response_timeout_ms = rs485_bus->response_timeout_ms, .retries = rs485_bus->retries,
-        .telemetry_period_ms = rs485_bus->telemetry_period_ms, .stale_timeout_ms = rs485_bus->stale_timeout_ms,
-    };
-
-    svd48 = svd48_init(&svd48_config);
-    if (!svd48) {
-        handle_startup_failure("svd48", ESP_FAIL, pending_verify);
+    err = robot_composition_init(&composition, profile);
+    if (err != ESP_OK) {
+        const robot_composition_diagnostics_t *diagnostics =
+            robot_composition_get_diagnostics(&composition);
+        ESP_LOGE(TAG,
+                 "Composition unavailable schema=%u supported=%u code=%s stage=%s driver=%u bus=%u device=%u endpoint=%u",
+                 diagnostics && diagnostics->schema_valid ? 1U : 0U,
+                 diagnostics && diagnostics->composition_supported ? 1U : 0U,
+                 diagnostics ? robot_composition_diagnostic_code_name(diagnostics->code)
+                             : "UNKNOWN",
+                 diagnostics ? robot_composition_stage_name(diagnostics->stage)
+                             : "UNKNOWN",
+                 diagnostics ? (unsigned)diagnostics->driver_id : 0U,
+                 diagnostics ? diagnostics->bus_id : 0U,
+                 diagnostics ? diagnostics->device_id : 0U,
+                 diagnostics ? diagnostics->endpoint_id : 0U);
+        handle_startup_failure("robot_composition", err, pending_verify);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
@@ -190,9 +198,12 @@ void app_main(void)
     }
 
     robot_control_config_t robot_config = {
-        .svd48 = svd48,
+        .svd48 = robot_composition_legacy_svd48(&composition),
         .wheelbase_m = profile->application.wheelbase_m, .track_width_m = profile->application.track_width_m,
-        .wheel_radius_m = profile->application.wheel_radius_m, .max_wheel_rpm = 15.0f,
+        .wheel_radius_m = profile->application.wheel_radius_m,
+        .max_wheel_rpm = profile_max_abs_rpm(profile),
+        .motion_kinematics_enabled =
+            profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY,
         .enable_steering_servos = false,
         .steering_servo_pins = { -1, -1, -1, -1 },
         .servo_min_us = 1000, .servo_center_us = 1500,
@@ -203,23 +214,14 @@ void app_main(void)
     robot = robot_control_init(&robot_config);
     if (!robot) {
         handle_startup_failure("robot_control", ESP_FAIL, pending_verify);
-        svd48_deinit(svd48);
+        robot_composition_deinit(&composition);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
 
-    err = robot_composition_init(&composition, profile, robot);
-    if (err != ESP_OK) {
-        handle_startup_failure("robot_composition", err, pending_verify);
-        robot_control_deinit(robot);
-        svd48_deinit(svd48);
-        ota_manager_deinit(ota_manager);
-        wifi_manager_deinit(wifi_manager);
-        config_manager_deinit(config_manager);
-        return;
-    }
+    robot_composition_attach_legacy_robot(&composition, robot);
     err = actuation_application_stop_all(&composition.application_port) == ACTUATION_APPLICATION_OK
               ? ESP_OK : ESP_FAIL;
     if (err != ESP_OK) {
@@ -228,38 +230,41 @@ void app_main(void)
                  err);
     }
 
-    if (svd48_start_polling(svd48) != ESP_OK) {
+    if (robot_composition_start(&composition) != ESP_OK) {
         handle_startup_failure("svd48_polling", ESP_FAIL, pending_verify);
         robot_composition_deinit(&composition);
         robot_control_deinit(robot);
-        svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
         return;
     }
 
-    ibus_receiver_config_t ibus_config = {
-        .uart_port = (uart_port_t)rc_bus->peripheral,
-        .rx_pin = rc_bus->pins[0],
-        .tx_pin = UART_PIN_NO_CHANGE,
-        .baud_rate = 0,
-        .stale_timeout_ms = 300,
-        .invert_rx = false,
-        .mode = IBUS_RECEIVER_MODE_PPM,
-        .ppm_channel_count = 10,
-        .ppm_min_frame_channels = 4,
-        .ppm_sync_threshold_us = 3000,
-        .ppm_min_pulse_us = 750,
-        .ppm_max_pulse_us = 2250,
-    };
-    err = ibus_receiver_init(&ibus_config, &ibus_receiver);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG,
-                 "RC receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
-                 rc_bus->pins[0],
-                 err);
-        ibus_receiver = NULL;
+    if (rc_bus) {
+        ibus_receiver_config_t ibus_config = {
+            .uart_port = (uart_port_t)rc_bus->peripheral,
+            .rx_pin = rc_bus->pins[0],
+            .tx_pin = UART_PIN_NO_CHANGE,
+            .baud_rate = 0,
+            .stale_timeout_ms = 300,
+            .invert_rx = false,
+            .mode = IBUS_RECEIVER_MODE_PPM,
+            .ppm_channel_count = 10,
+            .ppm_min_frame_channels = 4,
+            .ppm_sync_threshold_us = 3000,
+            .ppm_min_pulse_us = 750,
+            .ppm_max_pulse_us = 2250,
+        };
+        err = ibus_receiver_init(&ibus_config, &ibus_receiver);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "RC receiver unavailable on GPIO%d, err=0x%x; robot startup continues",
+                     rc_bus->pins[0],
+                     err);
+            ibus_receiver = NULL;
+        }
+    } else {
+        ESP_LOGW(TAG, "RC bus omitted by profile; RC receiver disabled");
     }
 
     robot_safety_config_t safety_config = {
@@ -278,7 +283,6 @@ void app_main(void)
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);
         robot_control_deinit(robot);
-        svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
@@ -291,7 +295,6 @@ void app_main(void)
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);
         robot_control_deinit(robot);
-        svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
@@ -338,7 +341,6 @@ void app_main(void)
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);
         robot_control_deinit(robot);
-        svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);
@@ -353,7 +355,6 @@ void app_main(void)
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);
         robot_control_deinit(robot);
-        svd48_deinit(svd48);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
         config_manager_deinit(config_manager);

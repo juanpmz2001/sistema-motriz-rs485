@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "driver/uart.h"
 #include "esp_err.h"
+#include "svd48_device.h"
 #include "svd48_protocol.h"
 
 #ifdef __cplusplus
@@ -17,6 +18,12 @@ extern "C" {
 #define SVD48_MOTOR_COUNT (SVD48_DRIVE_COUNT * SVD48_MOTORS_PER_DRIVE)
 
 typedef struct svd48_t *svd48_handle_t;
+
+/* Legacy-index compatibility view. Indices never enter svd48_device. */
+typedef struct {
+    svd48_device_t *device;
+    svd48_channel_id_t channel;
+} svd48_legacy_channel_binding_t;
 
 typedef enum {
     SVD48_MOTOR_CMD_STOP = 0,
@@ -62,7 +69,9 @@ typedef struct {
     uint32_t last_exception_ms;
 
     int16_t status;              // 0=stop, 1=running
+    /* Compatibility field: numeric value remains raw 0.1 RPM register units. */
     int16_t actual_rpm;
+    int16_t observed_speed_decirpm;
     int16_t current_deciamp;     // 0.1 A
     int16_t motor_temp_decic;    // 0.1 C
     int16_t bus_voltage_deciv;   // 0.1 V
@@ -72,7 +81,14 @@ typedef struct {
 } svd48_motor_telemetry_t;
 
 svd48_handle_t svd48_init(const svd48_config_t *config);
+svd48_handle_t svd48_attach_devices(
+    svd48_device_t *const *devices,
+    size_t device_count,
+    const svd48_legacy_channel_binding_t *bindings,
+    size_t binding_count,
+    uint32_t telemetry_period_ms);
 void svd48_deinit(svd48_handle_t handle);
+size_t svd48_get_motor_count(svd48_handle_t handle);
 
 esp_err_t svd48_start_polling(svd48_handle_t handle);
 esp_err_t svd48_poll_once(svd48_handle_t handle);

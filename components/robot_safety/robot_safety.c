@@ -7,7 +7,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "svd48.h"
 
 static const char *TAG = "robot_safety";
 
@@ -76,7 +75,8 @@ static void record_stop(robot_safety_handle_t handle, const char *reason, esp_er
 
 static bool motor_fault_detected(robot_safety_handle_t handle)
 {
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = robot_control_get_motor_count(handle->config.robot);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         svd48_motor_telemetry_t telemetry;
         if (!robot_control_get_motor(handle->config.robot, motor, &telemetry)) {
             continue;

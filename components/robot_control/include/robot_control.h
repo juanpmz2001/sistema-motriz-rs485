@@ -19,6 +19,7 @@ typedef struct {
     float track_width_m;
     float wheel_radius_m;
     float max_wheel_rpm;
+    bool motion_kinematics_enabled;
 
     bool enable_steering_servos;
     int steering_servo_pins[SVD48_MOTOR_COUNT];
@@ -46,10 +47,14 @@ esp_err_t robot_control_enable_all(robot_control_handle_t handle);
 esp_err_t robot_control_stop_all(robot_control_handle_t handle);
 /* Transitional: record a coordinated all-endpoint stop without issuing I/O. */
 esp_err_t robot_control_record_coordinated_stop(robot_control_handle_t handle);
+esp_err_t robot_control_record_coordinated_motor_speed(robot_control_handle_t handle,
+                                                       uint8_t motor,
+                                                       int16_t rpm);
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor);
 esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t motor, int16_t rpm);
 float robot_control_get_max_wheel_rpm(robot_control_handle_t handle);
+size_t robot_control_get_motor_count(robot_control_handle_t handle);
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps);
 esp_err_t robot_control_poll_once(robot_control_handle_t handle);
 void robot_control_set_trace_enabled(robot_control_handle_t handle, bool enabled);

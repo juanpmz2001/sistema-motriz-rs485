@@ -1,3 +1,4 @@
-idf_component_register(SRCS "svd48.c" "svd48_protocol.c"
+idf_component_register(SRCS "svd48.c" "svd48_protocol.c" "svd48_device.c"
+                            "svd48_poll_service.c" "svd48_poll_task.c"
                     INCLUDE_DIRS "include"
-                    REQUIRES driver esp_timer)
+                    REQUIRES bus_transport driver esp_timer freertos)
