@@ -18,6 +18,7 @@ static const char *TAG = "svd48";
 #define SVD48_UART_TX_BUFFER_SIZE 512
 #define SVD48_DEFAULT_TIMEOUT_MS 100
 #define SVD48_DEFAULT_RETRIES 2
+#define SVD48_MAX_RETRIES 5
 #define SVD48_DEFAULT_TELEMETRY_PERIOD_MS 30
 #define SVD48_DEFAULT_STALE_TIMEOUT_MS 1000
 #define SVD48_BUS_LOCK_TIMEOUT_MS 1000
@@ -118,6 +119,7 @@ static esp_err_t device_result_to_esp(svd48_device_result_t result)
     case SVD48_DEVICE_EXCEPTION:
     case SVD48_DEVICE_BAD_RESPONSE:
     case SVD48_DEVICE_INCOMPLETE_FRAME:
+    case SVD48_DEVICE_PARTIAL:
         return ESP_ERR_INVALID_RESPONSE;
     case SVD48_DEVICE_UNSUPPORTED:
         return ESP_ERR_NOT_ALLOWED;
@@ -145,6 +147,7 @@ static svd48_status_t device_result_to_status(svd48_device_result_t result)
         return SVD48_ERR_EXCEPTION;
     case SVD48_DEVICE_BAD_RESPONSE:
     case SVD48_DEVICE_INCOMPLETE_FRAME:
+    case SVD48_DEVICE_PARTIAL:
         return SVD48_ERR_BAD_RESPONSE;
     default:
         return SVD48_ERR_UART;
@@ -628,14 +631,26 @@ static esp_err_t transact(svd48_handle_t handle,
     }
 
     esp_err_t last_err = ESP_FAIL;
-    for (uint8_t attempt = 0; attempt <= retries; attempt++) {
+    for (uint16_t attempt = 0; attempt <= retries; attempt++) {
         if (response_len) {
             *response_len = 0;
         }
-        trace_request(handle, trace_seq, attempt + 1, request, request_len);
+        trace_request(handle,
+                      trace_seq,
+                      (uint8_t)(attempt + 1U),
+                      request,
+                      request_len);
         last_err = send_request_and_read_response(handle, request, request_len, response, response_max, response_len);
         bool crc_ok = last_err == ESP_OK && svd48_frame_has_valid_crc(response, *response_len);
-        trace_response(handle, trace_seq, attempt + 1, request, request_len, response, response_len ? *response_len : 0, last_err, crc_ok);
+        trace_response(handle,
+                       trace_seq,
+                       (uint8_t)(attempt + 1U),
+                       request,
+                       request_len,
+                       response,
+                       response_len ? *response_len : 0,
+                       last_err,
+                       crc_ok);
         if (last_err == ESP_OK && crc_ok) {
             xSemaphoreGive(handle->bus_lock);
             return ESP_OK;
@@ -817,9 +832,21 @@ static esp_err_t read_registers(svd48_handle_t handle,
     uint8_t response[64];
     size_t response_len = 0;
     uint8_t slave_id = handle->config.drive_ids[drive_index];
-    svd48_build_read_request(slave_id, reg, quantity, request);
+    size_t request_len = svd48_build_read_request(slave_id,
+                                                  reg,
+                                                  quantity,
+                                                  request);
+    if (request_len == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    esp_err_t err = transact(handle, request, sizeof(request), response, sizeof(response), &response_len, retries);
+    esp_err_t err = transact(handle,
+                             request,
+                             request_len,
+                             response,
+                             sizeof(response),
+                             &response_len,
+                             retries);
     if (err != ESP_OK) {
         set_drive_error(handle, drive_index, esp_to_svd48_status(err));
         return err;
@@ -996,8 +1023,7 @@ svd48_handle_t svd48_attach_devices(
     svd48_device_t *const *devices,
     size_t device_count,
     const svd48_legacy_channel_binding_t *bindings,
-    size_t binding_count,
-    uint32_t telemetry_period_ms)
+    size_t binding_count)
 {
     if (!devices || device_count == 0U || device_count > SVD48_LEGACY_DEVICE_MAX ||
         !bindings || binding_count == 0U || binding_count > SVD48_MOTOR_COUNT) {
@@ -1010,9 +1036,6 @@ svd48_handle_t svd48_attach_devices(
     handle->attached_devices = true;
     handle->attached_device_count = device_count;
     handle->attached_binding_count = binding_count;
-    handle->config.telemetry_period_ms = telemetry_period_ms == 0U
-                                             ? SVD48_DEFAULT_TELEMETRY_PERIOD_MS
-                                             : telemetry_period_ms;
     for (size_t index = 0; index < device_count; ++index) {
         if (!devices[index] || !devices[index]->initialized) {
             free(handle);
@@ -1021,10 +1044,25 @@ svd48_handle_t svd48_attach_devices(
         handle->attached_device_items[index] = devices[index];
     }
     for (size_t index = 0; index < binding_count; ++index) {
+        bool device_is_attached = false;
+        for (size_t device_index = 0; device_index < device_count; ++device_index) {
+            if (devices[device_index] == bindings[index].device) {
+                device_is_attached = true;
+                break;
+            }
+        }
         if (!bindings[index].device ||
-            bindings[index].channel >= SVD48_DEVICE_CHANNEL_COUNT) {
+            bindings[index].channel >= SVD48_DEVICE_CHANNEL_COUNT ||
+            !device_is_attached) {
             free(handle);
             return NULL;
+        }
+        for (size_t previous = 0; previous < index; ++previous) {
+            if (bindings[previous].device == bindings[index].device &&
+                bindings[previous].channel == bindings[index].channel) {
+                free(handle);
+                return NULL;
+            }
         }
         handle->attached_bindings[index] = bindings[index];
     }
@@ -1038,7 +1076,9 @@ svd48_handle_t svd48_attach_devices(
 
 svd48_handle_t svd48_init(const svd48_config_t *config)
 {
-    if (!config) {
+    if (!config || config->retries > SVD48_MAX_RETRIES ||
+        config->drive_ids[0] > SVD48_MODBUS_MAX_SLAVE_ID ||
+        config->drive_ids[1] > SVD48_MODBUS_MAX_SLAVE_ID) {
         return NULL;
     }
 
@@ -1531,8 +1571,7 @@ bool svd48_get_motor_telemetry(svd48_handle_t handle, uint8_t logical_motor, svd
         telemetry->last_exception_code = snapshot.last_exception_code;
         telemetry->last_exception_ms = snapshot.last_exception_ms;
         telemetry->status = snapshot.status;
-        telemetry->actual_rpm = snapshot.observed_speed_decirpm;
-        telemetry->observed_speed_decirpm = snapshot.observed_speed_decirpm;
+        telemetry->actual_rpm = snapshot.observed_speed_rpm;
         telemetry->current_deciamp = snapshot.current_deciamp;
         telemetry->motor_temp_decic = snapshot.motor_temp_decic;
         telemetry->bus_voltage_deciv = snapshot.bus_voltage_deciv;
@@ -1544,7 +1583,6 @@ bool svd48_get_motor_telemetry(svd48_handle_t handle, uint8_t logical_motor, svd
 
     xSemaphoreTake(handle->state_lock, portMAX_DELAY);
     *telemetry = handle->motors[logical_motor];
-    telemetry->observed_speed_decirpm = telemetry->actual_rpm;
     uint32_t age = now_ms() - telemetry->last_update_ms;
     telemetry->stale = telemetry->last_update_ms == 0 || age > handle->config.stale_timeout_ms;
     if (telemetry->stale) {

@@ -75,7 +75,10 @@ bool svd48_register_range_has_runtime_actuation(uint16_t start_reg, uint16_t qua
 
 size_t svd48_build_read_request(uint8_t slave_id, uint16_t reg, uint16_t quantity, uint8_t frame[8])
 {
-    if (!frame || quantity == 0) {
+    if (!frame || slave_id < SVD48_MODBUS_MIN_SLAVE_ID ||
+        slave_id > SVD48_MODBUS_MAX_SLAVE_ID || quantity == 0U ||
+        quantity > SVD48_READ_MAX_REGISTERS ||
+        (uint32_t)reg + (uint32_t)quantity - 1U > UINT16_MAX) {
         return 0;
     }
     frame[0] = slave_id;
@@ -90,7 +93,8 @@ size_t svd48_build_read_request(uint8_t slave_id, uint16_t reg, uint16_t quantit
 
 size_t svd48_build_write_single_request(uint8_t slave_id, uint16_t reg, uint16_t value, uint8_t frame[8])
 {
-    if (!frame) {
+    if (!frame || slave_id < SVD48_MODBUS_MIN_SLAVE_ID ||
+        slave_id > SVD48_MODBUS_MAX_SLAVE_ID) {
         return 0;
     }
     frame[0] = slave_id;
@@ -110,7 +114,9 @@ size_t svd48_build_write_multiple_request(uint8_t slave_id,
                                           uint8_t *frame,
                                           size_t frame_size)
 {
-    if (!values || !frame || !svd48_write_multiple_range_is_valid(start_reg, quantity)) {
+    if (!values || !frame || slave_id < SVD48_MODBUS_MIN_SLAVE_ID ||
+        slave_id > SVD48_MODBUS_MAX_SLAVE_ID ||
+        !svd48_write_multiple_range_is_valid(start_reg, quantity)) {
         return 0;
     }
 

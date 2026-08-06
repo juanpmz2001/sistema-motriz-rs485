@@ -17,6 +17,7 @@ typedef struct {
     svd48_device_t *device;
     uint32_t period_ms;
     uint32_t next_poll_ms;
+    bool scheduled;
     uint8_t consecutive_failures;
     svd48_device_result_t last_result;
 } svd48_poll_entry_t;

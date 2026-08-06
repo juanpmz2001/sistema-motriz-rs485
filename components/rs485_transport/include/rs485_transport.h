@@ -31,6 +31,8 @@ typedef struct {
     bus_transport_controller_t controller;
     StaticSemaphore_t lock_storage;
     SemaphoreHandle_t lock;
+    StaticSemaphore_t stats_lock_storage;
+    SemaphoreHandle_t stats_lock;
     bool uart_installed;
     bool initialized;
     volatile bool cancelled;

@@ -69,9 +69,8 @@ typedef struct {
     uint32_t last_exception_ms;
 
     int16_t status;              // 0=stop, 1=running
-    /* Compatibility field: numeric value remains raw 0.1 RPM register units. */
+    /* Compatibility field: raw vendor register value, interpreted as RPM. */
     int16_t actual_rpm;
-    int16_t observed_speed_decirpm;
     int16_t current_deciamp;     // 0.1 A
     int16_t motor_temp_decic;    // 0.1 C
     int16_t bus_voltage_deciv;   // 0.1 V
@@ -85,8 +84,7 @@ svd48_handle_t svd48_attach_devices(
     svd48_device_t *const *devices,
     size_t device_count,
     const svd48_legacy_channel_binding_t *bindings,
-    size_t binding_count,
-    uint32_t telemetry_period_ms);
+    size_t binding_count);
 void svd48_deinit(svd48_handle_t handle);
 size_t svd48_get_motor_count(svd48_handle_t handle);
 

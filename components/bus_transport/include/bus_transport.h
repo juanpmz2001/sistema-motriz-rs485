@@ -52,6 +52,8 @@ struct bus_transport {
 typedef struct {
     bool (*acquire)(void *context, uint32_t timeout_ms);
     void (*release)(void *context);
+    bool (*stats_acquire)(void *context);
+    void (*stats_release)(void *context);
     bus_transport_result_t (*exchange)(void *context,
                                        const uint8_t *request,
                                        size_t request_length,

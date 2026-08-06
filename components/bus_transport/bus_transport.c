@@ -7,6 +7,9 @@ static void record_result(bus_transport_controller_t *controller,
                           size_t request_length,
                           size_t response_length)
 {
+    if (!controller->backend.stats_acquire(controller->backend.context)) {
+        return;
+    }
     controller->stats.transactions++;
     controller->stats.tx_bytes += request_length;
     controller->stats.rx_bytes += response_length;
@@ -32,6 +35,7 @@ static void record_result(bus_transport_controller_t *controller,
     default:
         break;
     }
+    controller->backend.stats_release(controller->backend.context);
 }
 
 static bus_transport_result_t controller_transact(bus_transport_t *port,
@@ -76,11 +80,15 @@ static bus_transport_result_t controller_transact(bus_transport_t *port,
 static bool controller_get_stats(const bus_transport_t *port,
                                  bus_transport_stats_t *stats)
 {
-    const bus_transport_controller_t *controller = port ? port->context : NULL;
+    bus_transport_controller_t *controller = port ? port->context : NULL;
     if (!controller || !controller->initialized || !stats) {
         return false;
     }
+    if (!controller->backend.stats_acquire(controller->backend.context)) {
+        return false;
+    }
     *stats = controller->stats;
+    controller->backend.stats_release(controller->backend.context);
     return true;
 }
 
@@ -93,6 +101,7 @@ bool bus_transport_controller_init(bus_transport_controller_t *controller,
         .get_stats = controller_get_stats,
     };
     if (!controller || !backend || !backend->acquire || !backend->release ||
+        !backend->stats_acquire || !backend->stats_release ||
         !backend->exchange) {
         return false;
     }

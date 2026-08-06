@@ -20,7 +20,7 @@ static uint32_t elapsed_ms(int64_t start_us)
 static bool acquire_bus(void *context, uint32_t timeout_ms)
 {
     rs485_transport_t *transport = context;
-    if (!transport || !transport->initialized || transport->cancelled) {
+    if (!transport || !transport->initialized) {
         return false;
     }
     return xSemaphoreTake(transport->lock, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
@@ -31,6 +31,21 @@ static void release_bus(void *context)
     rs485_transport_t *transport = context;
     if (transport && transport->lock) {
         xSemaphoreGive(transport->lock);
+    }
+}
+
+static bool acquire_stats(void *context)
+{
+    rs485_transport_t *transport = context;
+    return transport && transport->stats_lock &&
+           xSemaphoreTake(transport->stats_lock, portMAX_DELAY) == pdTRUE;
+}
+
+static void release_stats(void *context)
+{
+    rs485_transport_t *transport = context;
+    if (transport && transport->stats_lock) {
+        xSemaphoreGive(transport->stats_lock);
     }
 }
 
@@ -130,7 +145,10 @@ esp_err_t rs485_transport_init(rs485_transport_t *transport,
     }
 
     transport->lock = xSemaphoreCreateMutexStatic(&transport->lock_storage);
-    if (!transport->lock) {
+    transport->stats_lock = xSemaphoreCreateMutexStatic(
+        &transport->stats_lock_storage);
+    if (!transport->lock || !transport->stats_lock) {
+        rs485_transport_deinit(transport);
         return ESP_ERR_NO_MEM;
     }
     transport->initialized = true;
@@ -174,6 +192,8 @@ esp_err_t rs485_transport_init(rs485_transport_t *transport,
     bus_transport_backend_t backend = {
         .acquire = acquire_bus,
         .release = release_bus,
+        .stats_acquire = acquire_stats,
+        .stats_release = release_stats,
         .exchange = exchange_uart,
         .context = transport,
     };
@@ -203,6 +223,9 @@ void rs485_transport_deinit(rs485_transport_t *transport)
     }
     if (transport->lock) {
         vSemaphoreDelete(transport->lock);
+    }
+    if (transport->stats_lock) {
+        vSemaphoreDelete(transport->stats_lock);
     }
     memset(transport, 0, sizeof(*transport));
 }

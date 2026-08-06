@@ -8,7 +8,7 @@
 
 static bool time_reached(uint32_t now, uint32_t deadline)
 {
-    return deadline == 0U || (int32_t)(now - deadline) >= 0;
+    return (int32_t)(now - deadline) >= 0;
 }
 
 static uint32_t failure_backoff_ms(uint8_t failures)
@@ -39,8 +39,11 @@ bool svd48_poll_service_add_device(svd48_poll_service_t *service,
                                    svd48_device_t *device,
                                    uint32_t period_ms)
 {
+    const uint32_t effective_period =
+        period_ms == 0U ? SVD48_DEFAULT_POLL_PERIOD_MS : period_ms;
     if (!service || !service->initialized || !device || !device->initialized ||
-        service->count >= SVD48_POLL_SERVICE_MAX_DEVICES) {
+        service->count >= SVD48_POLL_SERVICE_MAX_DEVICES ||
+        effective_period >= INT32_MAX) {
         return false;
     }
     for (size_t index = 0; index < service->count; ++index) {
@@ -50,7 +53,7 @@ bool svd48_poll_service_add_device(svd48_poll_service_t *service,
     }
     svd48_poll_entry_t *entry = &service->entries[service->count++];
     entry->device = device;
-    entry->period_ms = period_ms == 0U ? SVD48_DEFAULT_POLL_PERIOD_MS : period_ms;
+    entry->period_ms = effective_period;
     entry->last_result = SVD48_DEVICE_TIMEOUT;
     return true;
 }
@@ -60,24 +63,31 @@ svd48_device_result_t svd48_poll_service_run_once(svd48_poll_service_t *service)
     if (!service || !service->initialized || service->count == 0U) {
         return SVD48_DEVICE_INVALID_ARGUMENT;
     }
-    uint32_t now = service->clock_ms(service->clock_context);
     svd48_device_result_t first_error = SVD48_DEVICE_OK;
     bool attempted = false;
     for (size_t index = 0; index < service->count; ++index) {
         svd48_poll_entry_t *entry = &service->entries[index];
-        if (!time_reached(now, entry->next_poll_ms)) {
+        uint32_t now = service->clock_ms(service->clock_context);
+        if (entry->scheduled && !time_reached(now, entry->next_poll_ms)) {
             continue;
         }
         attempted = true;
         entry->last_result = svd48_device_poll(entry->device);
+        uint32_t completed_at = service->clock_ms(service->clock_context);
         if (entry->last_result == SVD48_DEVICE_OK) {
             entry->consecutive_failures = 0U;
-            entry->next_poll_ms = now + entry->period_ms;
+            entry->next_poll_ms = completed_at + entry->period_ms;
+            entry->scheduled = true;
         } else {
             if (entry->consecutive_failures < UINT8_MAX) {
                 entry->consecutive_failures++;
             }
-            entry->next_poll_ms = now + failure_backoff_ms(entry->consecutive_failures);
+            uint32_t backoff = failure_backoff_ms(entry->consecutive_failures);
+            if (backoff < entry->period_ms) {
+                backoff = entry->period_ms;
+            }
+            entry->next_poll_ms = completed_at + backoff;
+            entry->scheduled = true;
             if (first_error == SVD48_DEVICE_OK) {
                 first_error = entry->last_result;
             }
@@ -96,7 +106,11 @@ uint32_t svd48_poll_service_next_delay_ms(const svd48_poll_service_t *service,
     uint32_t now = service->clock_ms(service->clock_context);
     uint32_t delay = maximum_delay_ms;
     for (size_t index = 0; index < service->count; ++index) {
-        uint32_t deadline = service->entries[index].next_poll_ms;
+        const svd48_poll_entry_t *entry = &service->entries[index];
+        if (!entry->scheduled) {
+            return 1U;
+        }
+        uint32_t deadline = entry->next_poll_ms;
         if (time_reached(now, deadline)) {
             return 1U;
         }

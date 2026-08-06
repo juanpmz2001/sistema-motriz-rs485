@@ -19,6 +19,7 @@ static robot_capability_error_t map_result(svd48_device_result_t result)
     case SVD48_DEVICE_CRC_ERROR:
     case SVD48_DEVICE_EXCEPTION:
     case SVD48_DEVICE_BAD_RESPONSE:
+    case SVD48_DEVICE_PARTIAL:
     default:
         return ROBOT_CAP_IO_ERROR;
     }

@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 #define SVD48_DEVICE_CHANNEL_COUNT 2U
+#define SVD48_DEVICE_MAX_RETRIES 5U
 
 typedef enum {
     SVD48_CHANNEL_M1 = 0,
@@ -31,6 +32,7 @@ typedef enum {
     SVD48_DEVICE_EXCEPTION,
     SVD48_DEVICE_BAD_RESPONSE,
     SVD48_DEVICE_UNSUPPORTED,
+    SVD48_DEVICE_PARTIAL,
 } svd48_device_result_t;
 
 typedef enum {
@@ -39,19 +41,42 @@ typedef enum {
     SVD48_CHANNEL_HEALTH_DEGRADED,
     SVD48_CHANNEL_HEALTH_OFFLINE,
     SVD48_CHANNEL_HEALTH_FAULT,
+    SVD48_CHANNEL_HEALTH_STALE,
 } svd48_channel_health_t;
+
+typedef enum {
+    SVD48_OBSERVATION_STATUS = 1U << 0,
+    SVD48_OBSERVATION_MOTOR_TEMP = 1U << 1,
+    SVD48_OBSERVATION_MOS_TEMP = 1U << 2,
+    SVD48_OBSERVATION_BUS_VOLTAGE = 1U << 3,
+    SVD48_OBSERVATION_SPEED = 1U << 4,
+    SVD48_OBSERVATION_CURRENT = 1U << 5,
+    SVD48_OBSERVATION_POSITION = 1U << 6,
+    SVD48_OBSERVATION_ERROR_CODE = 1U << 7,
+    SVD48_OBSERVATION_ALL = (1U << 8) - 1U,
+} svd48_observation_mask_t;
+
+#define SVD48_OBSERVATION_COUNT 8U
 
 typedef struct {
     bool online;
     bool stale;
     svd48_device_result_t last_error;
     uint32_t last_update_ms;
+    uint32_t valid_observations;
+    /* A bit remains failed until that same observation succeeds. */
+    uint32_t failed_observations;
+    uint32_t stale_observations;
+    /* Array index is the zero-based bit position in svd48_observation_mask_t. */
+    uint32_t observation_update_ms[SVD48_OBSERVATION_COUNT];
+    uint32_t last_poll_ms;
+    svd48_device_result_t last_poll_result;
     uint8_t last_exception_function;
     uint8_t last_exception_code;
     uint32_t last_exception_ms;
     int16_t status;
-    /* Observed register 0x5410/0x5411; evidence indicates 0.1 RPM units. */
-    int16_t observed_speed_decirpm;
+    /* Raw 0x5410/0x5411 value; the vendor contract defines RPM. */
+    int16_t observed_speed_rpm;
     int16_t current_deciamp;
     int16_t motor_temp_decic;
     int16_t bus_voltage_deciv;
@@ -115,6 +140,7 @@ struct svd48_device {
     svd48_channel_snapshot_t snapshots[SVD48_DEVICE_CHANNEL_COUNT];
     svd48_device_communication_t communication;
     uint32_t poll_count;
+    bool poll_in_progress;
     bool initialized;
     bool trace_enabled;
     svd48_device_trace_fn trace;
