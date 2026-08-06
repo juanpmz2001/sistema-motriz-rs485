@@ -1,114 +1,238 @@
 # SVD48 integration
 
-## Hardware boundary
+## Hardware and profile boundary
 
-Build 19 assumes an ESP32-S3 connected through an auto-direction UART-to-RS485
-converter to two Fulling SVD48 dual-channel drives:
+Iteration 4 models each Fulling SVD48 as one physical two-channel device at one RS485
+address. M1 and M2 are explicit channel views of that device, not independent UART
+controllers. Profiles bind stable endpoints to `device_id + channel` and the
+application compatibility edge assigns logical motor indices in endpoint order.
+
+The SVD48 bus used by both build profiles is:
 
 | Setting | Value |
 | --- | --- |
 | UART | UART2 |
 | TX / RX | GPIO17 / GPIO16 |
 | Baud | 115200 |
-| Drive IDs | 1 and 2 |
-| Response timeout / retries | 100 ms / 2 |
-| Telemetry period / stale threshold | 30 ms / 1000 ms |
-| ESP-IDF RS485 half-duplex mode | Disabled; adapter handles direction |
+| Response timeout / configured retries | 100 ms / 2 |
+| Poll period / stale threshold | 30 ms / 1000 ms |
+| Direction | External auto-direction converter; ESP-IDF half-duplex mode disabled |
 
-Logical mapping is fixed in the current driver:
+`current_robot` configures two devices and four endpoints:
 
-| Logical motor | Drive | Channel |
-| ---: | ---: | --- |
-| 0 | 1 | M1 |
-| 1 | 1 | M2 |
-| 2 | 2 | M1 |
-| 3 | 2 | M2 |
+| Legacy index | Endpoint | Address | Channel |
+| ---: | --- | ---: | --- |
+| 0 | `traction_front_left` | 1 | M1 |
+| 1 | `traction_front_right` | 1 | M2 |
+| 2 | `traction_rear_left` | 2 | M1 |
+| 3 | `traction_rear_right` | 2 | M2 |
 
-This topology is compiled into `main/main.c` and `svd48.h`; no runtime robot
-profile exists yet.
+`bench_single_svd48_motor` configures one device at address 1 and only endpoint
+`bench_motor` on M1. It exposes legacy index `0`; index `1` is invalid. The profile has
+no application geometry, so `SET_SPEED 0`, `STOP 0` and `STOP ALL` are routable while
+`MOVE_VEL` is unsupported. The absent second controller and M2 endpoint are not
+reported as failed hardware.
+
+Profiles are immutable C selected by Kconfig. There is no supported runtime JSON/YAML
+loader or mutable topology override in NVS.
+
+## Implemented layers
+
+```mermaid
+flowchart LR
+  PROFILE[Profile bus/device/channel]
+  COMPOSE[robot_composition]
+  FACTORY[SVD48 executable factory]
+  RS485[rs485_transport]
+  BUS[bus_transport port]
+  DEVICE[svd48_device per address]
+  CHANNEL[M1 or M2 channel]
+  ADAPTER[direct channel endpoint adapter]
+  COORD[actuation coordinator]
+  POLL[shared poll service]
+  LEGACY[svd48_handle compatibility view]
+
+  PROFILE --> COMPOSE
+  COMPOSE --> FACTORY
+  COMPOSE --> RS485
+  COMPOSE --> POLL
+  COMPOSE --> LEGACY
+  FACTORY --> DEVICE
+  FACTORY --> ADAPTER
+  COORD --> ADAPTER --> CHANNEL --> DEVICE --> BUS --> RS485
+  POLL --> DEVICE
+  LEGACY --> DEVICE
+```
+
+- `bus_transport` defines portable serialized request/response transactions and
+  statistics.
+- One `rs485_transport` owns the UART, bus mutex and separate statistics mutex. Every
+  configured SVD48 device on that bus shares the same transport port.
+- One `svd48_device` owns an address, two channels, communication diagnostics and
+  observation snapshots. It has no UART or `robot_control` dependency.
+- `svd48_poll_service` schedules up to four configured physical devices with
+  independent deadlines and error/partial backoff measured after each completed poll;
+  one priority-8 polling task drives the service.
+- `svd48_channel_endpoint_adapter` implements the direct velocity/stop endpoint used
+  by the coordinator.
+- The executable factory registry contains SVD48/RS485 only. Other driver IDs in the
+  profile schema are not runtime factories.
+- The attached legacy `svd48_handle_t` view preserves maintenance, OTA, safety
+  telemetry and other unmigrated callers without owning another UART or poll task.
 
 ## Wire protocol
 
-The driver implements holding-register read (`0x03`), single-register write
-(`0x06`) and multiple-register write (`0x10`). It uses the Modbus polynomial
-`0xA001`, but this drive family transmits the computed CRC high byte first and low
-byte second. Standard Modbus libraries that append low then high are not directly
-compatible with the observed device protocol.
+The protocol implements holding-register read (`0x03`), single-register write
+(`0x06`) and multiple-register write (`0x10`). CRC uses initialization `0xFFFF` and
+polynomial `0xA001`; this established device contract appends the computed high byte
+then low byte. Keep golden vectors synchronized with the proven firmware protocol.
+Device addresses are limited to Modbus unicast IDs `1..247`; read builders also
+enforce the 125-register protocol maximum and 16-bit register-range bounds.
 
-All RS485 requests share one mutex. Responses are checked for slave ID, function,
-length, exception frames and CRC. Polling backs off per drive after repeated
-failures so an absent controller does not continuously saturate the bus.
+Responses are checked for slave address, function, declared length, exception frames
+and CRC. Reads and typed channel operations follow their explicit bounded retry
+policy. Generic single- and multiple-register maintenance writes are not retried
+after an ambiguous transaction result because the first request may already have
+changed controller state.
 
-Protocol-only behavior is covered by native C tests and
-`tools/test_svd48_protocol.py`; keep those tests independent from ESP-IDF hardware.
+The shared bus lock covers one complete request/response exchange, so polling,
+actuation and maintenance calls from different devices cannot interleave bytes.
+Per-device state uses a separate lock and must not be confused with bus serialization.
 
-## Registers used by runtime
+## Channel actuation
 
-| Purpose | M1 | M2 |
-| --- | ---: | ---: |
-| Control command | `0x5300` | `0x5301` |
-| Given speed | `0x5304` | `0x5305` |
-| Given current | `0x5308` | `0x5309` |
+| Purpose | M1 | M2 | Unit/value |
+| --- | ---: | ---: | --- |
+| Control command | `0x5300` | `0x5301` | command word |
+| Given speed | `0x5304` | `0x5305` | signed raw RPM |
+| Given current | `0x5308` | `0x5309` | signed 0.1 A |
 
-Telemetry begins at these M1 addresses and reads adjacent M1/M2 pairs:
+Setting a channel velocity writes its bounded signed RPM target and then enables that
+channel. If target or enable fails, the direct endpoint adapter requests a best-effort
+channel stop. Stop first writes a zero target and then the stop control command; a
+failed zero write does not suppress the stop attempt.
 
-| Field | Start register | Representation |
+The coordinator reaches this direct adapter for `SET_SPEED`, individual/global stop,
+boot stop and safety stop. `ENABLE`, `CLEAR_FAULT`, `MOVE_VEL`, OTA preparation,
+motor identification and maintenance configuration still use the compatibility
+facade and are documented bypasses, not an alternate new architecture.
+
+## Observations and units
+
+Polling reads these paired M1/M2 observations:
+
+| Observation | Start register | Representation |
 | --- | ---: | --- |
 | Status | `0x5400` | 0 stopped, 1 running |
-| Motor temperature | `0x5404` | signed, 0.1 C |
-| MOS temperature | `0x5408` | signed, 0.1 C |
+| Motor temperature | `0x5404` | signed 0.1 C |
+| MOS temperature | `0x5408` | signed 0.1 C |
 | Bus voltage | `0x540C` | 0.1 V |
-| Actual speed | `0x5410` | signed raw value, documented as 0.1 RPM |
-| Actual current | `0x5414` | signed, 0.1 A |
-| Position | `0x5418` | 32-bit value per channel |
+| Observed motor speed | `0x5410` | signed raw RPM |
+| Actual current | `0x5414` | signed 0.1 A |
+| Position | `0x5418` | 32-bit counts per channel |
 | Error code | `0x5420` | 32-bit value per channel |
 
-Configuration/diagnostic helpers also use `0x2201..0x2203`, `0x5018..0x5019`,
-`0x502C..0x502D`, `0x5620..0x5621` and `0x5688..0x568D`. Do not extrapolate
-undocumented addresses from adjacency; verify against the exact drive model and
-firmware before adding a register.
+The manufacturer register table labels both given speed `0x5304/0x5305` and motor
+speed `0x5410/0x5411` as RPM. The driver therefore preserves the signed raw register
+value as RPM without a factor-of-ten conversion. Earlier `deciRPM` prose and names were
+unsupported assumptions.
 
-## Known unit defect
+This unconfirmed observed value already feeds the legacy 5-RPM OTA/maintenance
+readiness predicate and `PLATFORM_STATUS` motion indication. Those checks skip
+offline/stale telemetry and are not qualified safety evidence. A separate controlled
+physical test on the exact controller model/firmware must confirm the interpretation
+and inform a reviewed failure policy before that dependency is accepted or expanded.
+The test must be explicitly authorized, performed off the ground with independent
+power cut-off and stored as an external artifact; it is not part of CI.
 
-`svd48.c` currently copies the actual-speed register directly into
-`actual_rpm`, and gateways label it `RPM`. Bench evidence indicates the register
-scale is 0.1 RPM. This creates a factor-of-ten ambiguity in telemetry and control
-validation. Fix the conversion at the driver boundary, rename raw fields where
-needed and add positive/negative unit tests before using speed feedback for safety.
+## Polling, freshness and health
 
-## Configuration writes
+Each fast cycle attempts position, speed and current; the periodic slow cycle also
+attempts status, temperatures, bus voltage and error code. All eight configured
+observations are required for a fully healthy channel, but each retains independent
+validity, failure state and update time. Later success for current, status or
+temperature does not refresh a failed speed observation.
 
-Serial and maintenance APIs expose confirmed single/multiple writes and several
-SVD48-specific helpers. `CONFIRM` prevents accidental invocation but does not make
-an address safe. Persistent configuration can change feedback, motor direction,
-current limits or communication behavior and can make a drive unreachable.
+The public snapshot exposes `valid_observations`, `failed_observations`,
+`stale_observations`, per-field `observation_update_ms`, `last_poll_ms` and
+`last_poll_result`. The observed speed field is `observed_speed_rpm`. Polling returns
+`SVD48_DEVICE_PARTIAL` for a mixed cycle, and channel health has an explicit
+`SVD48_CHANNEL_HEALTH_STALE` state.
+
+- `OK`/complete means every observation attempted in that poll cycle succeeded.
+- `PARTIAL` means communication succeeded for some observations but at least one
+  required read failed. The poll service treats it as degraded/failure for backoff.
+- A cycle in which every attempted read fails reports the first concrete
+  timeout/busy/I/O/frame/protocol result.
+- `stale` is evaluated independently per observation from its own timestamp.
+- `offline` means no successful device transaction remains within the configured
+  timeout. `stale` means at least one configured observation is invalid or too old;
+  `degraded` retains online, fresh prior observations but records a failure bit or a
+  non-complete latest poll, including a totally failed poll while the prior success is
+  still recent.
+- A valid, fresh nonzero controller error code maps to fault and is not erased by a
+  later unrelated read.
+
+Health precedence is `OFFLINE`, fresh `FAULT`, `STALE`, `DEGRADED`, then `HEALTHY`.
+Offline always wins; a fresh nonzero error yields `FAULT` even if another field is
+stale, while a stale error observation no longer yields `FAULT`. Unrelated success
+does not clear a fresh fault.
+
+The active safety task still consumes the legacy telemetry projection and does not
+yet turn all stale/offline/degraded required observations into motion inhibits. See
+[Safety](SAFETY.md).
+
+## Exceptions and diagnostics
+
+Communication diagnostics distinguish timeout, busy bus, I/O error, incomplete
+frame, cancellation, CRC failure, exception response, malformed response and partial
+poll. The latest Modbus exception function/code and timestamp remain visible in the
+channel/legacy telemetry projection. Poll backoff is per configured device; one absent
+controller does not prevent other entries from being scheduled. A whole-poll guard
+rejects a concurrent legacy `POLL_ONCE` with busy, so its transactions cannot
+interleave a service-owned cycle or race `poll_count`.
+
+Tracing is a bench diagnostic. It exposes frame bytes but must never include Wi-Fi,
+maintenance or OTA credentials. High-volume trace output is not real-time safe.
+
+## Maintenance register access
+
+Generic device writes reject ranges used for runtime actuation so maintenance cannot
+bypass the typed channel operations by writing target/control registers through the
+new device API. Confirmed maintenance access remains available for non-actuation
+registers through the legacy command surface.
+
+Configuration/diagnostic helpers use `0x2201..0x2203`, `0x5018..0x5019`,
+`0x502C..0x502D`, `0x5620..0x5621` and `0x5688..0x568D`. `CONFIRM` acknowledges
+operator intent but is not authorization, rollback or proof that an address is safe.
+Do not extrapolate undocumented registers from adjacency.
 
 For any write campaign:
 
 1. Keep the mechanism unloaded and preserve an independent power disconnect.
-2. Read and archive the original values outside this source repository.
-3. Verify drive ID, channel, model and register meaning.
-4. Change the smallest possible set, read it back and power-cycle when required.
-5. Confirm stop behavior and telemetry before any low-speed motion.
+2. Read and archive original values outside the repository.
+3. Verify device address, channel, controller model/firmware and register meaning.
+4. Change the smallest set, read it back and power-cycle only when required.
+5. Confirm stop behavior and telemetry before any explicitly authorized low-speed test.
 6. Restore the known baseline if any observation differs from expectation.
 
-Do not use `APPLY_PY6514_CONFIG` as a universal production profile. It is a
-hardware-specific bench helper retained in source and requires explicit review.
+`APPLY_PY6514_CONFIG` remains a hardware-specific bench helper, not a universal
+production profile.
 
-## Driver evolution
+## Legacy compatibility limit
 
-New controllers must not add model-specific conditionals to `robot_control`. Each
-driver should expose small typed capabilities such as velocity command, stop,
-position command and feedback. A profile factory should map configured devices to
-endpoints, while a single coordinator applies limits and command ownership.
+The attached wrapper maps profile endpoint order to the external logical motor API and
+accepts at most four channel bindings. Composition must reject excess bindings with a
+`LEGACY_BINDING_LIMIT` diagnostic. This limit preserves `0..3` compatibility for the
+current robot; it is not a logical-motor limit of `svd48_device` or M1/M2 channels.
+The poll service has a separate four-physical-device static capacity.
 
-Driver tests should cover framing, scaling, signed values, timeout, stale state,
-exceptions, retries and idempotent stop. Hardware tests then validate electrical
-and timing assumptions without replacing host coverage.
+The wrapper remains until telemetry, trace, maintenance, OTA and safety callers move
+to typed device/application ports. It must not create a second polling task when it is
+attached to composed devices.
 
 ## Vendor references
 
-Manual PDFs and downloaded product pages are intentionally not stored in this
-repository. Obtain the exact manual for the controller model and firmware from the
-manufacturer, then archive its title, revision, checksum and retrieval date in the
+Vendor PDFs and downloaded product pages are intentionally not stored here. Archive
+the exact controller manual title, revision, checksum and retrieval date in the
 company artifact system. A mutable product URL is not a permanent specification.

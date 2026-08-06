@@ -1,9 +1,10 @@
 # Questions, assumptions and decisions
 
 This is the decision log for the layered-architecture migration. It describes
-uncertainty rather than silently turning it into firmware behavior. The recorded
-baseline is commit `ce5f1e2e5b4e784b0b877366be6f68b6778f14d1` (build 19), captured
-on 2026-08-02. No item in this document authorizes hardware actuation.
+uncertainty rather than silently turning it into firmware behavior. It begins at
+commit `ce5f1e2e5b4e784b0b877366be6f68b6778f14d1` (build 19) and records decisions
+through Iteration 4. [Architecture](ARCHITECTURE.md), source and executable tests
+define the current implementation. No item here authorizes hardware actuation.
 
 ## A. Open questions
 
@@ -96,8 +97,8 @@ on 2026-08-02. No item in this document authorizes hardware actuation.
 ### Q-008 — Allocation and timing budgets
 
 - **Date:** 2026-08-02
-- **Context:** The clean build has one byte of reported IRAM headroom; task timing is
-  not qualified.
+- **Context:** The previous clean build reported one byte of IRAM headroom; Iteration 4
+  profile builds and task timing are not yet qualified in this decision record.
 - **Question:** What static memory, stack, bus-blocking and scheduling budgets apply?
 - **Why it matters:** New indirection must not undermine determinism or memory safety.
 - **Impact if unanswered:** Firmware integration must remain bounded and incremental.
@@ -111,7 +112,8 @@ on 2026-08-02. No item in this document authorizes hardware actuation.
 
 - **Assumption:** Source and executable tests at the base commit define current behavior.
 - **Reason:** Prose explicitly distinguishes active from planned architecture.
-- **Evidence:** `main/main.c`, component APIs and seven host tests.
+- **Evidence:** `main/main.c`, component APIs and the host/protocol contract suites;
+  exact Iteration 4 results belong in the closeout record.
 - **Risk:** Hardware-only behavior is incompletely characterized.
 - **How isolated:** Migration map marks characterization gaps and adapters preserve APIs.
 - **What changes if false:** Add hardware evidence and contract tests before migration.
@@ -201,9 +203,11 @@ serialization, signing and field mutability remain OPEN.
 
 ### D-007 — Synchronous coordinator
 
-The coordinator adds no FreeRTOS task and performs no per-command allocation. Its
-functions are reentrant over an immutable registry; device adapters retain bus
-serialization. Ordering/authority policy remains outside this iteration.
+**SUPERSEDED BY D-009.** The coordinator adds no FreeRTOS task and performs no
+per-command allocation, but its operations are not reentrant in firmware. Iteration 3
+added one injected mutex covering each complete operation. Device/bus serialization
+remains a separate lower-layer responsibility. Ordering/authority policy remains
+outside this iteration.
 
 ### D-008 — First vertical slice
 
@@ -227,7 +231,126 @@ this environment. It requires a reproducible ESP-IDF 5.4.1 build/map comparison.
 - **D-013 Build selection:** Kconfig chooses a compiled profile and boot logs its name.
 - **D-014 Gateway inversion:** serial and maintenance paths depend on an application port;
   safety depends on its stop subset, not composition or coordinator implementations.
-- **D-015 Transitional composition:** fixed storage replaces heap allocation; this component
-  remains an actuation sub-composition rather than claiming ownership of the full system.
+- **D-015 Transitional composition:** fixed slots own buses, devices and endpoint
+  adapters; the compatibility wrapper may still allocate at startup. This component
+  remains an actuation sub-composition rather than the full system composition root.
 
 Q-001 through Q-005 remain OPEN. No new operational safety policy was inferred.
+
+## Iteration 4 composition decisions
+
+### D-016 — One serialized transport per physical bus
+
+- **Context:** Multiple SVD48 controllers share one UART-to-RS485 link.
+- **Decision:** `rs485_transport` owns the UART and implements a portable
+  `bus_transport` backend. The bus lock covers a complete request/response exchange;
+  devices never include UART headers or own duplicate UART instances.
+- **Consequences:** Device tests can use a fake transport and two controllers cannot
+  interleave frames. Transport statistics are updated and copied under a dedicated
+  statistics lock, separate from the bus-exchange lock.
+- **Status:** IMPLEMENTED in Iteration 4.
+
+### D-017 — One device per controller with explicit M1/M2 channels
+
+- **Context:** An SVD48 address identifies one physical controller with two channels,
+  not two independent bus devices.
+- **Decision:** Construct one `svd48_device` for each configured controller address and
+  expose borrowed M1/M2 channel views. Endpoints bind to an explicit device and
+  channel.
+- **Consequences:** Driver logic has no four-motor topology; profile endpoint order is
+  used only at the legacy-index compatibility edge.
+- **Status:** IMPLEMENTED in Iteration 4.
+
+### D-018 — Shared N-device polling and observation freshness
+
+- **Context:** A single fixed two-drive poll loop cannot represent single-controller
+  or future bounded multi-controller profiles, and one successful field must not make
+  failed speed data fresh.
+- **Decision:** One polling service schedules every configured device with independent
+  periods and backoff. Freshness, validity and timestamps are retained per observation.
+  A cycle is complete only when every observation scheduled for that fast/slow cycle
+  succeeds; otherwise it is partial or failed. Partial participates in backoff rather
+  than being recorded as full success.
+- **Consequences:** Healthy requires every configured SVD48 observation to be valid
+  and fresh. Stale, offline, degraded and controller fault remain distinct. The active
+  safety task does not yet consume the full profile-aware model.
+- **Status:** IMPLEMENTED at the device/polling boundary; safety integration PENDING.
+
+### D-019 — Executable factory registry starts with SVD48 only
+
+- **Context:** The profile schema describes more driver IDs than the runtime can
+  construct.
+- **Decision:** Keep the schema descriptor registry separate from the executable
+  factory registry. Iteration 4 registers only the SVD48/RS485 factory and preflight
+  reports a missing or incompatible factory before touching outputs.
+- **Consequences:** “Schema valid” does not imply “composition supported”. New drivers
+  require a complete validate/storage/construct/endpoint/start/stop/destroy factory,
+  capacity checks and tests; scattered driver conditionals are not accepted.
+- **Status:** IMPLEMENTED for SVD48; general multi-driver composition remains PARTIAL.
+
+### D-020 — Legacy SVD48 view is bounded to four bindings
+
+- **Context:** `robot_control`, maintenance, OTA and safety telemetry still consume the
+  legacy logical-motor API.
+- **Decision:** Attach the new device/channel objects to a temporary compatibility
+  wrapper. Validate and diagnose its maximum of four bindings explicitly.
+- **Consequences:** The limit applies only to wrapper channel bindings, not
+  `svd48_device` or channel endpoints. The polling service separately has a static
+  capacity of four physical devices. Profiles needing more legacy endpoints require
+  those compatibility callers to migrate first.
+- **Status:** TRANSITIONAL; removal depends on migrating all remaining legacy callers.
+
+### D-021 — SVD48 speed registers are raw RPM
+
+- **Context:** Earlier prose and fields asserted a 0.1 RPM scale without durable
+  evidence. The manufacturer register table labels given speed `0x5304/0x5305` and
+  motor speed `0x5410/0x5411` as RPM.
+- **Decision:** Preserve the signed register value as RPM with no artificial scaling
+  and name public observations accordingly.
+- **Consequences:** Existing ASCII syntax and `RPM` label remain compatible. A future
+  controlled physical test must confirm the interpretation. The unconfirmed raw value
+  already feeds the legacy 5-RPM OTA/maintenance readiness predicate and platform
+  motion status; those checks remain unqualified and must not be expanded as safety
+  policy merely because the field was renamed. Uncertainty is not represented by
+  silently scaling the value.
+- **Status:** IMPLEMENTED contract; physical confirmation OPEN.
+
+### D-022 — Safe diagnostic startup for unsupported composition
+
+- **Context:** Preflight can find a schema-valid profile whose factory/bus/device
+  composition is unsupported. Returning before the gateway leaves no field diagnosis.
+- **Decision:** Do not construct actuator outputs. Retain only the minimum serial
+  configuration and start the gateway in an explicit restricted diagnostic mode with
+  an immutable profile/composition failure snapshot. Allow `PING`, `VERSION`, `HELP`,
+  `PLATFORM_STATUS`, `CONFIG_STATUS`, `WIFI_STATUS`, `PROFILE_STATUS`,
+  `COMPOSITION_STATUS` and exactly `STOP ALL`; reject everything else.
+- **Consequences:** `STOP ALL` cannot claim a physical stop when no endpoints exist; it
+  reports outputs unavailable. This mode is a recovery aid, not an armed operating
+  state. Invalid schema and failures after outputs are constructed remain fail-closed
+  startup errors unless separately designed and tested. A pending-verification OTA
+  image follows rollback handling instead of entering this mode.
+- **Status:** IMPLEMENTED as the minimum Iteration 4 diagnostic fallback.
+
+### D-023 — Both Kconfig SVD48 profiles are executable
+
+- **Context:** The previous legacy backend required four bindings even though the
+  schema admitted a one-endpoint profile.
+- **Decision:** Support `current_robot` with two devices/four endpoints and
+  `bench_single_svd48_motor` with one device, M1 endpoint and legacy index `0` only.
+  The bench profile has no application geometry; `MOVE_VEL` is unsupported.
+- **Consequences:** Omitted controller/channel endpoints are not reported failed.
+  `SET_SPEED 0`, `STOP 0` and `STOP ALL` remain routable; index `1` is rejected.
+- **Status:** IMPLEMENTED; build/test evidence belongs in Iteration 4 closeout.
+
+### D-024 — Merge Iteration 4 only from verified review state
+
+- **Context:** The original architecture commit is large and the closeout adds fixes,
+  tests, CI and documentation.
+- **Decision:** Preserve focused closeout commits on the feature branch, integrate any
+  newer `main` with a normal merge if needed, and use a reviewed pull request. Squash
+  merge is preferred when one coherent Iteration 4 change on `main` is desired; a
+  merge commit is acceptable when full branch history is required.
+- **Consequences:** No direct silent merge or force push. Host tests, sanitizers,
+  protocol/dependency tests, both ESP-IDF profiles, resource evidence and clean-tree
+  checks are mandatory before merge.
+- **Status:** ACCEPTED process; final evidence belongs in Iteration 4 closeout.

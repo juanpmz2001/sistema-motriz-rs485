@@ -1,15 +1,18 @@
-# Architecture
+# Current architecture
 
 ## Scope and status
 
-This document describes build 19 after the layered-foundation hardening merge.
-The firmware has an active profile and typed actuation path, but remains bench-only.
-It is not yet a general robot runtime or a production safety controller.
+This document is the primary source for the architecture implemented by build 19 on
+`refactor/svd48-device-composition` after Iteration 4. It is an as-built
+description, not the target design. The target and migration rationale live in
+[Architecture refactor](ARCHITECTURE_REFACTOR.md).
 
-`app_main()` is the composition root. Component-owned FreeRTOS tasks perform the
-runtime work after startup; the main task sleeps.
+The firmware is bench-only. `app_main()` is the composition root; component-owned
+FreeRTOS tasks perform runtime work after startup, and the main task sleeps. The
+runtime topology comes from one immutable, build-selected C profile. There is no
+JSON/YAML loader and the executable factory registry supports only SVD48.
 
-## Active runtime
+## Components and dependencies
 
 ```mermaid
 flowchart TB
@@ -19,25 +22,31 @@ flowchart TB
   classDef dormant fill:#eeeeee,stroke:#666,stroke-dasharray:5 5,color:#111
   classDef infra fill:#dceeff,stroke:#286a9a,color:#111
 
-  MAIN[app_main]:::active --> PROFILE[build-selected immutable C profile]:::active
-  PROFILE --> COMPOSE[robot_composition]:::transition
-  COMPOSE --> APP[actuation_application_port]:::active
-  APP --> COORD[actuation_coordinator plus static mutex]:::active
-  COORD --> ENDPOINTS[typed endpoint registry]:::active
-  ENDPOINTS --> ADAPTER[legacy endpoint adapters]:::transition
-  ADAPTER --> CONTROL[robot_control]:::legacy
-  CONTROL --> SVD[SVD48 two-drive backend]:::legacy
-  SVD --> BUS[RS485 UART2]:::infra
+  MAIN[app_main lifecycle root]:::active --> PROFILE[robot_profile immutable C profile]:::active
+  PROFILE --> PREFLIGHT[robot_driver_factory preflight]:::active
+  PREFLIGHT --> COMPOSE[robot_composition]:::transition
+  COMPOSE --> RSBUS[one rs485_transport per referenced RS485 bus]:::infra
+  COMPOSE --> DEV[one svd48_device per physical controller]:::active
+  COMPOSE --> REG[typed endpoint registry]:::active
+  DEV --> CHANNEL[M1 and M2 channels]:::active
+  CHANNEL --> DIRECT[svd48_channel_endpoint_adapter]:::active
+  DIRECT --> REG
+  REG --> COORD[actuation_coordinator]:::active
+  RSBUS --> UART[ESP-IDF UART]:::infra
+  DEV --> BUSPORT[bus_transport port]:::infra --> RSBUS
 
-  SERIAL[serial_gateway]:::active --> APP
-  MAINT[maintenance_lan UDP 32321]:::active --> SERIAL
-  SAFETY[robot_safety priority 9]:::active --> APP
-  RC[ibus_receiver and PPM]:::active --> SAFETY
+  SERIAL[serial_gateway]:::transition --> APP[actuation_application_port]:::active
+  APP --> COORD
+  SAFETY[robot_safety]:::transition --> APP
+  MAINT[maintenance_lan]:::transition --> SERIAL
+  RC[ibus_receiver / PPM]:::active --> SAFETY
+
+  COMPOSE --> WRAP[legacy svd48_handle_t attached view]:::legacy
+  WRAP --> CONTROL[robot_control facade]:::legacy
+  SERIAL -->|unmigrated handlers| CONTROL
   CONTROL -->|telemetry| SAFETY
-
-  SERIAL -->|remaining legacy commands| CONTROL
-  OTA[ota_manager and ota_announce]:::active -->|safe query and prepare| CONTROL
-  CONFIG[config_manager and NVS]:::infra --> WIFI[wifi_manager]:::infra --> OTA
+  OTA[ota_manager and ota_announce]:::transition --> CONTROL
+  CONFIG[config_manager / NVS]:::infra --> WIFI[wifi_manager]:::infra --> OTA
 
   STATE[robot_state]:::dormant
   AUTH[command_authority]:::dormant
@@ -45,127 +54,247 @@ flowchart TB
   CLAN[control_lan]:::dormant
 ```
 
-The application port keeps transports and safety independent from profile,
-composition and coordinator implementation details. The transitional adapters still
-delegate physical writes to `robot_control`; direct SVD48/PWM adapters do not exist.
+The active speed/stop adapter is the direct SVD48 channel adapter. The
+`robot_control_endpoint_adapter` is retained only for host characterization and is
+not wired by `robot_composition`. `serial_gateway` depends on the application port
+and primitive diagnostic data; it does not depend on profile, composition or the
+coordinator implementation.
 
-## Actuation paths
-
-```mermaid
-flowchart LR
-  classDef migrated fill:#d9f2d9,stroke:#287a28,color:#111
-  classDef legacy fill:#ffe0d6,stroke:#a33a20,color:#111
-
-  SPEED[SET_SPEED]:::migrated --> PORT[application port]:::migrated
-  STOP[STOP n / STOP ALL / boot / safety]:::migrated --> PORT
-  PORT --> MUTEX[coordinator mutex]:::migrated --> EP[typed endpoint]:::migrated
-  EP --> LEGACY[robot_control adapter]:::legacy --> DRIVER[SVD48]:::legacy
-
-  ENABLE[ENABLE]:::legacy --> CONTROL[robot_control]:::legacy
-  MOVE[MOVE_VEL and servo PWM]:::legacy --> CONTROL
-  FAULT[CLEAR_FAULT]:::legacy --> CONTROL
-  WRITES[register and configuration writes]:::legacy --> CONTROL
-  OTAPREP[OTA safe query and preparation]:::legacy --> CONTROL
-  CONTROL --> DRIVER
-```
-
-The mutex serializes complete migrated operations, including target write, enable,
-multi-endpoint stop and rollback. Its acquire timeout is 500 ms. Driver calls execute
-while the mutex is held, so a safety stop can wait behind an in-progress operation.
-This prevents interleaving but does not provide stop precedence, authority, TTL,
-deadman or an operating-state guard.
-
-## Profile and composition
+## `SET_SPEED` sequence
 
 ```mermaid
-classDiagram
-  RobotProfile --> BoardProfile
-  RobotProfile --> BusProfile
-  RobotProfile --> DeviceProfile
-  RobotProfile --> EndpointProfile
-  RobotProfile --> ApplicationProfile
-  DeviceProfile --> BusProfile
-  EndpointProfile --> DeviceProfile
-  EndpointProfile --> Capability
+sequenceDiagram
+  participant C as Serial or maintenance client
+  participant G as serial_gateway
+  participant A as actuation_application_port
+  participant O as actuation_coordinator
+  participant R as endpoint registry
+  participant E as direct SVD48 channel adapter
+  participant D as svd48_device
+  participant B as shared bus_transport
+  participant U as RS485 UART
+  participant L as legacy commanded-state mirror
+
+  C->>G: SET_SPEED n rpm
+  G->>A: validate index and profile RPM range
+  A->>O: set endpoint velocity
+  O->>O: acquire coordinator mutex (max 500 ms)
+  O->>R: resolve endpoint ID
+  R-->>O: velocity port
+  O->>E: set_velocity_rpm(rpm)
+  E->>D: write channel target register
+  D->>B: Modbus 0x06 transaction
+  B->>B: acquire shared bus mutex
+  B->>U: request / response
+  U-->>B: acknowledgement
+  B-->>D: normalized result
+  E->>D: write channel enable command
+  D->>B: second serialized transaction
+  alt target or enable failed
+    E->>D: best-effort target zero then stop
+  end
+  E-->>O: capability result
+  O->>O: release coordinator mutex
+  O-->>A: report
+  opt complete success
+    A->>L: record commanded RPM without physical I/O
+  end
+  A-->>G: application result
+  G-->>C: existing ASCII response
 ```
 
-The schema-versioned C model represents board resources, buses, devices, channels,
-typed endpoints, criticality and optional application geometry. Validation rejects
-unsupported board resources, duplicate identities/names/channels/addresses, pin
-conflicts, incompatible driver/bus/capability combinations and invalid limits.
+The target and enable writes execute while the coordinator mutex is held. The bus
+mutex separately serializes this device with polling, maintenance and other devices
+on the same RS485 bus. Channel commands use the retries configured by the bus
+profile; generic maintenance writes do not retry an ambiguous lost acknowledgement.
 
-Kconfig can select `current_robot` or `bench_single_svd48_motor`. Only
-`current_robot` is executable: `main` and `svd48` still require two dual-channel
-SVD48 devices. Selecting the single-motor profile causes a deliberate startup halt
-before serial or LAN diagnostics. PWM and fake-CAN fixtures prove schema validation,
-not runtime driver support. There is no JSON/YAML loader or profile generator.
+## `STOP ALL` sequence
 
-## Tasks and priorities
+```mermaid
+sequenceDiagram
+  participant S as Gateway / boot / robot_safety
+  participant A as actuation_application_port
+  participant O as actuation_coordinator
+  participant R as endpoint registry
+  participant E as stoppable endpoint adapters
+  participant D as SVD48 devices
+  participant B as shared RS485 bus
 
-| Work | Priority | Runtime status |
-| --- | ---: | --- |
-| Robot safety | 9 | RC-loss and reported motor-fault stop requests |
-| SVD48 polling | 8 | Serialized RS485 telemetry |
-| Serial gateway | 6 | ASCII command input |
-| RC receiver | 5 | PPM/iBUS acquisition |
-| Gateway telemetry | 4 | Optional serial stream |
-| Wi-Fi reconnect | 2-3 | Low-priority infrastructure |
-| OTA and maintenance LAN | 1-2 | Sockets, JSON, HTTP and hashing |
+  S->>A: stop_all()
+  A->>O: stop all configured endpoints
+  O->>O: acquire coordinator mutex (max 500 ms)
+  loop each endpoint with STOPPABLE capability
+    O->>R: resolve endpoint
+    O->>E: stop()
+    E->>D: write target RPM zero
+    D->>B: serialized transaction
+    E->>D: write channel stop command
+    D->>B: serialized transaction
+    E-->>O: endpoint result
+  end
+  O->>O: release coordinator mutex
+  O-->>A: SUCCESS / PARTIAL / FAILURE report
+  opt complete success
+    A->>A: mirror all commanded RPM as zero
+  end
+  A-->>S: application result
+```
 
-Network failure is non-fatal to local startup. Network, storage and JSON work stay
-outside the safety task. An explicit maintenance command may reach the actuation
-port, so LAN is still a trusted bench interface rather than a production control
-transport.
+`STOP n`, boot stop and safety stop use the same boundary. A boot-stop failure still
+logs a warning and normal startup continues. The mutex prevents migrated operations
+from interleaving, but it is not a priority-aware owner task: a safety stop may wait
+up to 500 ms to acquire it and then behind the current bus transaction.
 
-## Component status
-
-| Component | Status | Current responsibility |
-| --- | --- | --- |
-| `robot_profile` | Active | Build selection and bounded profile validation |
-| `robot_composition` | Active, transitional | Fixed SVD48 adapters, application port and static mutex |
-| `robot_capabilities` | Active | Portable velocity, position and stop contracts |
-| `actuation_coordinator` | Active, partial | Serialized migrated speed/stop execution and reports |
-| `robot_control_endpoint_adapter` | Active, transitional | Typed endpoint to legacy motor mapping |
-| `robot_control` | Active, legacy | Kinematics, PWM, telemetry, OTA helpers and remaining writers |
-| `svd48` | Active, fixed backend | UART transactions, polling and two-drive mapping |
-| `robot_safety` | Active, mixed | Legacy observations and application-port stop requests |
-| `serial_gateway` | Active, mixed | Parser with migrated and legacy handlers |
-| `maintenance_lan` | Active | Authenticated UDP delegation to gateway policy |
-| `robot_state` | Dormant | Host-tested state model and service |
-| `command_authority` | Dormant | Host-tested sequence, lease and deadman model |
-| `robot_kinematics` | Dormant | Host-tested differential kinematics strategy |
-| `control_lan` | Dormant | Sequenced protocol not initialized by `main` |
-
-Compiled and host-tested does not mean integrated into firmware behavior.
-
-## Target ROS-ready architecture
-
-The ESP32 remains ROS-agnostic and owns local expiry, safety and physical outputs.
-A Linux process can later expose the versioned embedded contract through
-`ros2_control`; ROS must not bypass firmware authority or stop policy.
+## Profile-driven construction
 
 ```mermaid
 flowchart TD
-  PROFILE[Validated generated profile]
-  FACTORY[Composition root and static driver registry]
-  DEVICES[Device-specific adapters]
-  ENDPOINTS[Typed actuator and sensor endpoints]
-  ROUTER[Bounded command mailboxes]
-  AUTH[Authority sequence TTL and deadman]
-  STATE[State machine and profile-aware health]
-  MOTION[Replaceable kinematics strategies]
-  OWNER[Priority-aware single actuation owner]
-  SNAP[Read-only telemetry snapshots]
-  BRIDGE[Linux client and ros2_control adapter]
-  ROS[ROS 2 controllers]
+  SELECT[Kconfig selects current_robot or bench_single_svd48_motor]
+  SCHEMA[robot_profile_validate schema and board resources]
+  LOOKUP[lookup executable factory by driver_id]
+  CAPACITY[validate factory ops, capabilities, storage and legacy capacity]
+  BUSES[construct each referenced RS485 bus]
+  DEVICES[construct each device using its bus_id]
+  ENDPOINTS[create endpoints in profile array order]
+  LEGACY[create legacy index bindings, maximum four]
+  APP[initialize registry, coordinator and application port]
+  START[start every device and one N-device polling task]
+  DIAG[restricted serial diagnostic mode, no outputs]
+  FAIL[fail startup / OTA self-test policy]
 
-  PROFILE --> FACTORY --> DEVICES --> ENDPOINTS
-  BRIDGE --> ROUTER --> AUTH --> STATE --> MOTION --> OWNER --> ENDPOINTS
-  ENDPOINTS --> SNAP --> BRIDGE --> ROS
-  ROS --> BRIDGE
-  STATE --> OWNER
+  SELECT --> SCHEMA
+  SCHEMA -->|invalid| FAIL
+  SCHEMA --> LOOKUP --> CAPACITY
+  CAPACITY -->|schema valid but unsupported| DIAG
+  CAPACITY -->|supported| BUSES --> DEVICES --> ENDPOINTS --> LEGACY --> APP --> START
 ```
 
-The next critical boundary is the single-owner command mailbox with explicit stop
-precedence. It should integrate the existing authority and state models before more
-motion transports or ROS bindings are added.
+The executable registry declares byte capacity for runtime device slots, endpoint
+capacity and the transitional legacy binding capacity. Preflight sums each factory's
+`storage_required()` result with overflow checks. More than four compatibility
+bindings produces `LEGACY_BINDING_LIMIT`; it is not an SVD48 device/channel limit.
+The active SVD48 composition also rejects an empty endpoint set, zero or unsupported
+capabilities, inverted limits, unschedulable periods and any velocity endpoint that
+lacks `STOPPABLE`. These checks complete before a bus or device is constructed.
+
+The SVD48 factory requires one dual-channel physical device and resolves its
+transport by `device.bus_id`, never by array position. Because the legacy maintenance
+API still identifies a controller only by Modbus address, repeated SVD48 addresses
+across buses are rejected until that API carries bus/device identity.
+
+The supported profiles are:
+
+| Profile | RS485 topology | Endpoint topology | Geometry |
+| --- | --- | --- | --- |
+| `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four endpoints ordered drive 1 M1/M2, drive 2 M1/M2 | Differential |
+| `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | One endpoint at legacy index 0, channel M1 | None |
+
+The bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0` and
+`STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
+there is no application geometry. Both profiles also declare a GPIO RC bus, which
+`main` consumes separately from SVD48 composition.
+
+## Polling, observations and health
+
+One `svd48_poll_service` schedules every configured physical device. Position,
+speed and current are read on every poll; status, motor temperature, bus voltage,
+MOS temperature and error code are added every twentieth poll. A poll is:
+
+- `OK` only when every observation scheduled for that poll succeeds;
+- `PARTIAL` when at least one scheduled read succeeds and at least one fails;
+- a concrete transport/protocol error when no scheduled read succeeds.
+
+Each channel snapshot carries valid, failed and stale observation masks plus a
+timestamp per observation. A success for current cannot update or clear speed. A
+channel is `OFFLINE` when recent valid communication is absent, `FAULT` when a fresh
+error-code observation is nonzero, `STALE` when an observation has expired or was
+never valid, `DEGRADED` after an incomplete result with still-fresh prior data, and
+`HEALTHY` only after a complete poll with all observations valid and fresh.
+
+`PARTIAL` is a polling-service failure for backoff. Backoff never shortens the
+device's nominal period and is scheduled from the instant that device's poll
+finishes. Deadlines use explicit scheduled state and signed modular comparison, so a
+wrapped deadline of zero is not confused with an uninitialized entry. A per-device
+poll guard prevents the shared task and legacy `POLL_ONCE` from interleaving cycles;
+the concurrent request receives `BUS_BUSY` without advancing the poll cycle.
+
+The manufacturer contract names given speed (`0x5304/0x5305`) and observed motor
+speed (`0x5410/0x5411`) as RPM. The driver preserves the signed raw register value
+without a factor-of-ten conversion. That raw observation already feeds the legacy
+5-RPM readiness gate for OTA/maintenance and the motion state reported by
+`PLATFORM_STATUS` when it is online and fresh. It is not independent evidence that
+the physical axis moved; controlled physical qualification and a reviewed fail-safe
+policy remain required.
+
+## Tasks and locks
+
+```mermaid
+flowchart LR
+  SAFETY[robot_safety P9, stack 4096] --> CM[coordinator mutex, 500 ms]
+  GATEWAY[serial_gateway P6, stack 12288] --> CMD[gateway command mutex, 1000 ms] --> CM
+  STREAM[gateway_stream P4, stack 4096] --> PRINT[gateway print mutex]
+  POLL[svd48_poll P8, stack 4096] --> BM[RS485 bus mutex, max 1000 ms]
+  CM --> DEV[direct device operations] --> BM --> UART[UART exchange]
+  MAINT[legacy maintenance handlers] --> BM
+  BM -. released before snapshot update .-> STATE[per-device state mutex]
+  BM -. result accounting .-> STATS[transport statistics mutex]
+  RC[ibus_rx P5, stack 4096] --> SAFETY
+  MAINTLAN[maintenance_lan P2] --> CMD
+  BACKGROUND[Wi-Fi / OTA P2]
+```
+
+The coordinator mutex is acquired before a migrated device call; the device then
+acquires the bus mutex. It prevents two coordinated commands from interleaving.
+Polling and legacy maintenance do not acquire the coordinator, so they can run
+between the individual bus transactions of a coordinated target/enable or
+target-zero/stop sequence even while the coordinator is held. Every individual
+RS485 transaction remains serialized. Snapshot state and 64-bit transport
+statistics use separate locks, and the bus lock is released before either is
+updated. This avoids a bus/state lock cycle, but it does not create stop precedence
+or global single-writer authority.
+
+| Task | Priority | Stack | Active mode |
+| --- | ---: | ---: | --- |
+| `robot_safety` | 9 | 4096 | Supported normal runtime |
+| `svd48_poll` | 8 | 4096 | Supported normal runtime |
+| `serial_gateway` | 6 | 12288 | Normal and restricted diagnostic runtime |
+| `ibus_rx` | 5 | 4096 | Normal runtime when the RC bus is present |
+| `gateway_stream` | 4 | 4096 | Normal runtime only |
+| Wi-Fi reconnect | 2 | 4096 | Normal runtime only |
+| OTA automatic check | 2 | 8192 | Normal runtime when available |
+| OTA announce | 2 | 8192 | Normal runtime when available |
+| Maintenance LAN | 2 | 12288 | Normal runtime when available |
+
+## Startup and lifecycle
+
+Normal startup initializes NVS/configuration, initializes Wi-Fi/OTA handles, selects
+and composes the profile, creates the legacy facade, attempts boot stop, starts
+polling, RC and safety, then starts the serial gateway and optional network tasks.
+Shutdown and construction failure unwind tasks, adapters, devices and buses in
+reverse order.
+
+If schema validation succeeds but executable preflight cannot support the profile
+(including a missing factory or static-capacity failure), no bus or device output is
+constructed. For a non-pending OTA image, `main` starts only the serial RX gateway in
+`diagnostic_only` mode. It permits `PING`, `VERSION`, `HELP`, read-only platform,
+configuration, Wi-Fi, profile and composition status, plus `STOP ALL`. With no
+endpoints, stop returns `ERR STOP_UNAVAILABLE OUTPUTS_NOT_INITIALIZED`; all other
+commands return `ERR DIAGNOSTIC_MODE_COMMAND_BLOCKED`. It does not start the stream,
+RC, safety, Wi-Fi reconnect, OTA, announce or LAN tasks. A pending OTA image retains
+the existing rollback-on-self-test-failure policy instead of accepting diagnostic
+mode as a successful self-test.
+
+## Transitional and dormant boundaries
+
+The legacy wrapper and `robot_control` still own `ENABLE`, `MOVE_VEL`, fault clear,
+telemetry, trace, OTA preparation and register/configuration maintenance. They also
+own `SVD48_IDENTIFY START|STOP`, which writes the physical identification register
+and can move a motor. These paths do not all pass through the coordinator.
+`robot_safety` emits migrated stops but still consumes legacy telemetry, so the new
+health model is not yet the active safety policy.
+
+`robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are compiled
+foundations, not active runtime behavior. Their presence must not be described as an
+authority, state machine or production control protocol. The next boundary is a
+priority-aware single actuation owner with stop precedence; see the
+[Roadmap](ROADMAP.md).
