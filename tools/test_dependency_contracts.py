@@ -88,6 +88,81 @@ class DependencyContracts(unittest.TestCase):
         self.assertIn("svd48_channel_endpoint_adapter", text)
         self.assertNotIn("robot_control_endpoint_adapter", text)
 
+    def test_composition_preserves_dependencies_until_polling_is_quiesced(self) -> None:
+        composition = source_text("components/robot_composition/robot_composition.c")
+        quiescence = composition[
+            composition.index("static bool polling_task_is_quiesced") :
+            composition.index("static bool cleanup_runtime")
+        ]
+        self.assertIn("!task->service", quiescence)
+
+        cleanup = composition[
+            composition.index("static bool cleanup_runtime") :
+            composition.index("static esp_err_t fail_after_cleanup")
+        ]
+        self.assertIn("composition->polling_task.service", cleanup)
+        quiescence_guard = cleanup.index("polling_task_is_quiesced")
+        device_destroy = cleanup.index("factory->ops->destroy")
+        transport_destroy = cleanup.index("rs485_transport_deinit")
+        self.assertLess(quiescence_guard, device_destroy)
+        self.assertLess(quiescence_guard, transport_destroy)
+        self.assertIn("return false;", cleanup[quiescence_guard:device_destroy])
+
+        deinit = composition[composition.index("void robot_composition_deinit") :]
+        cleanup_call = deinit.index("cleanup_runtime")
+        reset = deinit.index("memset(composition")
+        self.assertLess(cleanup_call, reset)
+        self.assertIn("return;", deinit[cleanup_call:reset])
+
+    def test_poll_task_stop_waits_for_completion_after_a_timeout(self) -> None:
+        poll_task = source_text("components/svd48/svd48_poll_task.c")
+        start = poll_task[
+            poll_task.index("esp_err_t svd48_poll_task_start") :
+            poll_task.index("esp_err_t svd48_poll_task_stop")
+        ]
+        for pending_state in (
+            "task->service",
+            "task->task",
+            "task->stopped",
+            "task->stop_requested",
+            "task->running",
+        ):
+            with self.subTest(pending_state=pending_state):
+                self.assertIn(pending_state, start)
+
+        semaphore_failure = start[
+            start.index("if (!task->stopped)") :
+            start.index("BaseType_t created")
+        ]
+        self.assertIn("memset(task, 0, sizeof(*task))", semaphore_failure)
+
+        stop = poll_task[poll_task.index("esp_err_t svd48_poll_task_stop") :]
+        completion_semaphore = stop.index("if (!task->stopped)")
+        stop_request = stop.index("task->stop_requested = true")
+        completion_wait = stop.index("xSemaphoreTake(task->stopped")
+        reset = stop.index("memset(task", completion_wait)
+        self.assertLess(completion_semaphore, stop_request)
+        self.assertLess(stop_request, completion_wait)
+        self.assertLess(completion_wait, reset)
+        self.assertNotIn("if (!task->task && !task->running)", stop)
+
+        composition = source_text("components/robot_composition/robot_composition.c")
+        composition_stop = composition[
+            composition.index("esp_err_t robot_composition_stop") :
+            composition.index("void robot_composition_deinit")
+        ]
+        self.assertIn("composition->polling_task.service", composition_stop)
+        self.assertIn("composition->polling_task.stopped", composition_stop)
+        self.assertIn("composition->polling_task.stop_requested", composition_stop)
+
+        composition_start = composition[
+            composition.index("esp_err_t robot_composition_start") :
+            composition.index("esp_err_t robot_composition_stop")
+        ]
+        quiescence_guard = composition_start.index("polling_task_is_quiesced")
+        device_start = composition_start.index("factory->ops->start")
+        self.assertLess(quiescence_guard, device_start)
+
     def test_diagnostic_guard_precedes_legacy_command_access(self) -> None:
         gateway = source_text("components/serial_gateway/serial_gateway.c")
         command_dispatch = gateway[gateway.index("static void handle_command") :]

@@ -514,14 +514,28 @@ static esp_err_t construct_buses(robot_composition_t *composition)
     return ESP_OK;
 }
 
-static void cleanup_runtime(robot_composition_t *composition)
+static bool polling_task_is_quiesced(const svd48_poll_task_t *task)
+{
+    return task && !task->service && !task->task && !task->running &&
+           !task->stopped && !task->stop_requested;
+}
+
+static bool cleanup_runtime(robot_composition_t *composition)
 {
     if (!composition) {
-        return;
+        return false;
     }
-    if (composition->started || composition->polling_task.task ||
-        composition->polling_task.running) {
+    if (composition->started || composition->polling_task.service ||
+        composition->polling_task.task ||
+        composition->polling_task.running || composition->polling_task.stopped ||
+        composition->polling_task.stop_requested) {
         (void)robot_composition_stop(composition);
+    }
+    /* Preserve dependencies until a timed-out poll task is fully collected. */
+    if (!polling_task_is_quiesced(&composition->polling_task)) {
+        ESP_LOGE(TAG,
+                 "Polling task did not stop; preserving runtime dependencies");
+        return false;
     }
     if (composition->legacy_svd48) {
         svd48_deinit(composition->legacy_svd48);
@@ -559,6 +573,7 @@ static void cleanup_runtime(robot_composition_t *composition)
     composition->constructed = false;
     composition->started = false;
     composition->diagnostics.runtime_ready = false;
+    return true;
 }
 
 static esp_err_t fail_after_cleanup(robot_composition_t *composition,
@@ -566,7 +581,9 @@ static esp_err_t fail_after_cleanup(robot_composition_t *composition,
 {
     robot_composition_diagnostics_t diagnostics = composition->diagnostics;
     const robot_profile_t *profile = composition->profile;
-    cleanup_runtime(composition);
+    if (!cleanup_runtime(composition)) {
+        return ESP_ERR_TIMEOUT;
+    }
     memset(composition, 0, sizeof(*composition));
     composition->profile = profile;
     composition->diagnostics = diagnostics;
@@ -704,6 +721,11 @@ esp_err_t robot_composition_start(robot_composition_t *composition)
     if (composition->started) {
         return ESP_OK;
     }
+    if (!polling_task_is_quiesced(&composition->polling_task)) {
+        composition->diagnostics.code = ROBOT_COMPOSITION_DIAGNOSTIC_START_FAILED;
+        composition->diagnostics.stage = ROBOT_COMPOSITION_STAGE_SERVICE_START;
+        return ESP_ERR_INVALID_STATE;
+    }
     composition->diagnostics.stage = ROBOT_COMPOSITION_STAGE_SERVICE_START;
     for (size_t index = 0; index < composition->profile->device_count; ++index) {
         const robot_device_profile_t *device = &composition->profile->devices[index];
@@ -745,7 +767,10 @@ esp_err_t robot_composition_stop(robot_composition_t *composition)
         return ESP_ERR_INVALID_ARG;
     }
     esp_err_t first_error = ESP_OK;
-    if (composition->polling_task.task || composition->polling_task.running) {
+    if (composition->polling_task.service || composition->polling_task.task ||
+        composition->polling_task.running ||
+        composition->polling_task.stopped ||
+        composition->polling_task.stop_requested) {
         esp_err_t error = svd48_poll_task_stop(&composition->polling_task,
                                               POLLING_STOP_TIMEOUT_MS);
         if (error != ESP_OK) {
@@ -776,7 +801,9 @@ void robot_composition_deinit(robot_composition_t *composition)
     if (!composition) {
         return;
     }
-    cleanup_runtime(composition);
+    if (!cleanup_runtime(composition)) {
+        return;
+    }
     memset(composition, 0, sizeof(*composition));
 }
 

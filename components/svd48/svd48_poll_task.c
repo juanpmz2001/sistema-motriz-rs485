@@ -28,13 +28,16 @@ esp_err_t svd48_poll_task_start(svd48_poll_task_t *task,
     if (!task || !service || !service->initialized || service->count == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (task->task || task->running) {
+    /* A timed-out stop must be collected before this storage can be reused. */
+    if (task->service || task->task || task->stopped || task->stop_requested ||
+        task->running) {
         return ESP_ERR_INVALID_STATE;
     }
     memset(task, 0, sizeof(*task));
     task->service = service;
     task->stopped = xSemaphoreCreateBinaryStatic(&task->stopped_storage);
     if (!task->stopped) {
+        memset(task, 0, sizeof(*task));
         return ESP_ERR_NO_MEM;
     }
     BaseType_t created = xTaskCreate(polling_task,
@@ -56,13 +59,14 @@ esp_err_t svd48_poll_task_stop(svd48_poll_task_t *task, uint32_t timeout_ms)
     if (!task) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!task->task && !task->running) {
-        if (task->stopped) {
-            vSemaphoreDelete(task->stopped);
+    if (!task->stopped) {
+        if (task->task || task->running) {
+            return ESP_ERR_INVALID_STATE;
         }
         memset(task, 0, sizeof(*task));
         return ESP_OK;
     }
+    /* A previous timeout may leave only the completion semaphore to collect. */
     task->stop_requested = true;
     if (xSemaphoreTake(task->stopped, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
