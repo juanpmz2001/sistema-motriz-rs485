@@ -16,6 +16,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 GATEWAY_SOURCE = ROOT / "components/serial_gateway/serial_gateway.c"
 GATEWAY_HEADER = ROOT / "components/serial_gateway/include/serial_gateway.h"
+COMPOSITION_SOURCE = ROOT / "components/robot_composition/robot_composition.c"
+ROBOT_CONTROL_SOURCE = ROOT / "components/robot_control/robot_control.c"
+PROFILE_SOURCE = ROOT / "components/robot_profile/robot_profile.c"
+MAIN_SOURCE = ROOT / "main/main.c"
 
 
 def read_source(path: Path) -> str:
@@ -93,6 +97,22 @@ def extract_c_function(source: str, function_name: str) -> str:
     return source[matches[0].start() : closing_brace(source, opening_brace) + 1]
 
 
+def extract_c_initializer(source: str, symbol_name: str) -> str:
+    """Return one aggregate initializer using the same brace-aware scanner."""
+
+    signature = re.compile(
+        rf"(?m)^[^;\n]*\b{re.escape(symbol_name)}\b[^;=]*=\s*\{{"
+    )
+    matches = list(signature.finditer(source))
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected one initializer for {symbol_name}, found {len(matches)}"
+        )
+
+    opening_brace = matches[0].end() - 1
+    return source[matches[0].start() : closing_brace(source, opening_brace) + 1]
+
+
 def extract_dispatch_branch(source: str, command: str) -> str:
     """Return the body of one argv[0] command branch from handle_command."""
 
@@ -114,12 +134,19 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.gateway = read_source(GATEWAY_SOURCE)
         cls.header = read_source(GATEWAY_HEADER)
+        cls.composition = read_source(COMPOSITION_SOURCE)
+        cls.robot_control = read_source(ROBOT_CONTROL_SOURCE)
+        cls.profile = read_source(PROFILE_SOURCE)
+        cls.main = read_source(MAIN_SOURCE)
         cls.handle_command = extract_c_function(cls.gateway, "handle_command")
         cls.get_motor_branch = extract_dispatch_branch(
             cls.handle_command, "GET_MOTOR"
         )
         cls.set_speed_branch = extract_dispatch_branch(
             cls.handle_command, "SET_SPEED"
+        )
+        cls.move_vel_branch = extract_dispatch_branch(
+            cls.handle_command, "MOVE_VEL"
         )
         cls.handle_stop = extract_c_function(cls.gateway, "handle_stop")
         cls.handle_read_reg = extract_c_function(cls.gateway, "handle_read_reg")
@@ -138,6 +165,31 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             cls.gateway, "configured_motor_count"
         )
         cls.parse_motor_arg = extract_c_function(cls.gateway, "parse_motor_arg")
+        cls.bench_profile = extract_c_initializer(cls.profile, "SINGLE_MOTOR")
+        cls.application_ops = extract_c_initializer(
+            cls.composition, "APPLICATION_OPS"
+        )
+        cls.endpoint_for_legacy_motor = extract_c_function(
+            cls.composition, "endpoint_for_legacy_motor"
+        )
+        cls.application_set_speed = extract_c_function(
+            cls.composition, "application_set_speed"
+        )
+        cls.application_stop_motor = extract_c_function(
+            cls.composition, "application_stop_motor"
+        )
+        cls.application_stop_all = extract_c_function(
+            cls.composition, "application_stop_all"
+        )
+        cls.application_motor_count = extract_c_function(
+            cls.composition, "application_motor_count"
+        )
+        cls.create_svd48_endpoint = extract_c_function(
+            cls.composition, "svd48_factory_create_endpoint"
+        )
+        cls.robot_control_move_vel = extract_c_function(
+            cls.robot_control, "robot_control_move_vel"
+        )
 
     def assert_has_calls(self, source: str, *function_names: str) -> None:
         for function_name in function_names:
@@ -369,6 +421,75 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         header = compact(self.header)
         self.assertIn("robot_control_handle_t robot", header)
         self.assertIn("actuation_application_port_t *actuation", header)
+
+    def test_bench_profile_exposes_only_legacy_index_zero(self) -> None:
+        bench = compact(self.bench_profile)
+        self.assertIn('.name = "bench_single_svd48_motor"', bench)
+        self.assertIn(".endpoint_count = 1", bench)
+        self.assertIn('.endpoints = {{1, "bench_motor", 1, 0,', bench)
+        self.assertIn("ROBOT_PROFILE_NO_GEOMETRY", bench)
+
+        endpoint_lookup = compact(self.endpoint_for_legacy_motor)
+        self.assertIn("motor < composition->legacy_binding_count", endpoint_lookup)
+        self.assertIn("composition->legacy_endpoint_ids[motor]", endpoint_lookup)
+
+        endpoint_creation = compact(self.create_svd48_endpoint)
+        self.assertIn(
+            "size_t legacy_index = composition->legacy_binding_count++",
+            endpoint_creation,
+        )
+        self.assertIn(
+            "composition->legacy_endpoint_ids[legacy_index] = endpoint->id",
+            endpoint_creation,
+        )
+        self.assertIn(
+            "return composition ? composition->legacy_binding_count : 0U",
+            compact(self.application_motor_count),
+        )
+
+    def test_bench_move_vel_is_explicitly_unsupported(self) -> None:
+        main = compact(self.main)
+        self.assertIn(
+            ".motion_kinematics_enabled = profile->application.kind == "
+            "ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY",
+            main,
+        )
+
+        move = compact(self.robot_control_move_vel)
+        self.assertIn("!handle->config.motion_kinematics_enabled", move)
+        self.assertIn(
+            "svd48_get_motor_count(handle->config.svd48) != SVD48_MOTOR_COUNT",
+            move,
+        )
+        self.assertIn("return ESP_ERR_NOT_SUPPORTED", move)
+        self.assert_has_calls(self.move_vel_branch, "robot_control_move_vel")
+        self.assert_has_strings(
+            self.move_vel_branch,
+            "ERR USAGE MOVE_VEL vx vy wz",
+            "ERR MOVE_VEL_FAILED 0x%x",
+        )
+
+    def test_composition_application_ops_route_speed_and_stop(self) -> None:
+        self.assert_has_calls(
+            self.application_set_speed,
+            "endpoint_for_legacy_motor",
+            "actuation_coordinator_set_velocity_rpm",
+        )
+        self.assert_has_calls(
+            self.application_stop_motor,
+            "endpoint_for_legacy_motor",
+            "actuation_coordinator_stop_endpoint",
+        )
+        self.assert_has_calls(
+            self.application_stop_all,
+            "actuation_coordinator_stop_all",
+        )
+
+        ops = compact(self.application_ops)
+        self.assertIn(".set_legacy_motor_speed_rpm = application_set_speed", ops)
+        self.assertIn(".stop_legacy_motor = application_stop_motor", ops)
+        self.assertIn(".stop_all = application_stop_all", ops)
+        self.assertIn(".legacy_motor_count = application_motor_count", ops)
 
     def test_diagnostic_startup_advertises_only_the_restricted_allowlist(self) -> None:
         diagnostic_help = compact(self.print_diagnostic_help)

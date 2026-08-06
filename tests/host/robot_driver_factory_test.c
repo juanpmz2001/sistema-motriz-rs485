@@ -210,6 +210,63 @@ static robot_profile_t make_profile(size_t device_count,
     return profile;
 }
 
+static bool expect_schema_rejection(const robot_profile_t *profile,
+                                    robot_profile_error_t expected_error)
+{
+    reset_factory_behavior();
+    robot_driver_factory_t factory = make_factory();
+    robot_executable_factory_registry_t registry = make_registry(&factory);
+    robot_composition_diagnostics_t diagnostics;
+
+    HOST_TEST_CHECK(!robot_composition_preflight(profile,
+                                                 &registry,
+                                                 &diagnostics));
+    HOST_TEST_CHECK(!diagnostics.schema_valid);
+    HOST_TEST_CHECK(!diagnostics.composition_supported);
+    HOST_TEST_CHECK(diagnostics.schema_error == expected_error);
+    HOST_TEST_CHECK(diagnostics.code ==
+                    ROBOT_COMPOSITION_DIAGNOSTIC_SCHEMA_INVALID);
+    HOST_TEST_CHECK(diagnostics.stage == ROBOT_COMPOSITION_STAGE_SCHEMA);
+    HOST_TEST_CHECK(validate_calls == 0U);
+    HOST_TEST_CHECK(storage_calls == 0U);
+    HOST_TEST_CHECK(runtime_calls == 0U);
+    return true;
+}
+
+static bool duplicate_and_missing_references_fail_before_factory_calls(void)
+{
+    robot_profile_t profile = make_profile(1U, 2U);
+    profile.endpoints[1].id = profile.endpoints[0].id;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_DUPLICATE_ID));
+
+    profile = make_profile(1U, 2U);
+    profile.endpoints[1].name = profile.endpoints[0].name;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_DUPLICATE_NAME));
+
+    profile = make_profile(1U, 2U);
+    profile.endpoints[1].channel = profile.endpoints[0].channel;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_DUPLICATE_CHANNEL));
+
+    profile = make_profile(2U, 2U);
+    profile.devices[1].id = profile.devices[0].id;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_DUPLICATE_ID));
+
+    profile = make_profile(2U, 2U);
+    profile.devices[1].address = profile.devices[0].address;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_DUPLICATE_ADDRESS));
+
+    profile = make_profile(1U, 1U);
+    profile.endpoints[0].device_id = 99U;
+    HOST_TEST_CHECK(expect_schema_rejection(&profile,
+                                            ROBOT_PROFILE_BAD_REFERENCE));
+    return true;
+}
+
 static bool successful_preflight_is_pure(void)
 {
     reset_factory_behavior();
@@ -714,6 +771,7 @@ static bool diagnostic_names_cover_public_values(void)
 int main(void)
 {
     const host_test_case_t tests[] = {
+        HOST_TEST_CASE(duplicate_and_missing_references_fail_before_factory_calls),
         HOST_TEST_CASE(successful_preflight_is_pure),
         HOST_TEST_CASE(schema_and_output_arguments_are_rejected),
         HOST_TEST_CASE(missing_factory_has_identity_diagnostics),

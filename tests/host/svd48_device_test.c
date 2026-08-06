@@ -206,11 +206,13 @@ static bool fixture_init(device_fixture_t *fixture,
     return true;
 }
 
-static bool queue_complete_poll(fake_bus_transport_t *bus,
-                                int16_t m1_speed_rpm,
-                                int16_t m2_speed_rpm,
-                                int16_t m1_current_deciamp,
-                                int16_t m2_current_deciamp)
+static bool queue_complete_poll_with_errors(fake_bus_transport_t *bus,
+                                            int16_t m1_speed_rpm,
+                                            int16_t m2_speed_rpm,
+                                            int16_t m1_current_deciamp,
+                                            int16_t m2_current_deciamp,
+                                            uint32_t m1_error_code,
+                                            uint32_t m2_error_code)
 {
     const uint16_t position[] = {0U, 123U, UINT16_MAX, UINT16_MAX - 1U};
     const uint16_t speed[] = {(uint16_t)m1_speed_rpm, (uint16_t)m2_speed_rpm};
@@ -220,7 +222,12 @@ static bool queue_complete_poll(fake_bus_transport_t *bus,
     const uint16_t motor_temp[] = {250U, 260U};
     const uint16_t bus_voltage[] = {480U, 481U};
     const uint16_t mos_temp[] = {300U, 310U};
-    const uint16_t error_code[] = {0U, 0U, 0U, 0U};
+    const uint16_t error_code[] = {
+        (uint16_t)(m1_error_code >> 16U),
+        (uint16_t)m1_error_code,
+        (uint16_t)(m2_error_code >> 16U),
+        (uint16_t)m2_error_code,
+    };
     return queue_read_response(bus, 1U, 0x5418U, position, 4U) &&
            queue_read_response(bus, 1U, 0x5410U, speed, 2U) &&
            queue_read_response(bus, 1U, 0x5414U, current, 2U) &&
@@ -229,6 +236,21 @@ static bool queue_complete_poll(fake_bus_transport_t *bus,
            queue_read_response(bus, 1U, 0x540CU, bus_voltage, 2U) &&
            queue_read_response(bus, 1U, 0x5408U, mos_temp, 2U) &&
            queue_read_response(bus, 1U, 0x5420U, error_code, 4U);
+}
+
+static bool queue_complete_poll(fake_bus_transport_t *bus,
+                                int16_t m1_speed_rpm,
+                                int16_t m2_speed_rpm,
+                                int16_t m1_current_deciamp,
+                                int16_t m2_current_deciamp)
+{
+    return queue_complete_poll_with_errors(bus,
+                                           m1_speed_rpm,
+                                           m2_speed_rpm,
+                                           m1_current_deciamp,
+                                           m2_current_deciamp,
+                                           0U,
+                                           0U);
 }
 
 static bool queue_fast_poll(fake_bus_transport_t *bus,
@@ -696,6 +718,141 @@ static bool test_partial_poll_preserves_independent_speed_freshness(void)
     return true;
 }
 
+static bool test_total_poll_failure_degrades_then_goes_offline(void)
+{
+    device_fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
+    fixture.now_ms = 100U;
+    HOST_TEST_CHECK(queue_complete_poll(&fixture.bus, 50, -50, 10, 11));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+
+    fixture.now_ms = 200U;
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus,
+                                     1U,
+                                     0x5418U,
+                                     4U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus,
+                                     1U,
+                                     0x5410U,
+                                     2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus,
+                                     1U,
+                                     0x5414U,
+                                     2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_TIMEOUT);
+
+    svd48_channel_t *m1 = svd48_device_channel(&fixture.device,
+                                               SVD48_CHANNEL_M1);
+    svd48_channel_snapshot_t snapshot;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(snapshot.online && !snapshot.stale);
+    HOST_TEST_CHECK(snapshot.last_poll_result == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK((snapshot.failed_observations &
+                     (SVD48_OBSERVATION_POSITION |
+                      SVD48_OBSERVATION_SPEED |
+                      SVD48_OBSERVATION_CURRENT)) ==
+                    (SVD48_OBSERVATION_POSITION |
+                     SVD48_OBSERVATION_SPEED |
+                     SVD48_OBSERVATION_CURRENT));
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
+                    SVD48_CHANNEL_HEALTH_DEGRADED);
+
+    fixture.now_ms = 1101U;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(!snapshot.online && snapshot.stale);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
+                    SVD48_CHANNEL_HEALTH_OFFLINE);
+    return true;
+}
+
+static bool test_fresh_fault_clears_after_zero_error_poll(void)
+{
+    device_fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
+    fixture.now_ms = 100U;
+    HOST_TEST_CHECK(queue_complete_poll_with_errors(&fixture.bus,
+                                                   50,
+                                                   -50,
+                                                   10,
+                                                   11,
+                                                   0x00010002U,
+                                                   0U));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+
+    svd48_channel_t *m1 = svd48_device_channel(&fixture.device,
+                                               SVD48_CHANNEL_M1);
+    svd48_channel_t *m2 = svd48_device_channel(&fixture.device,
+                                               SVD48_CHANNEL_M2);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_FAULT);
+    HOST_TEST_CHECK(svd48_channel_get_health(m2) == SVD48_CHANNEL_HEALTH_HEALTHY);
+
+    fixture.device.poll_count = 0U;
+    fixture.now_ms = 130U;
+    HOST_TEST_CHECK(queue_complete_poll(&fixture.bus, 51, -51, 12, 13));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+
+    svd48_channel_snapshot_t snapshot;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(snapshot.error_code == 0U);
+    HOST_TEST_CHECK((snapshot.failed_observations &
+                     SVD48_OBSERVATION_ERROR_CODE) == 0U);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
+                    SVD48_CHANNEL_HEALTH_HEALTHY);
+    return true;
+}
+
+static bool test_successful_read_clears_failed_observation(void)
+{
+    device_fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
+    fixture.now_ms = 100U;
+    HOST_TEST_CHECK(queue_complete_poll(&fixture.bus, 50, -50, 10, 11));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+
+    const uint16_t position[] = {0U, 200U, 0U, 201U};
+    const uint16_t current[] = {20U, 21U};
+    fixture.now_ms = 200U;
+    HOST_TEST_CHECK(queue_read_response(&fixture.bus,
+                                       1U,
+                                       0x5418U,
+                                       position,
+                                       4U));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus,
+                                     1U,
+                                     0x5410U,
+                                     2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_response(&fixture.bus,
+                                       1U,
+                                       0x5414U,
+                                       current,
+                                       2U));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_PARTIAL);
+
+    svd48_channel_t *m1 = svd48_device_channel(&fixture.device,
+                                               SVD48_CHANNEL_M1);
+    svd48_channel_snapshot_t snapshot;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK((snapshot.failed_observations &
+                     SVD48_OBSERVATION_SPEED) != 0U);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
+                    SVD48_CHANNEL_HEALTH_DEGRADED);
+
+    fixture.now_ms = 230U;
+    HOST_TEST_CHECK(queue_fast_poll(&fixture.bus, 55, -55, 22, 23));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(snapshot.observed_speed_rpm == 55);
+    HOST_TEST_CHECK(snapshot.failed_observations == 0U);
+    HOST_TEST_CHECK(snapshot.last_poll_result == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
+                    SVD48_CHANNEL_HEALTH_HEALTHY);
+    return true;
+}
+
 static bool test_fast_poll_after_initial_success(void)
 {
     device_fixture_t fixture;
@@ -776,6 +933,9 @@ int main(void)
         HOST_TEST_CASE(test_modbus_response_validation),
         HOST_TEST_CASE(test_successful_poll_has_rpm_and_fresh_observations),
         HOST_TEST_CASE(test_partial_poll_preserves_independent_speed_freshness),
+        HOST_TEST_CASE(test_total_poll_failure_degrades_then_goes_offline),
+        HOST_TEST_CASE(test_fresh_fault_clears_after_zero_error_poll),
+        HOST_TEST_CASE(test_successful_read_clears_failed_observation),
         HOST_TEST_CASE(test_fast_poll_after_initial_success),
         HOST_TEST_CASE(test_concurrent_poll_is_rejected_and_does_not_advance_cycle),
     };
