@@ -30,6 +30,9 @@ commit remains in branch history.
 | `8e18a4d` | Record the local Iteration 4 closeout evidence |
 | `be72f92` | Link the Iteration 4 pull request and remote verification gate |
 | `c18e7d9` | Declare a manual workflow trigger for use once the workflow exists on the default branch |
+| `7929b6a` | Preserve poll-task dependencies and make late stop completion safely collectible |
+| `16e42c7` | Make sanitizers fail-fast and close factory, bench, health and concurrency coverage gaps |
+| `db0df13` | Reconcile the manual merge gate, final local metrics and lifecycle documentation |
 
 ## Added files
 
