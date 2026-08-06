@@ -28,7 +28,8 @@ commit remains in branch history.
 | `ca7bf0b` | Add reproducible host, sanitizer and ESP-IDF 5.4.1 profile CI |
 | `7adbbb5` | Align the as-built architecture, safety, API, SVD48 and migration documents |
 | `8e18a4d` | Record the local Iteration 4 closeout evidence |
-| `docs: link Iteration 4 pull request` | Commit linking the review and remote merge gate from this record |
+| `be72f92` | Link the Iteration 4 pull request and remote verification gate |
+| `c18e7d9` | Declare a manual workflow trigger for use once the workflow exists on the default branch |
 
 ## Added files
 
@@ -86,14 +87,14 @@ initialized rather than claiming a physical stop.
 | Poll result/backoff and N-device scheduling | PASS | Poll tests cover one/two devices, periods, partial, recovery, wraparound and completion-relative deadlines | `PARTIAL` receives failure backoff |
 | Concurrent legacy/service polling | PASS | Deterministic pthread regression | Second poll returns busy; cycles and `poll_count` do not interleave |
 | Direct endpoint adapter | PASS | Adapter tests cover ranges, capabilities, rollback stop, diagnostics and M1/M2 | Velocity without stoppable is rejected in preflight |
-| Executable factory and pure preflight | PASS | Factory tests cover missing/incompatible factories, invalid devices/endpoints, multibus diagnostic identity and all static limits | Only SVD48 has a runtime factory |
+| Executable factory and pure preflight | PASS | Factory tests cover missing/incompatible factories, duplicate IDs/names/channels/addresses, missing references, invalid devices/endpoints, multibus diagnostic identity and all static limits | The real SVD48 registration is source-characterized and covered by both integration builds |
 | `current_robot` profile | PASS | Host shape test and clean ESP-IDF 5.4.1 build | Two devices and four ordered endpoints |
-| `bench_single_svd48_motor` profile | PASS | Host shape test and clean ESP-IDF 5.4.1 build | One real RS485 bus/device/M1 endpoint; no geometry |
+| `bench_single_svd48_motor` profile | PASS | Host shape test, application characterization and clean ESP-IDF 5.4.1 build | Only index 0 is exposed; `MOVE_VEL` is unsupported; speed and stop routes remain available |
 | Protocol compatibility | PASS | Six Python tests plus C request/response tests | Covers reads, single/multiple writes, M1/M2 targets/stops, exception and bad CRC |
-| Application compatibility | PASS | Ten source-level characterization tests | Preserves syntax/results/routes for speed, stop, telemetry and maintenance commands; not a hardware runtime test |
+| Application compatibility | PASS | Thirteen source-level characterization tests | Preserves syntax/results/routes for speed, stop, bench indexing, telemetry and maintenance commands; not a hardware runtime test |
 | Safe diagnostic startup | PASS | Policy tests, source characterization, independent code audit and both firmware builds | Pending OTA verification still follows rollback policy |
-| Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution is the PR merge gate below |
-| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) | Must become PASS before merge |
+| Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution remains the manual merge gate below |
+| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) reported zero check runs and zero workflow runs for head `c18e7d9` on 2026-08-06 | Must become PASS on the final head before merge |
 | As-built documentation and links | PASS | Documentation audit, Mermaid review and local link validation | No obsolete file required archival |
 | Hardware response, timing and physical RPM interpretation | NOT VERIFIED | Deliberately not exercised | Requires separately authorized off-ground evidence |
 
@@ -114,13 +115,14 @@ Results:
 - host CTest matrix: 17/17 targets passed;
 - ASan/UBSan CTest matrix: 17/17 targets passed;
 - protocol reference: 6/6 passed;
-- dependency contracts: 8/8 passed; and
-- application compatibility characterization: 10/10 passed.
+- dependency contracts: 10/10 passed; and
+- application compatibility characterization: 13/13 passed.
 
 The host suite has a ten-second per-test timeout. Concurrency tests use explicit
-condition-variable gates rather than long timing sleeps. The application test is
-honestly limited to source-level characterization because the full gateway is bound
-to ESP-IDF/FreeRTOS; firmware integration is covered by both builds.
+condition-variable gates rather than long timing sleeps. ASan and UBSan are configured
+to halt on the first detected error. The application test is honestly limited to
+source-level characterization because the full gateway is bound to ESP-IDF/FreeRTOS;
+firmware integration is covered by both builds.
 
 ## Clean firmware builds and resources
 
@@ -131,15 +133,15 @@ ignored repository `sdkconfig` unchanged. ESP-IDF was exactly `v5.4.1`, target
 
 | Metric | `current_robot` | `bench_single_svd48_motor` |
 | --- | ---: | ---: |
-| Application binary | 1,074,320 B (`0x106490`) | 1,074,256 B (`0x106450`) |
-| Flash code | 789,458 B | 789,458 B |
-| Flash data | 180,532 B | 180,468 B |
-| Total image reported by `idf.py size` | 1,074,200 B | 1,074,136 B |
+| Application binary | 1,074,704 B (`0x106610`) | 1,074,640 B (`0x1065d0`) |
+| Flash code | 789,758 B | 789,758 B |
+| Flash data | 180,612 B | 180,548 B |
+| Total image reported by `idf.py size` | 1,074,580 B | 1,074,516 B |
 | DIRAM used / free | 109,135 / 232,625 B | 109,135 / 232,625 B |
 | DIRAM BSS | 21,336 B | 21,336 B |
 | DIRAM data / text | 19,444 / 68,355 B | 19,444 / 68,355 B |
 | IRAM used / free | 16,383 / **1 B** | 16,383 / **1 B** |
-| Application partition free | 5,217,136 B (83%) | 5,217,200 B (83%) |
+| Application partition free | 5,216,752 B (83%) | 5,216,816 B (83%) |
 | Warning lines | 0 | 0 |
 
 The one-byte IRAM margin is a release risk even though both builds link. No further
@@ -151,14 +153,14 @@ Against the initial `ce42f8f` branch baseline:
 
 | Metric | `current_robot` delta | Bench delta |
 | --- | ---: | ---: |
-| Application binary | +4,208 B | +4,192 B |
-| Flash code | +3,064 B | +3,064 B |
-| Flash data | +1,024 B | +1,008 B |
+| Application binary | +4,592 B | +4,576 B |
+| Flash code | +3,364 B | +3,364 B |
+| Flash data | +1,104 B | +1,088 B |
 | DIRAM / BSS | +904 B | +904 B |
 | IRAM | 0 B | 0 B |
 
 `origin/main` `4c8e1b` was also built cleanly for `current_robot` with the same toolchain.
-The final branch adds 14,768 B of binary, 13,180 B of flash code, 1,584 B of flash
+The final branch adds 15,152 B of binary, 13,480 B of flash code, 1,664 B of flash
 data and 3,408 B of DIRAM/BSS; IRAM is unchanged. A comparable main bench metric is
 not available because that base profile fails compilation with
 `CURRENT defined but not used` under `-Werror`.
@@ -185,6 +187,8 @@ create the stream or polling/safety tasks.
 - Scheduled period/backoff from poll completion and made wraparound deadline zero
   unambiguous.
 - Serialized whole polls per device so `POLL_ONCE` cannot race the shared poll task.
+- Made poll-task teardown collect a late completion after timeout, reject premature
+  restart and preserve devices, locks and UART until the worker is quiescent.
 - Rejected invalid/overflowing Modbus read ranges before any transport call.
 - Restricted retries to operations whose outcome is safe to retry.
 - Corrected raw speed naming/handling to RPM without invented factor-of-ten scaling.
@@ -220,6 +224,9 @@ they keep the firmware bench-only:
   identifies a controller by Modbus address without bus identity.
 - UART/RS485 timing, controller exception behavior, task stack high-water marks and
   physical stop/RPM behavior were not measured.
+- The poll-task timeout/recollection path is covered by source contracts, independent
+  review and both firmware builds, but was not fault-injected in a FreeRTOS runtime;
+  its inter-task stop flag remains the existing ESP-IDF-style `volatile bool`.
 - IRAM has one byte of link-time headroom.
 
 Recommended next work is a bounded safety/authority iteration: establish one
@@ -230,22 +237,32 @@ this closeout.
 
 ## CI and merge gate
 
-The workflow runs on pull requests to `main` and pushes to `refactor/**`. It executes
-the host matrix, ASan/UBSan, all Python contracts and an ESP-IDF 5.4.1 matrix for both
-profiles. Each firmware job stores build logs, generated configuration and size
-evidence as a 14-day artifact and writes metrics to the job summary. No secrets or
-hardware are used.
+The workflow is configured to run on pull requests to `main` and pushes to
+`refactor/**`. It executes the host matrix, ASan/UBSan, all Python contracts and an
+ESP-IDF 5.4.1 matrix for both profiles. Each firmware job stores build logs, generated
+configuration and size evidence as a 14-day artifact and writes metrics to the job
+summary. No secrets or hardware are used.
 
-Review and the remote merge gate are tracked in
+At the remote state audited on 2026-08-06, Actions was enabled but PR #5 had no
+GitHub-hosted workflow or check run for head `c18e7d9`. The `workflow_dispatch`
+declaration cannot be invoked while the workflow exists only on the feature branch;
+GitHub requires it on the default branch. A substantive follow-up push naturally
+matches the `push` trigger and updates the open PR.
+
+Review and the manual merge gate are tracked in
 [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5). Merge is
-prohibited until its workflow checks pass, the branch remains conflict-free and clean,
-and the final diff review has no blocking finding. The preferred integration is squash
-merge; rollback is a revert of that single `main` commit. The feature branch should be
-retained until post-merge CI and documentation visibility are confirmed.
+prohibited by project policy until its workflow checks pass, the branch remains
+conflict-free and clean, and the final diff review has no blocking finding. `main`
+currently has no branch protection or required-status-check rule, so GitHub does not
+enforce this gate. The preferred integration is squash merge; rollback is a revert of
+that single `main` commit. The feature branch should be retained until post-merge CI
+and documentation visibility are confirmed.
 
-## Local closeout classification
+## Current closeout classification
 
-**CLOSED WITH EXPLICIT DEFERRED ITEMS**, conditional only on the remote PR/merge gate
-above. All hardware-independent code, test, documentation and build criteria are
-locally satisfied. Hardware qualification and the listed legacy/safety migrations are
-explicitly deferred; the firmware remains bench-only.
+**NOT READY TO MERGE.** The local hardware-independent code, test, documentation and
+build criteria are satisfied, but the required GitHub-hosted checks have not run. The
+iteration may be reclassified as `CLOSED WITH EXPLICIT DEFERRED ITEMS` only after the
+checks pass on the final PR head and final review has no blocker. Hardware qualification
+and the listed legacy/safety migrations remain explicitly deferred; the firmware
+remains bench-only.

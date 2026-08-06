@@ -34,6 +34,9 @@ stop commands are not a replacement for an independent emergency power path.
   before changing the boot partition. That predicate skips offline/stale telemetry and
   otherwise blocks on an unconfirmed raw observed-speed magnitude above 5 RPM.
 - Wi-Fi and maintenance failures do not block a supported local robot startup.
+- A polling-task stop timeout preserves its devices, locks and UART instead of
+  destroying dependencies that the task may still access; restart remains inhibited
+  until completion is collected.
 
 `SAFETY_STATUS` reports observations and stop attempts; it is not certification that
 all hazards are controlled.

@@ -82,9 +82,9 @@ python3 tools/test_dependency_contracts.py
 python3 tools/test_application_compatibility.py
 ```
 
-GitHub Actions repeats the host suite, ASan/UBSan suite and clean ESP-IDF 5.4.1
-builds for both versioned profile fragments under `ci/`. The workflow never flashes
-or contacts robot hardware.
+GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
+ESP-IDF 5.4.1 builds for both versioned profile fragments under `ci/`. The workflow
+never flashes or contacts robot hardware.
 
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.

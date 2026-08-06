@@ -233,14 +233,14 @@ flowchart LR
   SAFETY[robot_safety P9, stack 4096] --> CM[coordinator mutex, 500 ms]
   GATEWAY[serial_gateway P6, stack 12288] --> CMD[gateway command mutex, 1000 ms] --> CM
   STREAM[gateway_stream P4, stack 4096] --> PRINT[gateway print mutex]
-  POLL[svd48_poll P8, stack 4096] --> BM[RS485 bus mutex, max 1000 ms]
+  POLL[svd48_poll P8, stack 4096] --> BM[RS485 bus mutex, 100 ms current / 1000 ms cap]
   CM --> DEV[direct device operations] --> BM --> UART[UART exchange]
   MAINT[legacy maintenance handlers] --> BM
   BM -. released before snapshot update .-> STATE[per-device state mutex]
   BM -. result accounting .-> STATS[transport statistics mutex]
   RC[ibus_rx P5, stack 4096] --> SAFETY
   MAINTLAN[maintenance_lan P2] --> CMD
-  BACKGROUND[Wi-Fi / OTA P2]
+  BACKGROUND[Wi-Fi reconnect / OTA P2] --> WIFITIMEOUT[wifi_timeout P3, stack 3072, transient]
 ```
 
 The coordinator mutex is acquired before a migrated device call; the device then
@@ -253,6 +253,10 @@ statistics use separate locks, and the bus lock is released before either is
 updated. This avoids a bus/state lock cycle, but it does not create stop precedence
 or global single-writer authority.
 
+Composition configures a 1000 ms RS485 lock cap. `bus_transport` clips lock
+acquisition to the transaction timeout, however, and both current profiles configure
+100 ms, so 100 ms is the effective bus-lock acquisition bound for their SVD48 calls.
+
 | Task | Priority | Stack | Active mode |
 | --- | ---: | ---: | --- |
 | `robot_safety` | 9 | 4096 | Supported normal runtime |
@@ -260,6 +264,7 @@ or global single-writer authority.
 | `serial_gateway` | 6 | 12288 | Normal and restricted diagnostic runtime |
 | `ibus_rx` | 5 | 4096 | Normal runtime when the RC bus is present |
 | `gateway_stream` | 4 | 4096 | Normal runtime only |
+| `wifi_timeout` | 3 | 3072 | Transient normal-runtime connection attempts |
 | Wi-Fi reconnect | 2 | 4096 | Normal runtime only |
 | OTA automatic check | 2 | 8192 | Normal runtime when available |
 | OTA announce | 2 | 8192 | Normal runtime when available |
@@ -271,7 +276,10 @@ Normal startup initializes NVS/configuration, initializes Wi-Fi/OTA handles, sel
 and composes the profile, creates the legacy facade, attempts boot stop, starts
 polling, RC and safety, then starts the serial gateway and optional network tasks.
 Shutdown and construction failure unwind tasks, adapters, devices and buses in
-reverse order.
+reverse order. A poll-task stop timeout preserves every device, lock and transport
+dependency; restart is rejected until a later stop call collects the task's completion
+signal. This late-completion path is source-contract and firmware-build verified, not
+runtime fault-injected under FreeRTOS.
 
 If schema validation succeeds but executable preflight cannot support the profile
 (including a missing factory or static-capacity failure), no bus or device output is
