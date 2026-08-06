@@ -7,12 +7,14 @@ hardware-independent verification of Iteration 4 and records the remaining bench
 legacy limits. It does not authorize motor actuation, flashing, OTA, network tests or
 register writes.
 
-The repository state recovered at the start matched the expected remote references:
+The repository state recovered at the start preserved the expected base and Iteration
+4 commit, but the shared branch had already advanced with earlier closeout work:
 
 - base `origin/main`: `4c8e1b24a344500a73ad77190ce533bace632834`;
 - initial Iteration 4 commit:
   `ce42f8f0837f01b84b27789b212efd055c4dea40`;
-- initial branch and remote branch both pointed to `ce42f8f`; and
+- initial branch and remote branch both pointed to
+  `c18e7d9c5f9b2a86959afe28832de75c0953b2c3`; and
 - `origin/main` did not advance during local closeout.
 
 No commit was rewritten and no force push was used. The pre-existing Iteration 4
@@ -33,6 +35,7 @@ commit remains in branch history.
 | `7929b6a` | Preserve poll-task dependencies and make late stop completion safely collectible |
 | `16e42c7` | Make sanitizers fail-fast and close factory, bench, health and concurrency coverage gaps |
 | `db0df13` | Reconcile the manual merge gate, final local metrics and lifecycle documentation |
+| `e0dd148` | Index the final Iteration 4 lifecycle hardening in this closeout record |
 
 ## Added files
 
@@ -97,7 +100,7 @@ initialized rather than claiming a physical stop.
 | Application compatibility | PASS | Thirteen source-level characterization tests | Preserves syntax/results/routes for speed, stop, bench indexing, telemetry and maintenance commands; not a hardware runtime test |
 | Safe diagnostic startup | PASS | Policy tests, source characterization, independent code audit and both firmware builds | Pending OTA verification still follows rollback policy |
 | Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution remains the manual merge gate below |
-| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) reported zero check runs and zero workflow runs for head `c18e7d9` on 2026-08-06 | Must become PASS on the final head before merge |
+| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) reported zero GitHub Actions runs on the final head during the [active Actions incident](https://www.githubstatus.com/incidents/qcvjkzcs7j74) on 2026-08-06 | Must become PASS on the final head before merge; the platform outage is not a waiver |
 | As-built documentation and links | PASS | Documentation audit, Mermaid review and local link validation | No obsolete file required archival |
 | Hardware response, timing and physical RPM interpretation | NOT VERIFIED | Deliberately not exercised | Requires separately authorized off-ground evidence |
 
@@ -246,11 +249,18 @@ ESP-IDF 5.4.1 matrix for both profiles. Each firmware job stores build logs, gen
 configuration and size evidence as a 14-day artifact and writes metrics to the job
 summary. No secrets or hardware are used.
 
-At the remote state audited on 2026-08-06, Actions was enabled but PR #5 had no
-GitHub-hosted workflow or check run for head `c18e7d9`. The `workflow_dispatch`
-declaration cannot be invoked while the workflow exists only on the feature branch;
-GitHub requires it on the default branch. A substantive follow-up push naturally
-matches the `push` trigger and updates the open PR.
+At the remote state audited on 2026-08-06, Actions was enabled with all actions
+allowed. GitHub received the branch push event, the workflow existed at the pushed
+SHA and `refactor/svd48-device-composition` matched its `refactor/**` filter, but no
+GitHub Actions run was created. GitHub simultaneously reported a major Actions outage
+and stated that webhook triggers were throttled to approximately 15%, so many pushes
+and pull requests were not triggering runs. This is an external gate failure, not
+evidence that the workflow passed.
+
+The `workflow_dispatch` declaration cannot be invoked while the workflow exists only
+on the feature branch because GitHub requires it on the default branch. A later
+substantive push may retry the natural `push` trigger, but neither a fabricated check
+nor a merge during the outage is acceptable.
 
 Review and the manual merge gate are tracked in
 [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5). Merge is
@@ -264,8 +274,9 @@ and documentation visibility are confirmed.
 ## Current closeout classification
 
 **NOT READY TO MERGE.** The local hardware-independent code, test, documentation and
-build criteria are satisfied, but the required GitHub-hosted checks have not run. The
+build criteria are satisfied, but the required GitHub-hosted checks have not run due
+to the active GitHub Actions outage. The outage does not relax the merge gate. The
 iteration may be reclassified as `CLOSED WITH EXPLICIT DEFERRED ITEMS` only after the
-checks pass on the final PR head and final review has no blocker. Hardware qualification
-and the listed legacy/safety migrations remain explicitly deferred; the firmware
-remains bench-only.
+checks pass on the final PR head and final review has no blocker. Hardware
+qualification and the listed legacy/safety migrations remain explicitly deferred;
+the firmware remains bench-only.
