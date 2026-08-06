@@ -27,7 +27,8 @@ commit remains in branch history.
 | `b0e0779` | Add host fakes, driver/factory/profile/application tests and protocol/dependency coverage |
 | `ca7bf0b` | Add reproducible host, sanitizer and ESP-IDF 5.4.1 profile CI |
 | `7adbbb5` | Align the as-built architecture, safety, API, SVD48 and migration documents |
-| `docs: record Iteration 4 closeout evidence` | Commit containing this record |
+| `8e18a4d` | Record the local Iteration 4 closeout evidence |
+| `docs: link Iteration 4 pull request` | Commit linking the review and remote merge gate from this record |
 
 ## Added files
 
@@ -92,7 +93,7 @@ initialized rather than claiming a physical stop.
 | Application compatibility | PASS | Ten source-level characterization tests | Preserves syntax/results/routes for speed, stop, telemetry and maintenance commands; not a hardware runtime test |
 | Safe diagnostic startup | PASS | Policy tests, source characterization, independent code audit and both firmware builds | Pending OTA verification still follows rollback policy |
 | Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution is the PR merge gate below |
-| GitHub-hosted PR checks | NOT VERIFIED | Requires branch publication and a pull request | Must become PASS before merge |
+| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) | Must become PASS before merge |
 | As-built documentation and links | PASS | Documentation audit, Mermaid review and local link validation | No obsolete file required archival |
 | Hardware response, timing and physical RPM interpretation | NOT VERIFIED | Deliberately not exercised | Requires separately authorized off-ground evidence |
 
@@ -235,12 +236,12 @@ profiles. Each firmware job stores build logs, generated configuration and size
 evidence as a 14-day artifact and writes metrics to the job summary. No secrets or
 hardware are used.
 
-At the time this local record was created, GitHub-hosted checks were not yet available
-because the closeout commits had not been pushed. Merge is prohibited until the PR
-checks pass, the branch remains conflict-free and clean, and the final diff review has
-no blocking finding. The preferred integration is squash merge; rollback is a revert
-of that single `main` commit. The feature branch should be retained until post-merge
-CI and documentation visibility are confirmed.
+Review and the remote merge gate are tracked in
+[PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5). Merge is
+prohibited until its workflow checks pass, the branch remains conflict-free and clean,
+and the final diff review has no blocking finding. The preferred integration is squash
+merge; rollback is a revert of that single `main` commit. The feature branch should be
+retained until post-merge CI and documentation visibility are confirmed.
 
 ## Local closeout classification
 
