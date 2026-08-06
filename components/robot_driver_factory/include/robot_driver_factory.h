@@ -63,6 +63,9 @@ struct robot_driver_factory {
 typedef struct {
     const robot_driver_factory_t *items;
     size_t count;
+    size_t runtime_storage_capacity;
+    size_t endpoint_capacity;
+    size_t legacy_binding_capacity;
 } robot_executable_factory_registry_t;
 
 typedef enum {
@@ -85,6 +88,8 @@ typedef enum {
     ROBOT_COMPOSITION_DIAGNOSTIC_CONSTRUCTION_FAILED,
     ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED,
     ROBOT_COMPOSITION_DIAGNOSTIC_START_FAILED,
+    ROBOT_COMPOSITION_DIAGNOSTIC_STATIC_CAPACITY_EXCEEDED,
+    ROBOT_COMPOSITION_DIAGNOSTIC_LEGACY_BINDING_LIMIT,
 } robot_composition_diagnostic_code_t;
 
 typedef struct {
@@ -99,6 +104,8 @@ typedef struct {
     uint16_t device_id;
     robot_endpoint_id_t endpoint_id;
     robot_factory_result_t factory_result;
+    size_t required_storage;
+    size_t available_storage;
 } robot_composition_diagnostics_t;
 
 const robot_driver_factory_t *robot_executable_factory_find(

@@ -2,6 +2,7 @@
 #define SERIAL_GATEWAY_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "actuation_application_port.h"
 #include "config_manager.h"
@@ -42,6 +43,20 @@ typedef struct {
     uint32_t fw_build_number;
     uint32_t default_stream_period_ms;
     bool print_prompt;
+    bool diagnostic_only;
+    const char *profile_name;
+    bool profile_schema_valid;
+    bool composition_supported;
+    bool composition_runtime_ready;
+    const char *composition_code;
+    const char *composition_stage;
+    uint16_t composition_driver_id;
+    uint16_t composition_bus_id;
+    uint16_t composition_device_id;
+    uint16_t composition_endpoint_id;
+    esp_err_t composition_error;
+    size_t composition_required_storage;
+    size_t composition_available_storage;
 } serial_gateway_config_t;
 
 serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *config);

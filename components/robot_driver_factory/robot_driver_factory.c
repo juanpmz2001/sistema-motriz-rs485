@@ -48,6 +48,32 @@ bool robot_composition_preflight(
     }
     diagnostics->schema_valid = true;
 
+    /* The active composition always constructs the transitional legacy view.
+     * It cannot represent a runtime with no endpoint bindings. */
+    if (profile->endpoint_count == 0U) {
+        diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED;
+        diagnostics->stage = ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT;
+        diagnostics->factory_result = ROBOT_FACTORY_ENDPOINT_FAILED;
+        return false;
+    }
+    if (!registry || profile->endpoint_count > registry->endpoint_capacity) {
+        diagnostics->code =
+            ROBOT_COMPOSITION_DIAGNOSTIC_STATIC_CAPACITY_EXCEEDED;
+        diagnostics->factory_result = ROBOT_FACTORY_NO_STORAGE;
+        diagnostics->required_storage = profile->endpoint_count;
+        diagnostics->available_storage = registry ? registry->endpoint_capacity : 0U;
+        return false;
+    }
+    if (profile->endpoint_count > registry->legacy_binding_capacity) {
+        diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_LEGACY_BINDING_LIMIT;
+        diagnostics->stage = ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT;
+        diagnostics->factory_result = ROBOT_FACTORY_ENDPOINT_FAILED;
+        diagnostics->required_storage = profile->endpoint_count;
+        diagnostics->available_storage = registry->legacy_binding_capacity;
+        return false;
+    }
+
+    size_t required_storage = 0U;
     for (size_t index = 0; index < profile->device_count; ++index) {
         const robot_device_profile_t *device = &profile->devices[index];
         diagnostics->driver_id = device->driver_id;
@@ -66,7 +92,10 @@ bool robot_composition_preflight(
             return false;
         }
         diagnostics->stage = ROBOT_COMPOSITION_STAGE_FACTORY_VALIDATE;
-        if (!factory->ops || !factory->ops->validate ||
+        /* Poll deadlines use signed modular comparison and must stay below
+         * INT32_MAX to remain unambiguous across uint32_t clock wraparound. */
+        if (bus->telemetry_period_ms >= INT32_MAX ||
+            !factory->ops || !factory->ops->validate ||
             !factory->ops->storage_required || !factory->ops->construct ||
             !factory->ops->create_endpoint || !factory->ops->start ||
             !factory->ops->stop || !factory->ops->destroy ||
@@ -77,6 +106,53 @@ bool robot_composition_preflight(
             diagnostics->factory_result = ROBOT_FACTORY_INVALID_CONFIGURATION;
             return false;
         }
+        const size_t device_storage = factory->ops->storage_required(factory,
+                                                                      device);
+        if (device_storage == 0U ||
+            device_storage > SIZE_MAX - required_storage ||
+            required_storage + device_storage >
+                registry->runtime_storage_capacity) {
+            diagnostics->code =
+                ROBOT_COMPOSITION_DIAGNOSTIC_STATIC_CAPACITY_EXCEEDED;
+            diagnostics->factory_result = ROBOT_FACTORY_NO_STORAGE;
+            diagnostics->required_storage =
+                device_storage > SIZE_MAX - required_storage
+                    ? SIZE_MAX
+                    : required_storage + device_storage;
+            diagnostics->available_storage =
+                registry->runtime_storage_capacity;
+            return false;
+        }
+        required_storage += device_storage;
+    }
+    for (size_t index = 0; index < profile->endpoint_count; ++index) {
+        const robot_endpoint_profile_t *endpoint = &profile->endpoints[index];
+        const robot_device_profile_t *device = NULL;
+        for (size_t device_index = 0; device_index < profile->device_count;
+             ++device_index) {
+            if (profile->devices[device_index].id == endpoint->device_id) {
+                device = &profile->devices[device_index];
+                break;
+            }
+        }
+        const robot_driver_factory_t *factory =
+            device ? robot_executable_factory_find(registry, device->driver_id)
+                   : NULL;
+        diagnostics->stage = ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT;
+        diagnostics->endpoint_id = endpoint->id;
+        diagnostics->device_id = endpoint->device_id;
+        diagnostics->driver_id = device ? device->driver_id : 0;
+        diagnostics->bus_id = device ? device->bus_id : 0U;
+        const bool velocity_without_stop =
+            (endpoint->capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) != 0U &&
+            (endpoint->capabilities & ROBOT_CAPABILITY_STOPPABLE) == 0U;
+        if (!factory || endpoint->capabilities == 0U || velocity_without_stop ||
+            (endpoint->capabilities & ~factory->capabilities) != 0U ||
+            endpoint->min_rpm > endpoint->max_rpm) {
+            diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED;
+            diagnostics->factory_result = ROBOT_FACTORY_ENDPOINT_FAILED;
+            return false;
+        }
     }
     diagnostics->composition_supported = true;
     diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_OK;
@@ -84,6 +160,8 @@ bool robot_composition_preflight(
     diagnostics->driver_id = 0;
     diagnostics->device_id = 0;
     diagnostics->bus_id = 0;
+    diagnostics->required_storage = required_storage;
+    diagnostics->available_storage = registry->runtime_storage_capacity;
     return true;
 }
 
@@ -107,6 +185,10 @@ const char *robot_composition_diagnostic_code_name(
         return "ENDPOINT_FAILED";
     case ROBOT_COMPOSITION_DIAGNOSTIC_START_FAILED:
         return "START_FAILED";
+    case ROBOT_COMPOSITION_DIAGNOSTIC_STATIC_CAPACITY_EXCEEDED:
+        return "STATIC_CAPACITY_EXCEEDED";
+    case ROBOT_COMPOSITION_DIAGNOSTIC_LEGACY_BINDING_LIMIT:
+        return "LEGACY_BINDING_LIMIT";
     default:
         return "UNKNOWN";
     }

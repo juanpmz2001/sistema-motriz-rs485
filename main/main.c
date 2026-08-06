@@ -111,6 +111,56 @@ static void confirm_pending_app_after_self_test(void)
     rollback_pending_app("mark_app_valid", err);
 }
 
+static esp_err_t start_safe_diagnostic_gateway(
+    const robot_composition_diagnostics_t *diagnostics,
+    esp_err_t composition_error)
+{
+    if (!diagnostics || !diagnostics->schema_valid ||
+        diagnostics->composition_supported) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ota_manager_deinit(ota_manager);
+    ota_manager = NULL;
+    robot_composition_deinit(&composition);
+
+    serial_gateway_config_t gateway_config = {
+        .config_manager = config_manager,
+        .wifi_manager = wifi_manager,
+        .fw_project = FW_PROJECT,
+        .fw_target = FW_TARGET,
+        .fw_version = FW_VERSION,
+        .fw_build_number = FW_BUILD_NUMBER,
+        .default_stream_period_ms = 200,
+        .print_prompt = false,
+        .diagnostic_only = true,
+        .profile_name = profile ? profile->name : robot_profile_selected_name(),
+        .profile_schema_valid = diagnostics->schema_valid,
+        .composition_supported = diagnostics->composition_supported,
+        .composition_runtime_ready = false,
+        .composition_code =
+            robot_composition_diagnostic_code_name(diagnostics->code),
+        .composition_stage = robot_composition_stage_name(diagnostics->stage),
+        .composition_driver_id = (uint16_t)diagnostics->driver_id,
+        .composition_bus_id = diagnostics->bus_id,
+        .composition_device_id = diagnostics->device_id,
+        .composition_endpoint_id = diagnostics->endpoint_id,
+        .composition_error = composition_error,
+        .composition_required_storage = diagnostics->required_storage,
+        .composition_available_storage = diagnostics->available_storage,
+    };
+    gateway = serial_gateway_init(&gateway_config);
+    if (!gateway) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t error = serial_gateway_start(gateway);
+    if (error != ESP_OK) {
+        serial_gateway_deinit(gateway);
+        gateway = NULL;
+    }
+    return error;
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "SVD48 robot framework starting");
@@ -178,6 +228,10 @@ void app_main(void)
     if (err != ESP_OK) {
         const robot_composition_diagnostics_t *diagnostics =
             robot_composition_get_diagnostics(&composition);
+        robot_composition_diagnostics_t diagnostic_snapshot = {0};
+        if (diagnostics) {
+            diagnostic_snapshot = *diagnostics;
+        }
         ESP_LOGE(TAG,
                  "Composition unavailable schema=%u supported=%u code=%s stage=%s driver=%u bus=%u device=%u endpoint=%u",
                  diagnostics && diagnostics->schema_valid ? 1U : 0U,
@@ -190,6 +244,24 @@ void app_main(void)
                  diagnostics ? diagnostics->bus_id : 0U,
                  diagnostics ? diagnostics->device_id : 0U,
                  diagnostics ? diagnostics->endpoint_id : 0U);
+        if (diagnostics && diagnostics->schema_valid &&
+            !diagnostics->composition_supported && !pending_verify) {
+            esp_err_t diagnostic_error = start_safe_diagnostic_gateway(
+                &diagnostic_snapshot, err);
+            if (diagnostic_error == ESP_OK) {
+                ESP_LOGW(TAG,
+                         "Safe diagnostic mode active; outputs and automatic network/OTA tasks are disabled");
+                while (1) {
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                }
+            }
+            handle_startup_failure("diagnostic_gateway",
+                                   diagnostic_error,
+                                   false);
+            wifi_manager_deinit(wifi_manager);
+            config_manager_deinit(config_manager);
+            return;
+        }
         handle_startup_failure("robot_composition", err, pending_verify);
         ota_manager_deinit(ota_manager);
         wifi_manager_deinit(wifi_manager);
@@ -331,6 +403,18 @@ void app_main(void)
         .fw_build_number = FW_BUILD_NUMBER,
         .default_stream_period_ms = 200,
         .print_prompt = false,
+        .profile_name = profile->name,
+        .profile_schema_valid = true,
+        .composition_supported = true,
+        .composition_runtime_ready = composition.diagnostics.runtime_ready,
+        .composition_code = robot_composition_diagnostic_code_name(
+            composition.diagnostics.code),
+        .composition_stage = robot_composition_stage_name(
+            composition.diagnostics.stage),
+        .composition_required_storage =
+            composition.diagnostics.required_storage,
+        .composition_available_storage =
+            composition.diagnostics.available_storage,
     };
 
     gateway = serial_gateway_init(&gateway_config);

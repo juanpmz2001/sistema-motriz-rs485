@@ -93,13 +93,25 @@ static robot_factory_result_t svd48_factory_validate(
     const robot_bus_profile_t *bus,
     const robot_device_profile_t *device)
 {
-    (void)profile;
-    if (!factory || !bus || !device || factory->driver_id != ROBOT_DRIVER_SVD48 ||
+    if (!factory || !profile || !bus || !device ||
+        factory->driver_id != ROBOT_DRIVER_SVD48 ||
         bus->type != ROBOT_BUS_UART_RS485 || device->driver_id != ROBOT_DRIVER_SVD48 ||
         device->channel_count != SVD48_DEVICE_CHANNEL_COUNT || device->address == 0U ||
+        device->address > SVD48_MODBUS_MAX_SLAVE_ID ||
+        bus->retries > SVD48_DEVICE_MAX_RETRIES ||
         bus->rate == 0U || bus->response_timeout_ms == 0U ||
-        bus->telemetry_period_ms == 0U || bus->stale_timeout_ms == 0U) {
+        bus->telemetry_period_ms == 0U ||
+        bus->telemetry_period_ms >= INT32_MAX ||
+        bus->stale_timeout_ms == 0U) {
         return ROBOT_FACTORY_INVALID_CONFIGURATION;
+    }
+    /* The compatibility maintenance API still addresses devices by slave ID. */
+    for (size_t index = 0; index < profile->device_count; ++index) {
+        const robot_device_profile_t *other = &profile->devices[index];
+        if (other->id != device->id && other->driver_id == ROBOT_DRIVER_SVD48 &&
+            other->address == device->address) {
+            return ROBOT_FACTORY_INVALID_CONFIGURATION;
+        }
     }
     return ROBOT_FACTORY_OK;
 }
@@ -312,6 +324,10 @@ static const robot_driver_factory_t EXECUTABLE_FACTORIES[] = {
 static const robot_executable_factory_registry_t EXECUTABLE_REGISTRY = {
     .items = EXECUTABLE_FACTORIES,
     .count = sizeof(EXECUTABLE_FACTORIES) / sizeof(EXECUTABLE_FACTORIES[0]),
+    .runtime_storage_capacity =
+        sizeof(((robot_composition_t *)0)->devices),
+    .endpoint_capacity = ROBOT_PROFILE_MAX_ENDPOINTS,
+    .legacy_binding_capacity = SVD48_MOTOR_COUNT,
 };
 
 const robot_executable_factory_registry_t *robot_composition_factory_registry(void)
@@ -642,8 +658,7 @@ esp_err_t robot_composition_init(robot_composition_t *composition,
         composition->svd48_device_views,
         composition->device_count,
         composition->legacy_bindings,
-        composition->legacy_binding_count,
-        profile->buses[0].telemetry_period_ms);
+        composition->legacy_binding_count);
     if (!composition->legacy_svd48) {
         composition->diagnostics.code =
             ROBOT_COMPOSITION_DIAGNOSTIC_CONSTRUCTION_FAILED;
@@ -668,6 +683,10 @@ esp_err_t robot_composition_init(robot_composition_t *composition,
     composition->diagnostics.code = ROBOT_COMPOSITION_DIAGNOSTIC_OK;
     composition->diagnostics.stage = ROBOT_COMPOSITION_STAGE_NONE;
     composition->diagnostics.factory_result = ROBOT_FACTORY_OK;
+    composition->diagnostics.driver_id = 0;
+    composition->diagnostics.bus_id = 0U;
+    composition->diagnostics.device_id = 0U;
+    composition->diagnostics.endpoint_id = 0U;
     ESP_LOGI(TAG,
              "profile %s composed buses=%u devices=%u endpoints=%u",
              profile->name,
@@ -713,6 +732,10 @@ esp_err_t robot_composition_start(robot_composition_t *composition)
     composition->diagnostics.runtime_ready = true;
     composition->diagnostics.code = ROBOT_COMPOSITION_DIAGNOSTIC_OK;
     composition->diagnostics.stage = ROBOT_COMPOSITION_STAGE_NONE;
+    composition->diagnostics.driver_id = 0;
+    composition->diagnostics.bus_id = 0U;
+    composition->diagnostics.device_id = 0U;
+    composition->diagnostics.endpoint_id = 0U;
     return ESP_OK;
 }
 
