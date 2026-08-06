@@ -174,8 +174,8 @@ or physical endpoint limits.
 
 ## Remaining migration order
 
-1. Finish executable contract tests, profile builds and resource evidence for the
-   Iteration 4 bus/device/channel path.
+1. Preserve the completed Iteration 4 contract/build matrix and restore reviewed
+   IRAM margin before accepting additional runtime growth.
 2. Integrate per-observation health and required/optional policy with the safety and
    operating-state services.
 3. Replace the mutex-backed multi-writer boundary with the priority-aware single

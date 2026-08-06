@@ -135,8 +135,9 @@ The following block a production baseline:
 | Memory headroom | Last clean build reported one byte of IRAM margin | Restore and remeasure engineering margin |
 | Speed interpretation | Unconfirmed raw RPM already feeds legacy 5-RPM readiness/status checks | Controlled off-ground unit validation and reviewed fail-safe policy |
 
-The one-byte IRAM figure is inherited from the previous ESP-IDF 5.4.1 build. It must
-be remeasured for both Iteration 4 profiles; prose is not current resource evidence.
+Clean ESP-IDF 5.4.1 builds remeasured the one-byte IRAM margin for both Iteration 4
+profiles. Exact figures are recorded in the [closeout](ITERATION_4_CLOSEOUT.md); the
+measurement is current evidence of a critical release risk, not acceptable margin.
 
 ## Profile-aware peripheral policy
 

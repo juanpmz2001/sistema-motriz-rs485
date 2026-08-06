@@ -97,8 +97,9 @@ define the current implementation. No item here authorizes hardware actuation.
 ### Q-008 — Allocation and timing budgets
 
 - **Date:** 2026-08-02
-- **Context:** The previous clean build reported one byte of IRAM headroom; Iteration 4
-  profile builds and task timing are not yet qualified in this decision record.
+- **Context:** Clean Iteration 4 builds remeasured one byte of IRAM headroom for both
+  profiles. Task stack high-water marks, bus timing and an acceptable resource budget
+  are still not qualified.
 - **Question:** What static memory, stack, bus-blocking and scheduling budgets apply?
 - **Why it matters:** New indirection must not undermine determinism or memory safety.
 - **Impact if unanswered:** Firmware integration must remain bounded and incremental.
@@ -214,8 +215,10 @@ outside this iteration.
 Only individual `SET_SPEED` and global stops from boot, serial/LAN delegation and
 safety migrate. Q-001 through Q-005 remain OPEN and no authority/state/TTL policy is activated.
 
-Q-008's previous one-byte IRAM statement is an unverified inherited assertion in
-this environment. It requires a reproducible ESP-IDF 5.4.1 build/map comparison.
+The Iteration 4 closeout supersedes Q-008's earlier unverified inherited assertion:
+reproducible ESP-IDF 5.4.1 build/map comparisons now confirm one byte of IRAM margin
+for both profiles. Q-008 remains open because acceptable budgets and runtime timing
+evidence are still undefined.
 
 ## Iteration 3 hardening decisions
 
