@@ -73,6 +73,7 @@ jobs:
           EXPECTED_SELECTION: ${{ matrix.expected }}
         run: |
           set -euo pipefail
+          . "$IDF_PATH/export.sh"
           BUILD_DIR="$RUNNER_TEMP/build-$PROFILE"
           OUTPUT_DIR="$RUNNER_TEMP/evidence-$PROFILE"
           SDKCONFIG_FILE="$RUNNER_TEMP/sdkconfig-$PROFILE"
