@@ -159,8 +159,8 @@ additional prerequisite gates explained in its evidence column.
 | Milestone / iteration | Status | Evidence or remaining gate |
 | --- | --- | --- |
 | Milestone 0 — stable Iteration 4 baseline | **DONE** | `bench-baseline-v1` points to `d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow [`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) passed host, sanitizer and both ESP-IDF profile builds. This is a bench baseline, not physical evidence. |
-| Iteration A — hardware testability | **IN PROGRESS** | Documentation, typed velocity observation, application endpoint API, host runner, manifest and fake tests exist on the Iteration A branch; remote CI/review and integration remain. |
-| Iteration B — memory headroom | **NOT STARTED** | Known Iteration 4 IRAM margin is approximately one byte; it becomes ready only after Iteration A is reviewed and integrated. Measure before changing placement. |
+| Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
+| Iteration B — memory headroom | **READY TO START** | Both post-merge builds still use 16,383 of 16,384 bytes of IRAM. Measure component/file/map placement and define a target before changing code or configuration. |
 | Iteration C — traction qualification | **BLOCKED BY HARDWARE** | It also cannot start until Iteration B establishes its memory-headroom gate; no L2–L5 physical result exists. |
 | Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Real actuator/encoder/profile evidence is absent. |
 | Iteration E — generic observations | **NOT STARTED** | Iteration A supplies only the minimum typed velocity slice; the broader typed boundary remains. |
@@ -181,9 +181,8 @@ Main physical gates are currently:
 | Chassis H1/H2/H3 | **BLOCKED BY HARDWARE** | All component, motion-service and minimum-safe-authority gates. |
 | Supervised field test | **BLOCKED BY HARDWARE** | Controlled chassis and pre-field hardening evidence. |
 
-No physical gate is marked `PASS`. The first incomplete software iteration is A;
-after its integration, B is the next recommended milestone and does not require
-hardware actuation.
+No physical gate is marked `PASS`. The first incomplete software iteration is B;
+it is ready to start and does not require hardware actuation.
 
 ---
 
@@ -304,6 +303,21 @@ Do not implement the entire future telemetry architecture.
   an independent physical cut-off for failures software cannot survive;
 - test evidence identifies firmware/profile/hardware;
 - repository instructions clearly route new agents.
+
+## Closeout evidence — 2026-08-07
+
+- **What changed:** task routing, the L0–L7/E0–E4 testing contract, physical-test
+  runbooks, a typed endpoint/velocity-observation application boundary, reproducible
+  firmware identity, and a bounded host-side L4/E2 runner for the single-endpoint
+  bench profile.
+- **What was tested:** host and sanitizer suites, protocol and dependency contracts,
+  HIL/identity fake tests, both ESP-IDF 5.4.1 profiles, and the post-merge workflow
+  with downloadable build evidence.
+- **What was not tested:** no firmware was flashed and no controller, motor, servo or
+  chassis was actuated. These results are software/build evidence only.
+- **Current hardware gate:** every L2+ physical gate remains `BLOCKED BY HARDWARE`.
+- **Next recommended milestone:** Iteration B, starting with measured IRAM map analysis
+  rather than speculative feature removal.
 
 ## Explicitly defer
 
@@ -1293,9 +1307,7 @@ Eliminating unsafe or architecturally ambiguous behavior is the actual requireme
 
 ## Do now
 
-- integrate and verify Iteration A hardware-test guidance, HIL runner and application
-  endpoint boundary;
-- recover memory headroom before substantial embedded growth;
+- measure and recover memory headroom before substantial embedded growth;
 - PCB bring-up;
 - single-motor traction qualification;
 - steering capability + encoder qualification;
