@@ -245,3 +245,14 @@ set_tests_properties(firmware_identity_test PROPERTIES
     TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
 )
+
+add_test(
+    NAME memory_headroom_test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/../tools/test_memory_headroom.py"
+)
+set_tests_properties(memory_headroom_test PROPERTIES
+    LABELS "host;build;resources"
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+)

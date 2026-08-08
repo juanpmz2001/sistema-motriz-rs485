@@ -92,6 +92,20 @@ jobs:
           cp "$SDKCONFIG_FILE" "$OUTPUT_DIR/sdkconfig"
           idf.py "${IDF_ARGS[@]}" build 2>&1 | tee "$OUTPUT_DIR/build.txt"
           idf.py "${IDF_ARGS[@]}" size 2>&1 | tee "$OUTPUT_DIR/size.txt"
+          idf.py "${IDF_ARGS[@]}" size-components --format json2 \
+            --output-file "$OUTPUT_DIR/size-components.json"
+          idf.py "${IDF_ARGS[@]}" size-files --format json2 \
+            --output-file "$OUTPUT_DIR/size-files.json"
+          MAP_FILE="$BUILD_DIR/sistema-motriz-rs485.map"
+          MAP_EVIDENCE="$OUTPUT_DIR/sistema-motriz-rs485.map"
+          cp "$MAP_FILE" "$MAP_EVIDENCE"
+          MEMORY_GATE_STATUS=0
+          python3 "$GITHUB_WORKSPACE/tools/check_memory_headroom.py" \
+            --profile "$PROFILE" \
+            --json-output "$OUTPUT_DIR/memory-headroom.json" \
+            "$MAP_EVIDENCE" \
+            2>&1 | tee "$OUTPUT_DIR/memory-headroom.txt" \
+            || MEMORY_GATE_STATUS=$?
           stat --printf='binary_bytes=%s\n' \
             "$BUILD_DIR/sistema-motriz-rs485.bin" | tee "$OUTPUT_DIR/binary-size.txt"
 
@@ -102,9 +116,12 @@ jobs:
             cat "$OUTPUT_DIR/idf-version.txt"
             cat "$OUTPUT_DIR/binary-size.txt"
             cat "$OUTPUT_DIR/size.txt"
+            cat "$OUTPUT_DIR/memory-headroom.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$MEMORY_GATE_STATUS"
       - name: Upload build evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.profile }}-idf-5.4.1
