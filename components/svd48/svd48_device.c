@@ -349,27 +349,27 @@ static void update_pair_i16(svd48_device_t *device,
     switch (field) {
     case PAIR_STATUS:
         observation = SVD48_OBSERVATION_STATUS;
-        observation_index = 0U;
+        observation_index = SVD48_OBSERVATION_INDEX_STATUS;
         break;
     case PAIR_MOTOR_TEMP:
         observation = SVD48_OBSERVATION_MOTOR_TEMP;
-        observation_index = 1U;
+        observation_index = SVD48_OBSERVATION_INDEX_MOTOR_TEMP;
         break;
     case PAIR_MOS_TEMP:
         observation = SVD48_OBSERVATION_MOS_TEMP;
-        observation_index = 2U;
+        observation_index = SVD48_OBSERVATION_INDEX_MOS_TEMP;
         break;
     case PAIR_BUS_VOLTAGE:
         observation = SVD48_OBSERVATION_BUS_VOLTAGE;
-        observation_index = 3U;
+        observation_index = SVD48_OBSERVATION_INDEX_BUS_VOLTAGE;
         break;
     case PAIR_SPEED:
         observation = SVD48_OBSERVATION_SPEED;
-        observation_index = 4U;
+        observation_index = SVD48_OBSERVATION_INDEX_SPEED;
         break;
     case PAIR_CURRENT:
         observation = SVD48_OBSERVATION_CURRENT;
-        observation_index = 5U;
+        observation_index = SVD48_OBSERVATION_INDEX_CURRENT;
         break;
     }
     for (size_t index = 0; index < SVD48_DEVICE_CHANNEL_COUNT; ++index) {
@@ -413,7 +413,9 @@ static void update_pair_i32(svd48_device_t *device,
     uint32_t timestamp = now_ms(device);
     const uint32_t observation = error_code ? SVD48_OBSERVATION_ERROR_CODE
                                             : SVD48_OBSERVATION_POSITION;
-    const size_t observation_index = error_code ? 7U : 6U;
+    const size_t observation_index =
+        error_code ? SVD48_OBSERVATION_INDEX_ERROR_CODE
+                   : SVD48_OBSERVATION_INDEX_POSITION;
     for (size_t index = 0; index < SVD48_DEVICE_CHANNEL_COUNT; ++index) {
         uint32_t raw = ((uint32_t)values[index * 2U] << 16U) |
                        values[index * 2U + 1U];
@@ -651,28 +653,36 @@ bool svd48_channel_get_snapshot(svd48_channel_t *channel,
     return true;
 }
 
-svd48_channel_health_t svd48_channel_get_health(svd48_channel_t *channel)
+svd48_channel_health_t svd48_channel_health_from_snapshot(
+    const svd48_channel_snapshot_t *snapshot)
 {
-    svd48_channel_snapshot_t snapshot;
-    if (!svd48_channel_get_snapshot(channel, &snapshot)) {
+    if (!snapshot) {
         return SVD48_CHANNEL_HEALTH_UNKNOWN;
     }
-    if (!snapshot.online) {
+    if (!snapshot->online) {
         return SVD48_CHANNEL_HEALTH_OFFLINE;
     }
-    if ((snapshot.valid_observations & SVD48_OBSERVATION_ERROR_CODE) != 0U &&
-        (snapshot.stale_observations & SVD48_OBSERVATION_ERROR_CODE) == 0U &&
-        snapshot.error_code != 0U) {
+    if ((snapshot->valid_observations & SVD48_OBSERVATION_ERROR_CODE) != 0U &&
+        (snapshot->stale_observations & SVD48_OBSERVATION_ERROR_CODE) == 0U &&
+        snapshot->error_code != 0U) {
         return SVD48_CHANNEL_HEALTH_FAULT;
     }
-    if (snapshot.stale) {
+    if (snapshot->stale) {
         return SVD48_CHANNEL_HEALTH_STALE;
     }
-    if (snapshot.failed_observations != 0U ||
-        snapshot.last_poll_result != SVD48_DEVICE_OK) {
+    if (snapshot->failed_observations != 0U ||
+        snapshot->last_poll_result != SVD48_DEVICE_OK) {
         return SVD48_CHANNEL_HEALTH_DEGRADED;
     }
     return SVD48_CHANNEL_HEALTH_HEALTHY;
+}
+
+svd48_channel_health_t svd48_channel_get_health(svd48_channel_t *channel)
+{
+    svd48_channel_snapshot_t snapshot;
+    return svd48_channel_get_snapshot(channel, &snapshot)
+               ? svd48_channel_health_from_snapshot(&snapshot)
+               : SVD48_CHANNEL_HEALTH_UNKNOWN;
 }
 
 svd48_device_result_t svd48_device_poll(svd48_device_t *device)

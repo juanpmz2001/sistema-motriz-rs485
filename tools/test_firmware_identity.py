@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Regression tests for build-time firmware Git identity generation."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "cmake" / "generate_firmware_identity.cmake"
+
+
+def run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def read_defines(path: Path) -> dict[str, str]:
+    defines: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"#define\s+(FW_GIT_(?:SHA|DIRTY))\s+(.+)", line)
+        if match:
+            defines[match.group(1)] = match.group(2).strip().strip('"')
+    return defines
+
+
+class FirmwareIdentityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.git = shutil.which("git")
+        cls.cmake = shutil.which("cmake")
+        if cls.git is None or cls.cmake is None:
+            raise unittest.SkipTest("git and cmake are required")
+
+    def generate(
+        self,
+        repository: Path,
+        output: Path,
+        *,
+        sha_override: str = "",
+        dirty_override: str = "",
+    ) -> dict[str, str]:
+        run(
+            self.cmake,
+            f"-DBOTFARMS_SOURCE_DIR={repository}",
+            f"-DBOTFARMS_OUTPUT_FILE={output}",
+            f"-DBOTFARMS_GIT_EXECUTABLE={self.git}",
+            f"-DBOTFARMS_SHA_OVERRIDE={sha_override}",
+            f"-DBOTFARMS_DIRTY_OVERRIDE={dirty_override}",
+            "-P",
+            str(SCRIPT),
+        )
+        return read_defines(output)
+
+    def generate_process(
+        self,
+        repository: Path,
+        output: Path,
+        *,
+        git_executable: str,
+        sha_override: str = "",
+        dirty_override: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            (
+                self.cmake,
+                f"-DBOTFARMS_SOURCE_DIR={repository}",
+                f"-DBOTFARMS_OUTPUT_FILE={output}",
+                f"-DBOTFARMS_GIT_EXECUTABLE={git_executable}",
+                f"-DBOTFARMS_SHA_OVERRIDE={sha_override}",
+                f"-DBOTFARMS_DIRTY_OVERRIDE={dirty_override}",
+                "-P",
+                str(SCRIPT),
+            ),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def test_same_output_tracks_incremental_worktree_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            repository = Path(raw) / "repo"
+            repository.mkdir()
+            run(self.git, "init", "--quiet", cwd=repository)
+            run(self.git, "config", "user.email", "tests@example.invalid", cwd=repository)
+            run(self.git, "config", "user.name", "Firmware Tests", cwd=repository)
+            source = repository / "source.c"
+            source.write_text("int value = 1;\n", encoding="utf-8")
+            run(self.git, "add", "source.c", cwd=repository)
+            run(self.git, "commit", "--quiet", "-m", "fixture", cwd=repository)
+            expected_sha = run(self.git, "rev-parse", "HEAD", cwd=repository).stdout.strip()
+            output = Path(raw) / "generated" / "identity.h"
+
+            clean = self.generate(repository, output)
+            self.assertEqual(clean, {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "0"})
+
+            source.write_text("int value = 2;\n", encoding="utf-8")
+            dirty = self.generate(repository, output)
+            self.assertEqual(dirty, {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "1"})
+
+            run(self.git, "restore", "source.c", cwd=repository)
+            clean_again = self.generate(repository, output)
+            self.assertEqual(
+                clean_again,
+                {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "0"},
+            )
+
+    def test_explicit_reproducible_overrides_win(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            output = Path(raw) / "identity.h"
+            result = self.generate_process(
+                Path(raw),
+                output,
+                git_executable=str(Path(raw) / "missing-git"),
+                sha_override="a" * 40,
+                dirty_override="0",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            observed = read_defines(output)
+            self.assertEqual(
+                observed,
+                {"FW_GIT_SHA": "a" * 40, "FW_GIT_DIRTY": "0"},
+            )
+
+    def test_sha_override_without_git_requires_dirty_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            result = self.generate_process(
+                root,
+                root / "identity.h",
+                git_executable=str(root / "missing-git"),
+                sha_override="a" * 40,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Unable to verify BOTFARMS_SHA_OVERRIDE against Git HEAD",
+                result.stderr,
+            )
+
+    def test_sha_override_without_dirty_override_uses_worktree_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            repository = root / "repo"
+            repository.mkdir()
+            run(self.git, "init", "--quiet", cwd=repository)
+            run(self.git, "config", "user.email", "tests@example.invalid", cwd=repository)
+            run(self.git, "config", "user.name", "Firmware Tests", cwd=repository)
+            source = repository / "source.c"
+            source.write_text("int value = 1;\n", encoding="utf-8")
+            run(self.git, "add", "source.c", cwd=repository)
+            run(self.git, "commit", "--quiet", "-m", "fixture", cwd=repository)
+            expected_sha = run(
+                self.git,
+                "rev-parse",
+                "HEAD",
+                cwd=repository,
+            ).stdout.strip()
+            output = root / "identity.h"
+
+            clean = self.generate(
+                repository,
+                output,
+                sha_override=expected_sha,
+            )
+            self.assertEqual(
+                clean,
+                {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "0"},
+            )
+
+            source.write_text("int value = 2;\n", encoding="utf-8")
+            dirty = self.generate(
+                repository,
+                output,
+                sha_override=expected_sha,
+            )
+            self.assertEqual(
+                dirty,
+                {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "1"},
+            )
+
+    def test_sha_override_without_dirty_override_must_match_git_head(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            repository = root / "repo"
+            repository.mkdir()
+            run(self.git, "init", "--quiet", cwd=repository)
+            run(self.git, "config", "user.email", "tests@example.invalid", cwd=repository)
+            run(self.git, "config", "user.name", "Firmware Tests", cwd=repository)
+            source = repository / "source.c"
+            source.write_text("int value = 1;\n", encoding="utf-8")
+            run(self.git, "add", "source.c", cwd=repository)
+            run(self.git, "commit", "--quiet", "-m", "fixture", cwd=repository)
+
+            result = self.generate_process(
+                repository,
+                root / "identity.h",
+                git_executable=self.git,
+                sha_override="a" * 40,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "BOTFARMS_SHA_OVERRIDE does not match Git HEAD",
+                result.stderr,
+            )
+
+    def test_sha_override_with_failed_git_status_cannot_be_reported_as_clean(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            fake_git = root / "fake-git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                "case \" $* \" in\n"
+                "  *' rev-parse --verify HEAD '*) printf '%s\\n' "
+                f"{'a' * 40}; exit 0 ;;\n"
+                "  *' status --porcelain --untracked-files=normal '*) exit 2 ;;\n"
+                "esac\n"
+                "exit 2\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            result = self.generate_process(
+                root,
+                root / "identity.h",
+                git_executable=str(fake_git),
+                sha_override="a" * 40,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Unable to determine firmware worktree dirty state",
+                result.stderr,
+            )
+
+    def test_unknown_sha_cannot_be_reported_as_clean(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            result = self.generate_process(
+                root,
+                root / "identity.h",
+                git_executable=str(root / "missing-git"),
+                sha_override="UNKNOWN",
+                dirty_override="0",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "UNKNOWN firmware Git SHA cannot be reported as a clean build identity",
+                result.stderr,
+            )
+
+    def test_invalid_override_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            result = self.generate_process(
+                root,
+                root / "identity.h",
+                git_executable=self.git,
+                sha_override="not-a-sha",
+                dirty_override="0",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must be 40 hex characters", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

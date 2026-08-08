@@ -25,11 +25,22 @@ robot_capability_error_t robot_velocity_set_rpm(robot_endpoint_t *endpoint, int1
 robot_capability_error_t robot_endpoint_stop(robot_endpoint_t *endpoint)
 {
     if (!endpoint) return ROBOT_CAP_INVALID_ARGUMENT;
-    if (!endpoint->available) return ROBOT_CAP_UNAVAILABLE;
     robot_stoppable_port_t *port = endpoint->stoppable;
     if (!port || !port->ops || !port->ops->stop) return ROBOT_CAP_UNSUPPORTED;
     if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
     return port->ops->stop(port);
+}
+
+robot_capability_error_t robot_endpoint_read_velocity_observation(
+    robot_endpoint_t *endpoint,
+    robot_velocity_observation_t *observation)
+{
+    if (!endpoint || !observation) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!endpoint->available) return ROBOT_CAP_UNAVAILABLE;
+    robot_velocity_observation_port_t *port = endpoint->velocity_observation;
+    if (!port || !port->ops || !port->ops->read) return ROBOT_CAP_UNSUPPORTED;
+    if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
+    return port->ops->read(port, observation);
 }
 
 void robot_endpoint_registry_init(robot_endpoint_registry_t *registry)

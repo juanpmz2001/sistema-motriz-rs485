@@ -20,6 +20,30 @@ typedef enum {
     ROBOT_ENDPOINT_DEVELOPMENT = 0, ROBOT_ENDPOINT_OPTIONAL, ROBOT_ENDPOINT_REQUIRED,
 } robot_endpoint_criticality_t;
 
+typedef enum {
+    ROBOT_ENDPOINT_HEALTH_UNKNOWN = 0,
+    ROBOT_ENDPOINT_HEALTH_HEALTHY,
+    ROBOT_ENDPOINT_HEALTH_DEGRADED,
+    ROBOT_ENDPOINT_HEALTH_OFFLINE,
+    ROBOT_ENDPOINT_HEALTH_FAULT,
+    ROBOT_ENDPOINT_HEALTH_STALE,
+} robot_endpoint_health_t;
+
+typedef enum {
+    ROBOT_VELOCITY_OBSERVATION_SOURCE_UNKNOWN = 0,
+    ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK,
+} robot_velocity_observation_source_t;
+
+typedef struct {
+    bool valid;
+    int16_t rpm;
+    uint32_t timestamp_ms;
+    robot_velocity_observation_source_t source;
+    bool online;
+    bool stale;
+    robot_endpoint_health_t health;
+} robot_velocity_observation_t;
+
 typedef struct robot_velocity_rpm_port robot_velocity_rpm_port_t;
 typedef struct {
     robot_capability_error_t (*set_velocity_rpm)(robot_velocity_rpm_port_t *, int16_t);
@@ -52,6 +76,16 @@ typedef struct {
 } robot_position_sensor_ops_t;
 struct robot_position_sensor_port { const robot_position_sensor_ops_t *ops; void *context; };
 
+typedef struct robot_velocity_observation_port robot_velocity_observation_port_t;
+typedef struct {
+    robot_capability_error_t (*read)(robot_velocity_observation_port_t *,
+                                     robot_velocity_observation_t *);
+} robot_velocity_observation_ops_t;
+struct robot_velocity_observation_port {
+    const robot_velocity_observation_ops_t *ops;
+    void *context;
+};
+
 typedef struct {
     robot_endpoint_id_t id;
     const char *name;
@@ -61,6 +95,7 @@ typedef struct {
     robot_stoppable_port_t *stoppable;
     robot_position_port_t *position;
     robot_position_sensor_port_t *position_sensor;
+    robot_velocity_observation_port_t *velocity_observation;
 } robot_endpoint_t;
 
 typedef struct { robot_endpoint_t *items[ROBOT_ENDPOINT_REGISTRY_MAX]; size_t count; } robot_endpoint_registry_t;
@@ -72,6 +107,9 @@ typedef enum {
 uint32_t robot_endpoint_capabilities(const robot_endpoint_t *endpoint);
 robot_capability_error_t robot_velocity_set_rpm(robot_endpoint_t *endpoint, int16_t rpm);
 robot_capability_error_t robot_endpoint_stop(robot_endpoint_t *endpoint);
+robot_capability_error_t robot_endpoint_read_velocity_observation(
+    robot_endpoint_t *endpoint,
+    robot_velocity_observation_t *observation);
 void robot_endpoint_registry_init(robot_endpoint_registry_t *registry);
 robot_registry_error_t robot_endpoint_registry_add(robot_endpoint_registry_t *registry,
                                                    robot_endpoint_t *endpoint);

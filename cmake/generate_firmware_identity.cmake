@@ -1,0 +1,121 @@
+if(NOT DEFINED BOTFARMS_SOURCE_DIR OR BOTFARMS_SOURCE_DIR STREQUAL "")
+    message(FATAL_ERROR "BOTFARMS_SOURCE_DIR is required")
+endif()
+if(NOT DEFINED BOTFARMS_OUTPUT_FILE OR BOTFARMS_OUTPUT_FILE STREQUAL "")
+    message(FATAL_ERROR "BOTFARMS_OUTPUT_FILE is required")
+endif()
+
+set(BOTFARMS_SHA "UNKNOWN")
+set(BOTFARMS_DIRTY "")
+
+if(DEFINED BOTFARMS_SHA_OVERRIDE AND NOT BOTFARMS_SHA_OVERRIDE STREQUAL "")
+    string(LENGTH "${BOTFARMS_SHA_OVERRIDE}" BOTFARMS_SHA_OVERRIDE_LENGTH)
+    if(NOT BOTFARMS_SHA_OVERRIDE STREQUAL "UNKNOWN" AND
+       (NOT BOTFARMS_SHA_OVERRIDE MATCHES "^[0-9a-fA-F]+$" OR
+        NOT BOTFARMS_SHA_OVERRIDE_LENGTH EQUAL 40))
+        message(FATAL_ERROR
+                "BOTFARMS_SHA_OVERRIDE must be 40 hex characters or UNKNOWN")
+    endif()
+    set(BOTFARMS_SHA "${BOTFARMS_SHA_OVERRIDE}")
+endif()
+if(DEFINED BOTFARMS_DIRTY_OVERRIDE AND NOT BOTFARMS_DIRTY_OVERRIDE STREQUAL "")
+    if(NOT BOTFARMS_DIRTY_OVERRIDE MATCHES "^[01]$")
+        message(FATAL_ERROR "BOTFARMS_DIRTY_OVERRIDE must be 0 or 1")
+    endif()
+    set(BOTFARMS_DIRTY "${BOTFARMS_DIRTY_OVERRIDE}")
+endif()
+
+set(BOTFARMS_CAN_QUERY_GIT FALSE)
+if(DEFINED BOTFARMS_GIT_EXECUTABLE AND
+   NOT BOTFARMS_GIT_EXECUTABLE STREQUAL "" AND
+   EXISTS "${BOTFARMS_GIT_EXECUTABLE}")
+    set(BOTFARMS_CAN_QUERY_GIT TRUE)
+endif()
+
+set(BOTFARMS_HEAD_AVAILABLE FALSE)
+if(BOTFARMS_CAN_QUERY_GIT AND
+   ((NOT DEFINED BOTFARMS_SHA_OVERRIDE OR BOTFARMS_SHA_OVERRIDE STREQUAL "") OR
+    (NOT DEFINED BOTFARMS_DIRTY_OVERRIDE OR BOTFARMS_DIRTY_OVERRIDE STREQUAL "")))
+    execute_process(
+        COMMAND "${BOTFARMS_GIT_EXECUTABLE}" -C "${BOTFARMS_SOURCE_DIR}"
+                rev-parse --verify HEAD
+        RESULT_VARIABLE BOTFARMS_SHA_RESULT
+        OUTPUT_VARIABLE BOTFARMS_SHA_DETECTED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(BOTFARMS_SHA_RESULT EQUAL 0)
+        string(LENGTH "${BOTFARMS_SHA_DETECTED}" BOTFARMS_SHA_DETECTED_LENGTH)
+        if(NOT BOTFARMS_SHA_DETECTED MATCHES "^[0-9a-fA-F]+$" OR
+           NOT BOTFARMS_SHA_DETECTED_LENGTH EQUAL 40)
+            message(FATAL_ERROR
+                    "Detected Git SHA must be exactly 40 hexadecimal characters")
+        endif()
+        set(BOTFARMS_HEAD_AVAILABLE TRUE)
+        if(NOT DEFINED BOTFARMS_SHA_OVERRIDE OR
+           BOTFARMS_SHA_OVERRIDE STREQUAL "")
+            set(BOTFARMS_SHA "${BOTFARMS_SHA_DETECTED}")
+        endif()
+    endif()
+endif()
+
+# Dirty-state provenance is independent of SHA provenance. In particular, a
+# reproducible SHA override must not silently turn an unavailable or failed Git
+# status query into a clean build identity.
+if(NOT DEFINED BOTFARMS_DIRTY_OVERRIDE OR BOTFARMS_DIRTY_OVERRIDE STREQUAL "")
+    if(DEFINED BOTFARMS_SHA_OVERRIDE AND NOT BOTFARMS_SHA_OVERRIDE STREQUAL "")
+        if(NOT BOTFARMS_HEAD_AVAILABLE)
+            message(FATAL_ERROR
+                    "Unable to verify BOTFARMS_SHA_OVERRIDE against Git HEAD; provide BOTFARMS_DIRTY_OVERRIDE")
+        endif()
+        string(TOLOWER "${BOTFARMS_SHA_OVERRIDE}" BOTFARMS_SHA_OVERRIDE_NORMALIZED)
+        string(TOLOWER "${BOTFARMS_SHA_DETECTED}" BOTFARMS_SHA_DETECTED_NORMALIZED)
+        if(NOT BOTFARMS_SHA_OVERRIDE_NORMALIZED STREQUAL
+           BOTFARMS_SHA_DETECTED_NORMALIZED)
+            message(FATAL_ERROR
+                    "BOTFARMS_SHA_OVERRIDE does not match Git HEAD; provide BOTFARMS_DIRTY_OVERRIDE")
+        endif()
+    endif()
+    if(NOT BOTFARMS_CAN_QUERY_GIT)
+        message(FATAL_ERROR
+                "Unable to determine firmware worktree dirty state; provide BOTFARMS_DIRTY_OVERRIDE")
+    endif()
+    execute_process(
+        COMMAND "${BOTFARMS_GIT_EXECUTABLE}" -C "${BOTFARMS_SOURCE_DIR}"
+                status --porcelain --untracked-files=normal
+        RESULT_VARIABLE BOTFARMS_STATUS_RESULT
+        OUTPUT_VARIABLE BOTFARMS_STATUS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(NOT BOTFARMS_STATUS_RESULT EQUAL 0)
+        message(FATAL_ERROR
+                "Unable to determine firmware worktree dirty state; provide BOTFARMS_DIRTY_OVERRIDE")
+    endif()
+    if(BOTFARMS_STATUS STREQUAL "")
+        set(BOTFARMS_DIRTY 0)
+    else()
+        set(BOTFARMS_DIRTY 1)
+    endif()
+endif()
+
+if(BOTFARMS_SHA STREQUAL "UNKNOWN" AND BOTFARMS_DIRTY STREQUAL "0")
+    message(FATAL_ERROR
+            "UNKNOWN firmware Git SHA cannot be reported as a clean build identity")
+endif()
+
+get_filename_component(BOTFARMS_OUTPUT_DIR "${BOTFARMS_OUTPUT_FILE}" DIRECTORY)
+file(MAKE_DIRECTORY "${BOTFARMS_OUTPUT_DIR}")
+set(BOTFARMS_TEMP_FILE "${BOTFARMS_OUTPUT_FILE}.tmp")
+file(WRITE "${BOTFARMS_TEMP_FILE}"
+    "#ifndef BOTFARMS_FIRMWARE_IDENTITY_H\n"
+    "#define BOTFARMS_FIRMWARE_IDENTITY_H\n\n"
+    "#define FW_GIT_SHA \"${BOTFARMS_SHA}\"\n"
+    "#define FW_GIT_DIRTY ${BOTFARMS_DIRTY}\n\n"
+    "#endif // BOTFARMS_FIRMWARE_IDENTITY_H\n")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${BOTFARMS_TEMP_FILE}" "${BOTFARMS_OUTPUT_FILE}"
+    RESULT_VARIABLE BOTFARMS_COPY_RESULT)
+file(REMOVE "${BOTFARMS_TEMP_FILE}")
+if(NOT BOTFARMS_COPY_RESULT EQUAL 0)
+    message(FATAL_ERROR "Unable to update ${BOTFARMS_OUTPUT_FILE}")
+endif()

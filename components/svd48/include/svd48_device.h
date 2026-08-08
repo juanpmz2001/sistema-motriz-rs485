@@ -45,18 +45,39 @@ typedef enum {
 } svd48_channel_health_t;
 
 typedef enum {
-    SVD48_OBSERVATION_STATUS = 1U << 0,
-    SVD48_OBSERVATION_MOTOR_TEMP = 1U << 1,
-    SVD48_OBSERVATION_MOS_TEMP = 1U << 2,
-    SVD48_OBSERVATION_BUS_VOLTAGE = 1U << 3,
-    SVD48_OBSERVATION_SPEED = 1U << 4,
-    SVD48_OBSERVATION_CURRENT = 1U << 5,
-    SVD48_OBSERVATION_POSITION = 1U << 6,
-    SVD48_OBSERVATION_ERROR_CODE = 1U << 7,
-    SVD48_OBSERVATION_ALL = (1U << 8) - 1U,
+    SVD48_OBSERVATION_INDEX_STATUS = 0,
+    SVD48_OBSERVATION_INDEX_MOTOR_TEMP,
+    SVD48_OBSERVATION_INDEX_MOS_TEMP,
+    SVD48_OBSERVATION_INDEX_BUS_VOLTAGE,
+    SVD48_OBSERVATION_INDEX_SPEED,
+    SVD48_OBSERVATION_INDEX_CURRENT,
+    SVD48_OBSERVATION_INDEX_POSITION,
+    SVD48_OBSERVATION_INDEX_ERROR_CODE,
+    SVD48_OBSERVATION_INDEX_COUNT,
+} svd48_observation_index_t;
+
+typedef enum {
+    SVD48_OBSERVATION_STATUS =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_STATUS,
+    SVD48_OBSERVATION_MOTOR_TEMP =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_MOTOR_TEMP,
+    SVD48_OBSERVATION_MOS_TEMP =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_MOS_TEMP,
+    SVD48_OBSERVATION_BUS_VOLTAGE =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_BUS_VOLTAGE,
+    SVD48_OBSERVATION_SPEED =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_SPEED,
+    SVD48_OBSERVATION_CURRENT =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_CURRENT,
+    SVD48_OBSERVATION_POSITION =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_POSITION,
+    SVD48_OBSERVATION_ERROR_CODE =
+        UINT32_C(1) << SVD48_OBSERVATION_INDEX_ERROR_CODE,
+    SVD48_OBSERVATION_ALL =
+        (UINT32_C(1) << SVD48_OBSERVATION_INDEX_COUNT) - UINT32_C(1),
 } svd48_observation_mask_t;
 
-#define SVD48_OBSERVATION_COUNT 8U
+#define SVD48_OBSERVATION_COUNT ((size_t)SVD48_OBSERVATION_INDEX_COUNT)
 
 typedef struct {
     bool online;
@@ -67,7 +88,7 @@ typedef struct {
     /* A bit remains failed until that same observation succeeds. */
     uint32_t failed_observations;
     uint32_t stale_observations;
-    /* Array index is the zero-based bit position in svd48_observation_mask_t. */
+    /* Array index is a value from svd48_observation_index_t. */
     uint32_t observation_update_ms[SVD48_OBSERVATION_COUNT];
     uint32_t last_poll_ms;
     svd48_device_result_t last_poll_result;
@@ -170,6 +191,8 @@ svd48_device_result_t svd48_channel_set_current_deciamp(svd48_channel_t *channel
 
 bool svd48_channel_get_snapshot(svd48_channel_t *channel,
                                 svd48_channel_snapshot_t *snapshot);
+svd48_channel_health_t svd48_channel_health_from_snapshot(
+    const svd48_channel_snapshot_t *snapshot);
 svd48_channel_health_t svd48_channel_get_health(svd48_channel_t *channel);
 
 svd48_device_result_t svd48_device_poll(svd48_device_t *device);

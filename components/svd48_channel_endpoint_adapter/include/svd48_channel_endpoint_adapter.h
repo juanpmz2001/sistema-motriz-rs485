@@ -24,6 +24,7 @@ typedef struct {
     uint32_t configured_capabilities;
     robot_velocity_rpm_port_t velocity;
     robot_stoppable_port_t stoppable;
+    robot_velocity_observation_port_t velocity_observation;
     robot_endpoint_t endpoint;
 } svd48_channel_endpoint_adapter_t;
 

@@ -53,6 +53,52 @@ static robot_capability_error_t stop_channel(robot_stoppable_port_t *port)
                : ROBOT_CAP_INVALID_ARGUMENT;
 }
 
+static robot_endpoint_health_t map_health(svd48_channel_health_t health)
+{
+    switch (health) {
+    case SVD48_CHANNEL_HEALTH_HEALTHY:
+        return ROBOT_ENDPOINT_HEALTH_HEALTHY;
+    case SVD48_CHANNEL_HEALTH_DEGRADED:
+        return ROBOT_ENDPOINT_HEALTH_DEGRADED;
+    case SVD48_CHANNEL_HEALTH_OFFLINE:
+        return ROBOT_ENDPOINT_HEALTH_OFFLINE;
+    case SVD48_CHANNEL_HEALTH_FAULT:
+        return ROBOT_ENDPOINT_HEALTH_FAULT;
+    case SVD48_CHANNEL_HEALTH_STALE:
+        return ROBOT_ENDPOINT_HEALTH_STALE;
+    case SVD48_CHANNEL_HEALTH_UNKNOWN:
+    default:
+        return ROBOT_ENDPOINT_HEALTH_UNKNOWN;
+    }
+}
+
+static robot_capability_error_t read_observation(
+    robot_velocity_observation_port_t *port,
+    robot_velocity_observation_t *observation)
+{
+    svd48_channel_endpoint_adapter_t *adapter = port ? port->context : NULL;
+    svd48_channel_snapshot_t snapshot;
+    if (!adapter || !adapter->channel || !observation ||
+        !svd48_channel_get_snapshot(adapter->channel, &snapshot)) {
+        return ROBOT_CAP_INVALID_ARGUMENT;
+    }
+    memset(observation, 0, sizeof(*observation));
+    observation->valid =
+        (snapshot.valid_observations & SVD48_OBSERVATION_SPEED) != 0U;
+    observation->rpm = snapshot.observed_speed_rpm;
+    observation->timestamp_ms =
+        snapshot.observation_update_ms[SVD48_OBSERVATION_INDEX_SPEED];
+    observation->source = observation->valid
+                              ? ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK
+                              : ROBOT_VELOCITY_OBSERVATION_SOURCE_UNKNOWN;
+    observation->online = snapshot.online;
+    observation->stale =
+        (snapshot.stale_observations & SVD48_OBSERVATION_SPEED) != 0U;
+    observation->health = map_health(
+        svd48_channel_health_from_snapshot(&snapshot));
+    return ROBOT_CAP_OK;
+}
+
 bool svd48_channel_endpoint_adapter_init(
     svd48_channel_endpoint_adapter_t *adapter,
     svd48_channel_t *channel,
@@ -68,6 +114,9 @@ bool svd48_channel_endpoint_adapter_init(
     };
     static const robot_stoppable_ops_t stoppable_ops = {
         .stop = stop_channel,
+    };
+    static const robot_velocity_observation_ops_t observation_ops = {
+        .read = read_observation,
     };
     const uint32_t supported = ROBOT_CAPABILITY_VELOCITY_RPM |
                                ROBOT_CAPABILITY_STOPPABLE;
@@ -94,6 +143,9 @@ bool svd48_channel_endpoint_adapter_init(
     adapter->endpoint.id = endpoint_id;
     adapter->endpoint.name = name;
     adapter->endpoint.criticality = criticality;
+    adapter->velocity_observation.ops = &observation_ops;
+    adapter->velocity_observation.context = adapter;
+    adapter->endpoint.velocity_observation = &adapter->velocity_observation;
     /* Communication health never suppresses a configured stop attempt. */
     adapter->endpoint.available = true;
     return true;
@@ -119,6 +171,7 @@ bool svd48_channel_endpoint_adapter_get_diagnostics(
     diagnostics->device_id = svd48_device_id(adapter->channel->device);
     diagnostics->device_address = svd48_device_address(adapter->channel->device);
     diagnostics->channel = adapter->channel->id;
-    diagnostics->health = svd48_channel_get_health(adapter->channel);
+    diagnostics->health = svd48_channel_health_from_snapshot(
+        &diagnostics->observation);
     return true;
 }

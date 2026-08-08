@@ -28,6 +28,8 @@ typedef enum {
 
 typedef void (*serial_gateway_output_fn_t)(void *ctx, const char *chunk);
 
+/* Internal composition configuration; use designated initializers. This struct
+ * is rebuilt with the firmware and does not promise a stable binary ABI. */
 typedef struct {
     robot_control_handle_t robot;
     actuation_application_port_t *actuation;
@@ -41,10 +43,13 @@ typedef struct {
     const char *fw_target;
     const char *fw_version;
     uint32_t fw_build_number;
+    const char *fw_git_sha;
+    bool fw_git_dirty;
     uint32_t default_stream_period_ms;
     bool print_prompt;
     bool diagnostic_only;
     const char *profile_name;
+    const char *board_name;
     bool profile_schema_valid;
     bool composition_supported;
     bool composition_runtime_ready;
