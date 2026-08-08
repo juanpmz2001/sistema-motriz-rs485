@@ -2,7 +2,6 @@
 
 #include <pthread.h>
 #include <string.h>
-#include <threads.h>
 
 #include "actuation_coordinator.h"
 #include "robot_control_endpoint_adapter.h"
@@ -10,11 +9,16 @@
 
 typedef struct {
     pthread_mutex_t lock;
+    pthread_mutex_t gate_lock;
+    pthread_cond_t gate_changed;
     int event_count;
     int events[32];
     int fail_speed;
     int fail_stop;
     bool delay_stop;
+    bool stop_entered;
+    bool release_stop;
+    size_t lock_acquire_attempts;
 } fixture_t;
 
 typedef struct { fixture_t *fixture; uint8_t motor; } fake_context_t;
@@ -31,18 +35,57 @@ static int fake_stop(void *context, uint8_t motor)
 {
     fake_context_t *fake = context;
     fake->fixture->events[fake->fixture->event_count++] = 200 + motor;
-    if (fake->fixture->delay_stop) thrd_sleep(&(struct timespec){.tv_nsec = 20000000}, NULL);
+    if (fake->fixture->delay_stop) {
+        pthread_mutex_lock(&fake->fixture->gate_lock);
+        fake->fixture->stop_entered = true;
+        pthread_cond_broadcast(&fake->fixture->gate_changed);
+        while (!fake->fixture->release_stop) {
+            pthread_cond_wait(&fake->fixture->gate_changed,
+                              &fake->fixture->gate_lock);
+        }
+        pthread_mutex_unlock(&fake->fixture->gate_lock);
+    }
     return fake->fixture->fail_stop;
 }
 
 static bool lock_acquire(void *context)
 {
-    return pthread_mutex_lock(context) == 0;
+    fixture_t *fixture = context;
+    if (!fixture) {
+        return false;
+    }
+    pthread_mutex_lock(&fixture->gate_lock);
+    fixture->lock_acquire_attempts++;
+    pthread_cond_broadcast(&fixture->gate_changed);
+    pthread_mutex_unlock(&fixture->gate_lock);
+    return pthread_mutex_lock(&fixture->lock) == 0;
 }
 
 static void lock_release(void *context)
 {
-    pthread_mutex_unlock(context);
+    fixture_t *fixture = context;
+    if (fixture) {
+        pthread_mutex_unlock(&fixture->lock);
+    }
+}
+
+static void wait_for_stop_and_lock_attempts(fixture_t *fixture,
+                                            size_t lock_attempts)
+{
+    pthread_mutex_lock(&fixture->gate_lock);
+    while (!fixture->stop_entered ||
+           fixture->lock_acquire_attempts < lock_attempts) {
+        pthread_cond_wait(&fixture->gate_changed, &fixture->gate_lock);
+    }
+    pthread_mutex_unlock(&fixture->gate_lock);
+}
+
+static void release_delayed_stop(fixture_t *fixture)
+{
+    pthread_mutex_lock(&fixture->gate_lock);
+    fixture->release_stop = true;
+    pthread_cond_broadcast(&fixture->gate_changed);
+    pthread_mutex_unlock(&fixture->gate_lock);
 }
 
 static bool add_adapter(robot_endpoint_registry_t *registry,
@@ -154,14 +197,19 @@ static void *run_operation(void *argument)
 
 static bool coordinator_serialization(void)
 {
-    fixture_t fixture = {.lock = PTHREAD_MUTEX_INITIALIZER, .delay_stop = true};
+    fixture_t fixture = {
+        .lock = PTHREAD_MUTEX_INITIALIZER,
+        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
+        .gate_changed = PTHREAD_COND_INITIALIZER,
+        .delay_stop = true,
+    };
     fake_context_t contexts[2] = {{.fixture = &fixture}, {.fixture = &fixture}};
     robot_control_endpoint_adapter_t adapters[2];
     robot_endpoint_registry_t registry;
     robot_endpoint_registry_init(&registry);
     HOST_TEST_CHECK(add_adapter(&registry, &adapters[0], &contexts[0], 1, 0));
     HOST_TEST_CHECK(add_adapter(&registry, &adapters[1], &contexts[1], 2, 1));
-    actuation_lock_port_t lock = {lock_acquire, lock_release, &fixture.lock};
+    actuation_lock_port_t lock = {lock_acquire, lock_release, &fixture};
     actuation_coordinator_t coordinator;
     HOST_TEST_CHECK(actuation_coordinator_init(&coordinator, &registry, &lock));
 
@@ -169,11 +217,13 @@ static bool coordinator_serialization(void)
     pthread_t set_thread;
     thread_argument_t stop = {&coordinator, true};
     thread_argument_t set = {&coordinator, false};
-    pthread_create(&stop_thread, NULL, run_operation, &stop);
-    thrd_sleep(&(struct timespec){.tv_nsec = 5000000}, NULL);
-    pthread_create(&set_thread, NULL, run_operation, &set);
-    pthread_join(stop_thread, NULL);
-    pthread_join(set_thread, NULL);
+    HOST_TEST_CHECK(pthread_create(&stop_thread, NULL, run_operation, &stop) == 0);
+    wait_for_stop_and_lock_attempts(&fixture, 1U);
+    HOST_TEST_CHECK(pthread_create(&set_thread, NULL, run_operation, &set) == 0);
+    wait_for_stop_and_lock_attempts(&fixture, 2U);
+    release_delayed_stop(&fixture);
+    HOST_TEST_CHECK(pthread_join(stop_thread, NULL) == 0);
+    HOST_TEST_CHECK(pthread_join(set_thread, NULL) == 0);
     HOST_TEST_CHECK(fixture.event_count == 3);
     HOST_TEST_CHECK(fixture.events[0] == 200);
     HOST_TEST_CHECK(fixture.events[1] == 201);
@@ -186,20 +236,30 @@ static bool coordinator_serialization(void)
     fixture.fail_speed = 0;
     HOST_TEST_CHECK(actuation_coordinator_set_velocity_rpm(&coordinator, 1, 5, &report) ==
                     ACTUATION_RESULT_SUCCESS);
+    pthread_cond_destroy(&fixture.gate_changed);
+    pthread_mutex_destroy(&fixture.gate_lock);
+    pthread_mutex_destroy(&fixture.lock);
     return true;
 }
 
 static bool zero_stoppable_is_failure(void)
 {
-    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    fixture_t fixture = {
+        .lock = PTHREAD_MUTEX_INITIALIZER,
+        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
+        .gate_changed = PTHREAD_COND_INITIALIZER,
+    };
     robot_endpoint_registry_t registry;
     robot_endpoint_registry_init(&registry);
-    actuation_lock_port_t lock = {lock_acquire, lock_release, &mutex};
+    actuation_lock_port_t lock = {lock_acquire, lock_release, &fixture};
     actuation_coordinator_t coordinator;
     HOST_TEST_CHECK(actuation_coordinator_init(&coordinator, &registry, &lock));
     actuation_report_t report;
     HOST_TEST_CHECK(actuation_coordinator_stop_all(&coordinator, &report) ==
                     ACTUATION_RESULT_FAILURE);
+    pthread_cond_destroy(&fixture.gate_changed);
+    pthread_mutex_destroy(&fixture.gate_lock);
+    pthread_mutex_destroy(&fixture.lock);
     return true;
 }
 

@@ -1,0 +1,113 @@
+name: Firmware CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - "refactor/**"
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake python3
+      - name: Run host suite
+        run: bash tools/run_host_tests.sh
+      - name: Run protocol reference explicitly
+        run: python3 tools/test_svd48_protocol.py
+      - name: Run dependency contracts explicitly
+        run: python3 tools/test_dependency_contracts.py
+      - name: Run application compatibility characterization
+        run: python3 tools/test_application_compatibility.py
+
+  host-sanitizers:
+    name: Host tests (ASan and UBSan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake python3
+      - name: Run sanitized host suite
+        env:
+          BOTFARMS_HOST_TEST_SANITIZERS: "ON"
+        run: bash tools/run_host_tests.sh
+
+  firmware-build:
+    name: ESP-IDF 5.4.1 (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: espressif/idf:v5.4.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: current_robot
+            defaults: ci/sdkconfig.current_robot.defaults
+            expected: CONFIG_BOTFARMS_PROFILE_CURRENT_ROBOT=y
+          - profile: bench_single_svd48_motor
+            defaults: ci/sdkconfig.bench_single_svd48_motor.defaults
+            expected: CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR=y
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build clean profile
+        shell: bash
+        env:
+          PROFILE: ${{ matrix.profile }}
+          PROFILE_DEFAULTS: ${{ matrix.defaults }}
+          EXPECTED_SELECTION: ${{ matrix.expected }}
+        run: |
+          set -euo pipefail
+          . "$IDF_PATH/export.sh"
+          BUILD_DIR="$RUNNER_TEMP/build-$PROFILE"
+          OUTPUT_DIR="$RUNNER_TEMP/evidence-$PROFILE"
+          SDKCONFIG_FILE="$RUNNER_TEMP/sdkconfig-$PROFILE"
+          rm -rf "$BUILD_DIR" "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
+          rm -f "$SDKCONFIG_FILE" "$SDKCONFIG_FILE.old"
+          IDF_ARGS=(
+            -D "SDKCONFIG=$SDKCONFIG_FILE"
+            -D "SDKCONFIG_DEFAULTS=$GITHUB_WORKSPACE/sdkconfig.defaults;$GITHUB_WORKSPACE/$PROFILE_DEFAULTS"
+            -B "$BUILD_DIR"
+          )
+
+          idf.py --version | tee "$OUTPUT_DIR/idf-version.txt"
+          idf.py "${IDF_ARGS[@]}" set-target esp32s3
+          grep -Fxq "$EXPECTED_SELECTION" "$SDKCONFIG_FILE"
+          cp "$SDKCONFIG_FILE" "$OUTPUT_DIR/sdkconfig"
+          idf.py "${IDF_ARGS[@]}" build 2>&1 | tee "$OUTPUT_DIR/build.txt"
+          idf.py "${IDF_ARGS[@]}" size 2>&1 | tee "$OUTPUT_DIR/size.txt"
+          stat --printf='binary_bytes=%s\n' \
+            "$BUILD_DIR/sistema-motriz-rs485.bin" | tee "$OUTPUT_DIR/binary-size.txt"
+
+          {
+            echo "### $PROFILE"
+            echo
+            echo '```text'
+            cat "$OUTPUT_DIR/idf-version.txt"
+            cat "$OUTPUT_DIR/binary-size.txt"
+            cat "$OUTPUT_DIR/size.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.profile }}-idf-5.4.1
+          path: ${{ runner.temp }}/evidence-${{ matrix.profile }}
+          if-no-files-found: error
+          retention-days: 14

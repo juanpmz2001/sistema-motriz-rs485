@@ -2,8 +2,8 @@
 
 ESP-IDF firmware for an ESP32-S3 connected to Fulling SVD48 motor drives over
 RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
-an active build-time robot profile, typed actuator ports and host-tested layered
-architecture foundations.
+an active build-time robot profile with profile-driven buses, devices, channels
+and typed actuator endpoints.
 
 > **Status: bench firmware, not a production motion controller.** Build 19 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
@@ -12,19 +12,30 @@ architecture foundations.
 ## Current behavior
 
 - Target: `esp32s3`, ESP-IDF 5.4.1, 16 MB flash with dual OTA slots.
-- RS485: UART2, TX GPIO17, RX GPIO16, 115200 baud, drives 1 and 2.
+- RS485: UART2, TX GPIO17, RX GPIO16, 115200 baud; `current_robot`
+  configures addresses 1 and 2, while the bench profile configures address 1 only.
 - RC input: PPM on GPIO14; the signal must be limited to 3.3 V.
-- Four logical traction motors are mapped through two dual-channel SVD48 drives.
+- The `current_robot` profile maps four logical traction motors through two
+  dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
+  only logical index `0` to M1 of one controller and has no motion geometry.
 - Steering servo support exists but is disabled in the active configuration.
-- Wi-Fi reconnect, manifest checks, OTA announcements and maintenance LAN run as
-  low-priority services. The main loop itself only sleeps.
+- On a supported normal startup, Wi-Fi reconnect, manifest checks, OTA announcements
+  and maintenance LAN run as low-priority services. The main loop itself only sleeps.
 - Board, bus, device and endpoint configuration is selected from an immutable C
-  profile in `components/robot_profile`; runtime JSON loading is not implemented.
+  profile in `components/robot_profile`; runtime JSON/YAML loading is not implemented.
+- One shared `rs485_transport` owns and serializes the physical UART bus. Each
+  configured controller is one `svd48_device` with explicit M1 and M2 channels;
+  a shared polling service schedules all configured devices.
 - `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
-  port backed by the serialized `actuation_coordinator`.
+  port backed by the serialized `actuation_coordinator` and the direct SVD48
+  channel endpoint adapter.
+- A schema-valid profile that cannot be composed enters a restricted serial
+  diagnostic mode without constructing or enabling actuator outputs, except that a
+  pending-verification OTA image follows rollback handling instead.
 
-The intended architecture and the difference between active and dormant modules
-are documented in [Architecture](docs/ARCHITECTURE.md).
+Start with the [documentation index](docs/README.md). The implemented runtime and
+the difference between active, transitional and dormant modules are documented in
+[Architecture](docs/ARCHITECTURE.md).
 
 ## Repository map
 
@@ -34,18 +45,19 @@ are documented in [Architecture](docs/ARCHITECTURE.md).
 | `components/` | ESP-IDF drivers, services and pure domain modules |
 | `tests/host/` | Native host tests for hardware-independent logic |
 | `tools/` | Serial, LAN and OTA command-line tools |
-| `docs/` | Current technical contracts only |
+| `docs/` | Indexed current contracts, target design, migration records and history |
 | `partitions_ota_16mb.csv` | 16 MB OTA partition layout |
 | `sdkconfig.defaults` | Versioned project defaults |
 
 ## Read first
 
-1. [Architecture](docs/ARCHITECTURE.md)
-2. [Safety](docs/SAFETY.md)
-3. [Command API](docs/API.md)
-4. [SVD48 integration](docs/SVD48.md) when changing RS485 behavior
-5. [OTA](docs/OTA.md) when building or deploying releases
-6. [Roadmap](docs/ROADMAP.md) before adding architectural features
+1. [Documentation index](docs/README.md)
+2. [Architecture](docs/ARCHITECTURE.md)
+3. [Safety](docs/SAFETY.md)
+4. [Command API](docs/API.md)
+5. [SVD48 integration](docs/SVD48.md) when changing RS485 behavior
+6. [OTA](docs/OTA.md) when building or deploying releases
+7. [Roadmap](docs/ROADMAP.md) before adding architectural features
 
 Agent-specific rules are in [AGENTS.md](AGENTS.md).
 
@@ -66,7 +78,13 @@ Run the hardware-independent tests before building firmware:
 tools/run_host_tests.sh
 BOTFARMS_HOST_TEST_SANITIZERS=ON tools/run_host_tests.sh
 python3 tools/test_svd48_protocol.py
+python3 tools/test_dependency_contracts.py
+python3 tools/test_application_compatibility.py
 ```
+
+GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
+ESP-IDF 5.4.1 builds for both versioned profile fragments under `ci/`. The workflow
+never flashes or contacts robot hardware.
 
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.
@@ -85,6 +103,8 @@ In another terminal, use the serial CLI for diagnostics:
 ```bash
 python3 tools/robotctl.py --port /dev/ttyACM0 raw VERSION
 python3 tools/robotctl.py --port /dev/ttyACM0 raw PLATFORM_STATUS
+python3 tools/robotctl.py --port /dev/ttyACM0 raw PROFILE_STATUS
+python3 tools/robotctl.py --port /dev/ttyACM0 raw COMPOSITION_STATUS
 python3 tools/robotctl.py --port /dev/ttyACM0 raw SAFETY_STATUS
 ```
 
@@ -121,17 +141,25 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
 ## Known blockers
 
 - A failed boot-time `STOP ALL` logs a warning and startup continues.
-- Offline or stale motor telemetry is not yet promoted to a safety fault.
+- Per-observation freshness and partial polling are represented by the SVD48
+  driver, but offline, stale or degraded required endpoints are not yet promoted
+  into the active safety policy.
 - Maintenance LAN has no command lease, authority arbitration or deadman.
 - The coordinator uses a mutex, not a priority-aware owner task; safety stop can
   wait up to 500 ms behind an in-progress driver operation.
-- `ENABLE`, `MOVE_VEL`, fault clearing, OTA preparation and maintenance register
-  writes still bypass the coordinator.
-- The selectable single-motor profile is validation-only: the fixed legacy SVD48
-  runtime rejects it during startup and exposes no diagnostic service afterward.
-- Reported SVD48 speed still labels a raw 0.1 RPM register value as RPM.
+- `ENABLE`, `MOVE_VEL`, fault clearing, OTA preparation, motor identification and
+  maintenance register/configuration writes still bypass the coordinator.
+- The executable factory registry supports SVD48 only; other schema driver
+  descriptors are validation fixtures, not runtime factories.
+- The compatibility `svd48_handle_t` view is limited to four channel bindings.
+- SVD48 given and observed speed registers are treated as signed raw RPM without
+  artificial scaling. That unconfirmed value already feeds the legacy 5-RPM
+  OTA/maintenance readiness gate and `PLATFORM_STATUS`; it is not qualified safety
+  evidence. A controlled future physical test must confirm the interpretation.
 - Servo output has no position feedback and cannot prove physical position.
-- Clean ESP-IDF 5.4.1 build leaves only 1 byte of reported IRAM headroom.
+- Clean ESP-IDF 5.4.1 builds of both Iteration 4 profiles still leave only 1 byte of
+  reported IRAM headroom; the measurements are recorded in the
+  [closeout](docs/ITERATION_4_CLOSEOUT.md) and block unreviewed IRAM growth.
 - `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are
   compiled foundations but are not wired into the active runtime.
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images

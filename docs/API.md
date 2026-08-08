@@ -19,7 +19,7 @@ its `raw` subcommand.
 
 | Group | Commands |
 | --- | --- |
-| Identity/health | `PING`, `VERSION`, `PLATFORM_STATUS`, `SAFETY_STATUS`, `HELP` |
+| Identity/health | `PING`, `VERSION`, `PLATFORM_STATUS`, `PROFILE_STATUS`, `COMPOSITION_STATUS`, `SAFETY_STATUS`, `HELP` |
 | Stored config | `CONFIG_STATUS`, `CONFIG_CLEAR` |
 | Wi-Fi | `WIFI_SET`, `WIFI_CLEAR`, `WIFI_STATUS`, `WIFI_CONNECT`, `WIFI_DISCONNECT` |
 | Maintenance auth | `MAINT_LAN_STATUS`, `MAINT_TOKEN_SET`, `MAINT_TOKEN_CLEAR` |
@@ -46,6 +46,8 @@ Automatic OTA installation cannot be enabled: `OTA_AUTO_UPDATE` only accepts
 ```text
 VERSION
 PLATFORM_STATUS
+PROFILE_STATUS
+COMPOSITION_STATUS
 SAFETY_STATUS
 WIFI_STATUS
 OTA_CONFIG
@@ -55,11 +57,68 @@ GET_MOTOR 0
 READ_REG 1 0x5018 1
 ```
 
-Logical motor numbers are `0..3`; current mapping is documented in [SVD48](SVD48.md).
+Logical motor numbers depend on the selected build profile. `current_robot` exposes
+`0..3`; `bench_single_svd48_motor` exposes only `0`, and rejects `1`. The mapping is
+documented in [SVD48](SVD48.md).
 Telemetry suffixes include `DA` for 0.1 A, `DV` for 0.1 V and `DC` for 0.1 C.
-The `RPM` field currently contains the raw SVD48 speed register even though that
-register has a 0.1 RPM scale. Consumers must not rely on the label until the
-conversion defect is fixed.
+The `RPM` field contains the signed raw value of SVD48 motor-speed register
+`0x5410/0x5411`, interpreted as RPM according to the manufacturer register table;
+the firmware applies no artificial factor-of-ten scaling. This unconfirmed value
+already feeds the legacy 5-RPM `RUNNING`/`MOTION_ACTIVE` indication and
+`robot_control_is_safe_for_ota()` gate used by OTA and several maintenance commands.
+Those checks are not qualified safety assurance. A future controlled physical test
+must confirm the interpretation before that dependency is accepted or expanded.
+
+`MOVE_VEL` requires application geometry and four traction endpoints. It is supported
+by `current_robot` only; the single-motor profile returns the existing unsupported/
+failure response rather than inventing missing wheels.
+
+Profile and composition status use stable one-line shapes in both normal and
+diagnostic-only startup:
+
+```text
+DATA PROFILE NAME:<name> SCHEMA_VALID:<0|1> COMPOSITION_SUPPORTED:<0|1>
+DATA COMPOSITION MODE:<ACTIVE|DIAGNOSTIC_ONLY> RUNTIME_READY:<0|1> CODE:<code> STAGE:<stage> DRIVER:<n> BUS:<n> DEVICE:<n> ENDPOINT:<n> ERROR:0x<hex> REQUIRED_STORAGE:<n> AVAILABLE_STORAGE:<n> OUTPUTS_INITIALIZED:<0|1>
+```
+
+In the current API, `CODE`/`STAGE` report `OK`/`NONE` after successful normal startup,
+or identify a preflight failure in restricted diagnostic startup; the numeric
+identities are zero when no specific object applies. Construction or service-start
+failure does not leave a gateway running and is available only in boot logs. The
+capacity fields report bytes for executable runtime storage, or item counts for
+endpoint/legacy-binding capacity checks, according to `CODE`/`STAGE`; they make
+static-capacity failures diagnosable without exposing mutable configuration.
+
+## Restricted diagnostic startup
+
+If profile schema validation succeeds but executable composition is unsupported, the
+firmware does not construct buses, devices, endpoints or actuator outputs. It starts
+the serial gateway in `diagnostic_only` mode with this allowlist:
+
+- `PING`, `VERSION`, `HELP` and `PLATFORM_STATUS`;
+- `CONFIG_STATUS`, `WIFI_STATUS`, `PROFILE_STATUS` and `COMPOSITION_STATUS`; and
+- exactly `STOP ALL` as a fail-safe-compatible request.
+
+Because no output endpoint exists, `STOP ALL` reports
+`ERR STOP_UNAVAILABLE OUTPUTS_NOT_INITIALIZED`; it does not claim that a physical stop
+was written. Every other command, including motion, enable, fault clear, register
+access/writes, OTA actions, receiver diagnostics and streaming, returns
+`ERR DIAGNOSTIC_MODE_COMMAND_BLOCKED <command>`.
+
+The diagnostic gateway exposes the immutable preflight failure code/stage and relevant
+driver, bus, device or endpoint identity through `PROFILE_STATUS` and
+`COMPOSITION_STATUS`. Maintenance LAN, OTA announce, safety, RC acquisition and
+background streaming do not start in this mode.
+
+An OTA image still pending verification does not enter this fallback after a
+composition failure; normal startup-failure rollback handling takes precedence so an
+unsupported image is not marked valid merely because diagnostics started.
+
+In this mode `PLATFORM_STATUS` has the exact shape:
+
+```text
+DATA PLATFORM STATE:DIAGNOSTIC_ONLY AUTHORITY:SERIAL_ASCII PROTOCOL:ASCII_V1 OUTPUTS_INITIALIZED:0 MOTION_ACTIVE:0 SAFE_FOR_OTA:0 SAFE_REASON:COMPOSITION_UNAVAILABLE TRACE:0 STREAM:0
+```
 
 ## Maintenance LAN
 

@@ -77,6 +77,103 @@ botfarms_add_host_test(
         ../components/ppm_decoder/include
 )
 
+botfarms_add_host_test(
+    NAME bus_transport_test
+    SOURCES
+        host/bus_transport_test.c
+        fakes/fake_bus_transport.c
+        ../components/bus_transport/bus_transport.c
+    INCLUDE_DIRS
+        ../components/bus_transport/include
+    LINK_LIBRARIES pthread
+)
+
+botfarms_add_host_test(
+    NAME svd48_device_test
+    SOURCES
+        host/svd48_device_test.c
+        fakes/fake_bus_transport.c
+        ../components/bus_transport/bus_transport.c
+        ../components/svd48/svd48_device.c
+        ../components/svd48/svd48_protocol.c
+    INCLUDE_DIRS
+        ../components/bus_transport/include
+        ../components/svd48/include
+    LINK_LIBRARIES pthread
+)
+
+botfarms_add_host_test(
+    NAME svd48_poll_service_test
+    SOURCES
+        host/svd48_poll_service_test.c
+        fakes/fake_bus_transport.c
+        ../components/bus_transport/bus_transport.c
+        ../components/svd48/svd48_device.c
+        ../components/svd48/svd48_poll_service.c
+        ../components/svd48/svd48_protocol.c
+    INCLUDE_DIRS
+        ../components/bus_transport/include
+        ../components/svd48/include
+    LINK_LIBRARIES pthread
+)
+
+botfarms_add_host_test(
+    NAME svd48_channel_endpoint_adapter_test
+    SOURCES
+        host/svd48_channel_endpoint_adapter_test.c
+        fakes/fake_bus_transport.c
+        ../components/bus_transport/bus_transport.c
+        ../components/robot_capabilities/robot_capabilities.c
+        ../components/svd48/svd48_device.c
+        ../components/svd48/svd48_protocol.c
+        ../components/svd48_channel_endpoint_adapter/svd48_channel_endpoint_adapter.c
+    INCLUDE_DIRS
+        ../components/bus_transport/include
+        ../components/robot_capabilities/include
+        ../components/svd48/include
+        ../components/svd48_channel_endpoint_adapter/include
+    LINK_LIBRARIES pthread
+)
+
+botfarms_add_host_test(
+    NAME robot_driver_factory_test
+    SOURCES
+        host/robot_driver_factory_test.c
+        ../components/robot_driver_factory/robot_driver_factory.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_driver_factory/include
+        ../components/robot_profile/include
+    LINK_LIBRARIES m
+)
+
+botfarms_add_host_test(
+    NAME robot_profile_current_test
+    SOURCES
+        host/robot_profile_shape_test.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_profile/include
+    COMPILE_DEFINITIONS CONFIG_BOTFARMS_PROFILE_CURRENT_ROBOT=1
+    LINK_LIBRARIES m
+)
+
+botfarms_add_host_test(
+    NAME robot_profile_bench_test
+    SOURCES
+        host/robot_profile_shape_test.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_profile/include
+    COMPILE_DEFINITIONS
+        CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR=1
+        BOTFARMS_EXPECT_BENCH_PROFILE=1
+    LINK_LIBRARIES m
+)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
     NAME svd48_protocol_reference_test
@@ -109,3 +206,18 @@ add_test(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tools/test_dependency_contracts.py"
 )
 set_tests_properties(dependency_contracts_test PROPERTIES LABELS "host;architecture")
+set_tests_properties(dependency_contracts_test PROPERTIES
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+)
+
+add_test(
+    NAME application_compatibility_test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/../tools/test_application_compatibility.py"
+)
+set_tests_properties(application_compatibility_test PROPERTIES
+    LABELS "host;compatibility"
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+)

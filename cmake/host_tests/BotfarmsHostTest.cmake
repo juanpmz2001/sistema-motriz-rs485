@@ -23,6 +23,7 @@ function(botfarms_configure_host_c_target target)
             target_compile_options(${target} PRIVATE
                 -fno-omit-frame-pointer
                 -fsanitize=address,undefined
+                -fno-sanitize-recover=undefined
             )
             target_link_options(${target} PRIVATE -fsanitize=address,undefined)
         endif()

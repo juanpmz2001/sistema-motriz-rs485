@@ -29,7 +29,7 @@ static const robot_driver_descriptor_t DRIVERS[] = {
 static const robot_driver_registry_t BUILTIN_REGISTRY = {
     .items = DRIVERS, .count = sizeof(DRIVERS) / sizeof(DRIVERS[0])};
 
-static const robot_profile_t CURRENT = {
+static const robot_profile_t CURRENT __attribute__((unused)) = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "current_robot",
     .board = &BOARD,

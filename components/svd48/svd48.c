@@ -18,12 +18,14 @@ static const char *TAG = "svd48";
 #define SVD48_UART_TX_BUFFER_SIZE 512
 #define SVD48_DEFAULT_TIMEOUT_MS 100
 #define SVD48_DEFAULT_RETRIES 2
+#define SVD48_MAX_RETRIES 5
 #define SVD48_DEFAULT_TELEMETRY_PERIOD_MS 30
 #define SVD48_DEFAULT_STALE_TIMEOUT_MS 1000
 #define SVD48_BUS_LOCK_TIMEOUT_MS 1000
 #define SVD48_POLL_SLOW_DIVIDER 20
 #define SVD48_POLL_BACKOFF_BASE_MS 250
 #define SVD48_POLL_BACKOFF_MAX_MS 1500
+#define SVD48_LEGACY_DEVICE_MAX 4U
 
 #define REG_M1_STATUS 0x5400
 #define REG_M1_MOTOR_TEMP 0x5404
@@ -58,6 +60,11 @@ static const char *TAG = "svd48";
 
 struct svd48_t {
     svd48_config_t config;
+    bool attached_devices;
+    size_t attached_device_count;
+    svd48_device_t *attached_device_items[SVD48_LEGACY_DEVICE_MAX];
+    size_t attached_binding_count;
+    svd48_legacy_channel_binding_t attached_bindings[SVD48_MOTOR_COUNT];
     SemaphoreHandle_t bus_lock;
     SemaphoreHandle_t state_lock;
     SemaphoreHandle_t trace_lock;
@@ -88,10 +95,89 @@ static uint32_t now_ms(void)
 
 static esp_err_t validate_motor(svd48_handle_t handle, uint8_t logical_motor)
 {
-    if (!handle || logical_motor >= SVD48_MOTOR_COUNT) {
+    size_t motor_count = handle && handle->attached_devices
+                             ? handle->attached_binding_count
+                             : SVD48_MOTOR_COUNT;
+    if (!handle || logical_motor >= motor_count) {
         return ESP_ERR_INVALID_ARG;
     }
     return ESP_OK;
+}
+
+static esp_err_t device_result_to_esp(svd48_device_result_t result)
+{
+    switch (result) {
+    case SVD48_DEVICE_OK:
+        return ESP_OK;
+    case SVD48_DEVICE_INVALID_ARGUMENT:
+        return ESP_ERR_INVALID_ARG;
+    case SVD48_DEVICE_TIMEOUT:
+    case SVD48_DEVICE_BUS_BUSY:
+        return ESP_ERR_TIMEOUT;
+    case SVD48_DEVICE_CRC_ERROR:
+        return ESP_ERR_INVALID_CRC;
+    case SVD48_DEVICE_EXCEPTION:
+    case SVD48_DEVICE_BAD_RESPONSE:
+    case SVD48_DEVICE_INCOMPLETE_FRAME:
+    case SVD48_DEVICE_PARTIAL:
+        return ESP_ERR_INVALID_RESPONSE;
+    case SVD48_DEVICE_UNSUPPORTED:
+        return ESP_ERR_NOT_ALLOWED;
+    case SVD48_DEVICE_CANCELLED:
+        return ESP_ERR_INVALID_STATE;
+    case SVD48_DEVICE_IO_ERROR:
+    default:
+        return ESP_FAIL;
+    }
+}
+
+static svd48_status_t device_result_to_status(svd48_device_result_t result)
+{
+    switch (result) {
+    case SVD48_DEVICE_OK:
+        return SVD48_OK;
+    case SVD48_DEVICE_INVALID_ARGUMENT:
+        return SVD48_ERR_INVALID_ARG;
+    case SVD48_DEVICE_TIMEOUT:
+    case SVD48_DEVICE_BUS_BUSY:
+        return SVD48_ERR_TIMEOUT;
+    case SVD48_DEVICE_CRC_ERROR:
+        return SVD48_ERR_CRC;
+    case SVD48_DEVICE_EXCEPTION:
+        return SVD48_ERR_EXCEPTION;
+    case SVD48_DEVICE_BAD_RESPONSE:
+    case SVD48_DEVICE_INCOMPLETE_FRAME:
+    case SVD48_DEVICE_PARTIAL:
+        return SVD48_ERR_BAD_RESPONSE;
+    default:
+        return SVD48_ERR_UART;
+    }
+}
+
+static svd48_device_t *attached_device_by_address(svd48_handle_t handle,
+                                                  uint8_t address)
+{
+    if (!handle || !handle->attached_devices) {
+        return NULL;
+    }
+    for (size_t index = 0; index < handle->attached_device_count; ++index) {
+        if (svd48_device_address(handle->attached_device_items[index]) == address) {
+            return handle->attached_device_items[index];
+        }
+    }
+    return NULL;
+}
+
+static svd48_channel_t *attached_channel(svd48_handle_t handle,
+                                         uint8_t logical_motor)
+{
+    if (validate_motor(handle, logical_motor) != ESP_OK ||
+        !handle->attached_devices) {
+        return NULL;
+    }
+    const svd48_legacy_channel_binding_t *binding =
+        &handle->attached_bindings[logical_motor];
+    return svd48_device_channel(binding->device, binding->channel);
 }
 
 static uint16_t channel_register(uint8_t channel, uint16_t m1_reg, uint16_t m2_reg)
@@ -545,14 +631,26 @@ static esp_err_t transact(svd48_handle_t handle,
     }
 
     esp_err_t last_err = ESP_FAIL;
-    for (uint8_t attempt = 0; attempt <= retries; attempt++) {
+    for (uint16_t attempt = 0; attempt <= retries; attempt++) {
         if (response_len) {
             *response_len = 0;
         }
-        trace_request(handle, trace_seq, attempt + 1, request, request_len);
+        trace_request(handle,
+                      trace_seq,
+                      (uint8_t)(attempt + 1U),
+                      request,
+                      request_len);
         last_err = send_request_and_read_response(handle, request, request_len, response, response_max, response_len);
         bool crc_ok = last_err == ESP_OK && svd48_frame_has_valid_crc(response, *response_len);
-        trace_response(handle, trace_seq, attempt + 1, request, request_len, response, response_len ? *response_len : 0, last_err, crc_ok);
+        trace_response(handle,
+                       trace_seq,
+                       (uint8_t)(attempt + 1U),
+                       request,
+                       request_len,
+                       response,
+                       response_len ? *response_len : 0,
+                       last_err,
+                       crc_ok);
         if (last_err == ESP_OK && crc_ok) {
             xSemaphoreGive(handle->bus_lock);
             return ESP_OK;
@@ -734,9 +832,21 @@ static esp_err_t read_registers(svd48_handle_t handle,
     uint8_t response[64];
     size_t response_len = 0;
     uint8_t slave_id = handle->config.drive_ids[drive_index];
-    svd48_build_read_request(slave_id, reg, quantity, request);
+    size_t request_len = svd48_build_read_request(slave_id,
+                                                  reg,
+                                                  quantity,
+                                                  request);
+    if (request_len == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    esp_err_t err = transact(handle, request, sizeof(request), response, sizeof(response), &response_len, retries);
+    esp_err_t err = transact(handle,
+                             request,
+                             request_len,
+                             response,
+                             sizeof(response),
+                             &response_len,
+                             retries);
     if (err != ESP_OK) {
         set_drive_error(handle, drive_index, esp_to_svd48_status(err));
         return err;
@@ -877,9 +987,98 @@ static void poll_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static void attached_trace(void *context,
+                           uint16_t device_id,
+                           uint8_t address,
+                           uint8_t attempt,
+                           const uint8_t *request,
+                           size_t request_length,
+                           const uint8_t *response,
+                           size_t response_length,
+                           svd48_device_result_t result)
+{
+    svd48_handle_t handle = context;
+    if (!handle || !handle->trace_enabled || !handle->trace_lock) {
+        return;
+    }
+    xSemaphoreTake(handle->trace_lock, portMAX_DELAY);
+    printf("TRACE RS485_TX DEVICE_ID:%u DRIVE:%u ATTEMPT:%u HEX:",
+           device_id,
+           address,
+           attempt);
+    trace_print_hex(request, request_length);
+    printf("\nTRACE RS485_RX DEVICE_ID:%u DRIVE:%u ATTEMPT:%u RESULT:%u LEN:%u HEX:",
+           device_id,
+           address,
+           attempt,
+           (unsigned)result,
+           (unsigned)response_length);
+    trace_print_hex(response, response_length);
+    printf("\n");
+    fflush(stdout);
+    xSemaphoreGive(handle->trace_lock);
+}
+
+svd48_handle_t svd48_attach_devices(
+    svd48_device_t *const *devices,
+    size_t device_count,
+    const svd48_legacy_channel_binding_t *bindings,
+    size_t binding_count)
+{
+    if (!devices || device_count == 0U || device_count > SVD48_LEGACY_DEVICE_MAX ||
+        !bindings || binding_count == 0U || binding_count > SVD48_MOTOR_COUNT) {
+        return NULL;
+    }
+    svd48_handle_t handle = calloc(1, sizeof(struct svd48_t));
+    if (!handle) {
+        return NULL;
+    }
+    handle->attached_devices = true;
+    handle->attached_device_count = device_count;
+    handle->attached_binding_count = binding_count;
+    for (size_t index = 0; index < device_count; ++index) {
+        if (!devices[index] || !devices[index]->initialized) {
+            free(handle);
+            return NULL;
+        }
+        handle->attached_device_items[index] = devices[index];
+    }
+    for (size_t index = 0; index < binding_count; ++index) {
+        bool device_is_attached = false;
+        for (size_t device_index = 0; device_index < device_count; ++device_index) {
+            if (devices[device_index] == bindings[index].device) {
+                device_is_attached = true;
+                break;
+            }
+        }
+        if (!bindings[index].device ||
+            bindings[index].channel >= SVD48_DEVICE_CHANNEL_COUNT ||
+            !device_is_attached) {
+            free(handle);
+            return NULL;
+        }
+        for (size_t previous = 0; previous < index; ++previous) {
+            if (bindings[previous].device == bindings[index].device &&
+                bindings[previous].channel == bindings[index].channel) {
+                free(handle);
+                return NULL;
+            }
+        }
+        handle->attached_bindings[index] = bindings[index];
+    }
+    handle->trace_lock = xSemaphoreCreateMutex();
+    if (!handle->trace_lock) {
+        free(handle);
+        return NULL;
+    }
+    return handle;
+}
+
 svd48_handle_t svd48_init(const svd48_config_t *config)
 {
-    if (!config) {
+    if (!config || config->retries > SVD48_MAX_RETRIES ||
+        config->drive_ids[0] > SVD48_MODBUS_MAX_SLAVE_ID ||
+        config->drive_ids[1] > SVD48_MODBUS_MAX_SLAVE_ID) {
         return NULL;
     }
 
@@ -990,6 +1189,20 @@ void svd48_deinit(svd48_handle_t handle)
         return;
     }
 
+    if (handle->attached_devices) {
+        for (size_t index = 0; index < handle->attached_device_count; ++index) {
+            svd48_device_set_trace(handle->attached_device_items[index],
+                                   false,
+                                   NULL,
+                                   NULL);
+        }
+        if (handle->trace_lock) {
+            vSemaphoreDelete(handle->trace_lock);
+        }
+        free(handle);
+        return;
+    }
+
     handle->polling = false;
     if (handle->poll_task) {
         vTaskDelay(pdMS_TO_TICKS(handle->config.telemetry_period_ms + 10));
@@ -1014,6 +1227,10 @@ esp_err_t svd48_start_polling(svd48_handle_t handle)
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (handle->attached_devices) {
+        /* The profile composition owns the shared N-device polling service. */
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (handle->polling) {
         return ESP_OK;
     }
@@ -1030,6 +1247,22 @@ esp_err_t svd48_start_polling(svd48_handle_t handle)
 void svd48_set_trace_enabled(svd48_handle_t handle, bool enabled)
 {
     if (!handle) {
+        return;
+    }
+    if (handle->attached_devices) {
+        handle->trace_enabled = enabled;
+        for (size_t index = 0; index < handle->attached_device_count; ++index) {
+            svd48_device_set_trace(handle->attached_device_items[index],
+                                   enabled,
+                                   enabled ? attached_trace : NULL,
+                                   enabled ? handle : NULL);
+        }
+        xSemaphoreTake(handle->trace_lock, portMAX_DELAY);
+        printf("TRACE RS485_CONFIG ENABLED:%u CRC_INIT:0xFFFF CRC_POLY:0xA001 CRC_ORDER:HIGH_LOW DEVICES:%u\n",
+               enabled ? 1U : 0U,
+               (unsigned)handle->attached_device_count);
+        fflush(stdout);
+        xSemaphoreGive(handle->trace_lock);
         return;
     }
     handle->trace_enabled = enabled;
@@ -1058,6 +1291,18 @@ esp_err_t svd48_poll_once(svd48_handle_t handle)
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (handle->attached_devices) {
+        esp_err_t first_error = ESP_OK;
+        for (size_t index = 0; index < handle->attached_device_count; ++index) {
+            esp_err_t error = device_result_to_esp(
+                svd48_device_poll(handle->attached_device_items[index]));
+            if (error != ESP_OK && first_error == ESP_OK) {
+                first_error = error;
+            }
+        }
+        return first_error;
     }
 
     uint16_t regs2[2];
@@ -1113,6 +1358,18 @@ bool svd48_resolve_motor(svd48_handle_t handle, uint8_t logical_motor, uint8_t *
         return false;
     }
 
+    if (handle->attached_devices) {
+        const svd48_legacy_channel_binding_t *binding =
+            &handle->attached_bindings[logical_motor];
+        if (drive_id) {
+            *drive_id = svd48_device_address(binding->device);
+        }
+        if (channel) {
+            *channel = (uint8_t)binding->channel;
+        }
+        return true;
+    }
+
     uint8_t drive_index = logical_motor / SVD48_MOTORS_PER_DRIVE;
     if (drive_id) {
         *drive_id = handle->config.drive_ids[drive_index];
@@ -1125,6 +1382,12 @@ bool svd48_resolve_motor(svd48_handle_t handle, uint8_t logical_motor, uint8_t *
 
 esp_err_t svd48_read_registers_by_id(svd48_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t quantity, uint16_t *out_regs)
 {
+    if (handle && handle->attached_devices) {
+        svd48_device_t *device = attached_device_by_address(handle, drive_id);
+        return device ? device_result_to_esp(
+                            svd48_device_read_registers(device, reg, quantity, out_regs))
+                      : ESP_ERR_INVALID_ARG;
+    }
     uint8_t drive_index = 0;
     if (!drive_index_from_id(handle, drive_id, &drive_index)) {
         return ESP_ERR_INVALID_ARG;
@@ -1134,6 +1397,12 @@ esp_err_t svd48_read_registers_by_id(svd48_handle_t handle, uint8_t drive_id, ui
 
 esp_err_t svd48_write_register_by_id(svd48_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t value)
 {
+    if (handle && handle->attached_devices) {
+        svd48_device_t *device = attached_device_by_address(handle, drive_id);
+        return device ? device_result_to_esp(
+                            svd48_device_write_register(device, reg, value))
+                      : ESP_ERR_INVALID_ARG;
+    }
     uint8_t drive_index = 0;
     if (!drive_index_from_id(handle, drive_id, &drive_index)) {
         return ESP_ERR_INVALID_ARG;
@@ -1150,6 +1419,12 @@ esp_err_t svd48_write_registers_by_id(svd48_handle_t handle,
                                       const uint16_t *values,
                                       uint16_t quantity)
 {
+    if (handle && handle->attached_devices) {
+        svd48_device_t *device = attached_device_by_address(handle, drive_id);
+        return device ? device_result_to_esp(svd48_device_write_registers(
+                            device, start_reg, values, quantity))
+                      : ESP_ERR_INVALID_ARG;
+    }
     uint8_t drive_index = 0;
     if (!values || !svd48_write_multiple_range_is_valid(start_reg, quantity) ||
         !drive_index_from_id(handle, drive_id, &drive_index)) {
@@ -1164,6 +1439,19 @@ esp_err_t svd48_write_registers_by_id(svd48_handle_t handle,
 esp_err_t svd48_set_motor_command(svd48_handle_t handle, uint8_t logical_motor, svd48_motor_command_t command)
 {
     ESP_RETURN_ON_ERROR(validate_motor(handle, logical_motor), TAG, "invalid motor");
+    if (handle->attached_devices) {
+        svd48_channel_t *channel = attached_channel(handle, logical_motor);
+        switch (command) {
+        case SVD48_MOTOR_CMD_STOP:
+            return device_result_to_esp(svd48_channel_stop(channel));
+        case SVD48_MOTOR_CMD_START:
+            return device_result_to_esp(svd48_channel_enable(channel));
+        case SVD48_MOTOR_CMD_CLEAR_ALARM:
+            return device_result_to_esp(svd48_channel_clear_fault(channel));
+        default:
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
     uint8_t drive_index = logical_motor / SVD48_MOTORS_PER_DRIVE;
     uint8_t channel = logical_motor % SVD48_MOTORS_PER_DRIVE;
     uint16_t reg = channel_register(channel, REG_M1_CONTROL_CMD, REG_M2_CONTROL_CMD);
@@ -1173,6 +1461,10 @@ esp_err_t svd48_set_motor_command(svd48_handle_t handle, uint8_t logical_motor, 
 esp_err_t svd48_set_motor_speed(svd48_handle_t handle, uint8_t logical_motor, int16_t rpm)
 {
     ESP_RETURN_ON_ERROR(validate_motor(handle, logical_motor), TAG, "invalid motor");
+    if (handle->attached_devices) {
+        return device_result_to_esp(
+            svd48_channel_set_target_rpm(attached_channel(handle, logical_motor), rpm));
+    }
     uint8_t drive_index = logical_motor / SVD48_MOTORS_PER_DRIVE;
     uint8_t channel = logical_motor % SVD48_MOTORS_PER_DRIVE;
     uint16_t reg = channel_register(channel, REG_M1_GIVEN_SPEED, REG_M2_GIVEN_SPEED);
@@ -1182,6 +1474,10 @@ esp_err_t svd48_set_motor_speed(svd48_handle_t handle, uint8_t logical_motor, in
 esp_err_t svd48_set_motor_current(svd48_handle_t handle, uint8_t logical_motor, int16_t deciamp)
 {
     ESP_RETURN_ON_ERROR(validate_motor(handle, logical_motor), TAG, "invalid motor");
+    if (handle->attached_devices) {
+        return device_result_to_esp(svd48_channel_set_current_deciamp(
+            attached_channel(handle, logical_motor), deciamp));
+    }
     uint8_t drive_index = logical_motor / SVD48_MOTORS_PER_DRIVE;
     uint8_t channel = logical_motor % SVD48_MOTORS_PER_DRIVE;
     uint16_t reg = channel_register(channel, REG_M1_GIVEN_CURRENT, REG_M2_GIVEN_CURRENT);
@@ -1190,11 +1486,23 @@ esp_err_t svd48_set_motor_current(svd48_handle_t handle, uint8_t logical_motor, 
 
 esp_err_t svd48_enable_motor(svd48_handle_t handle, uint8_t logical_motor)
 {
+    if (handle && handle->attached_devices) {
+        return validate_motor(handle, logical_motor) == ESP_OK
+                   ? device_result_to_esp(svd48_channel_enable(
+                         attached_channel(handle, logical_motor)))
+                   : ESP_ERR_INVALID_ARG;
+    }
     return svd48_set_motor_command(handle, logical_motor, SVD48_MOTOR_CMD_START);
 }
 
 esp_err_t svd48_stop_motor(svd48_handle_t handle, uint8_t logical_motor)
 {
+    if (handle && handle->attached_devices) {
+        return validate_motor(handle, logical_motor) == ESP_OK
+                   ? device_result_to_esp(svd48_channel_stop(
+                         attached_channel(handle, logical_motor)))
+                   : ESP_ERR_INVALID_ARG;
+    }
     esp_err_t speed_err = svd48_set_motor_speed(handle, logical_motor, 0);
     esp_err_t stop_err = svd48_set_motor_command(handle,
                                                  logical_motor,
@@ -1204,6 +1512,12 @@ esp_err_t svd48_stop_motor(svd48_handle_t handle, uint8_t logical_motor)
 
 esp_err_t svd48_clear_motor_alarm(svd48_handle_t handle, uint8_t logical_motor)
 {
+    if (handle && handle->attached_devices) {
+        return validate_motor(handle, logical_motor) == ESP_OK
+                   ? device_result_to_esp(svd48_channel_clear_fault(
+                         attached_channel(handle, logical_motor)))
+                   : ESP_ERR_INVALID_ARG;
+    }
     return svd48_set_motor_command(handle, logical_motor, SVD48_MOTOR_CMD_CLEAR_ALARM);
 }
 
@@ -1214,7 +1528,8 @@ esp_err_t svd48_stop_all(svd48_handle_t handle)
     }
 
     esp_err_t first_error = ESP_OK;
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = svd48_get_motor_count(handle);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         esp_err_t err = svd48_stop_motor(handle, motor);
         if (err != ESP_OK && first_error == ESP_OK) {
             first_error = err;
@@ -1229,6 +1544,43 @@ bool svd48_get_motor_telemetry(svd48_handle_t handle, uint8_t logical_motor, svd
         return false;
     }
 
+    if (handle->attached_devices) {
+        svd48_channel_snapshot_t snapshot;
+        const svd48_legacy_channel_binding_t *binding =
+            &handle->attached_bindings[logical_motor];
+        if (!svd48_channel_get_snapshot(attached_channel(handle, logical_motor),
+                                        &snapshot)) {
+            return false;
+        }
+        memset(telemetry, 0, sizeof(*telemetry));
+        telemetry->logical_motor = logical_motor;
+        telemetry->drive_id = svd48_device_address(binding->device);
+        telemetry->drive_index = 0U;
+        for (size_t index = 0; index < handle->attached_device_count; ++index) {
+            if (handle->attached_device_items[index] == binding->device) {
+                telemetry->drive_index = (uint8_t)index;
+                break;
+            }
+        }
+        telemetry->channel = (uint8_t)binding->channel;
+        telemetry->online = snapshot.online;
+        telemetry->stale = snapshot.stale;
+        telemetry->last_error = device_result_to_status(snapshot.last_error);
+        telemetry->last_update_ms = snapshot.last_update_ms;
+        telemetry->last_exception_function = snapshot.last_exception_function;
+        telemetry->last_exception_code = snapshot.last_exception_code;
+        telemetry->last_exception_ms = snapshot.last_exception_ms;
+        telemetry->status = snapshot.status;
+        telemetry->actual_rpm = snapshot.observed_speed_rpm;
+        telemetry->current_deciamp = snapshot.current_deciamp;
+        telemetry->motor_temp_decic = snapshot.motor_temp_decic;
+        telemetry->bus_voltage_deciv = snapshot.bus_voltage_deciv;
+        telemetry->mos_temp_decic = snapshot.mos_temp_decic;
+        telemetry->position_counts = snapshot.position_counts;
+        telemetry->error_code = snapshot.error_code;
+        return true;
+    }
+
     xSemaphoreTake(handle->state_lock, portMAX_DELAY);
     *telemetry = handle->motors[logical_motor];
     uint32_t age = now_ms() - telemetry->last_update_ms;
@@ -1240,4 +1592,13 @@ bool svd48_get_motor_telemetry(svd48_handle_t handle, uint8_t logical_motor, svd
     handle->motors[logical_motor].online = telemetry->online;
     xSemaphoreGive(handle->state_lock);
     return true;
+}
+
+size_t svd48_get_motor_count(svd48_handle_t handle)
+{
+    if (!handle) {
+        return 0U;
+    }
+    return handle->attached_devices ? handle->attached_binding_count
+                                    : SVD48_MOTOR_COUNT;
 }

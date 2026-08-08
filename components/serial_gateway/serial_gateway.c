@@ -175,14 +175,29 @@ static bool command_allowed_for_policy(serial_gateway_command_policy_t policy, i
     return serial_gateway_lan_command_allowed(argc, lan_argv);
 }
 
-static bool parse_u8_arg(const char *text, uint8_t *value)
+static size_t configured_motor_count(serial_gateway_handle_t handle)
+{
+    size_t count = handle && handle->config.actuation
+                       ? actuation_application_legacy_motor_count(
+                             handle->config.actuation)
+                       : 0U;
+    return count > 0U ? count
+                      : handle ? robot_control_get_motor_count(handle->config.robot)
+                               : 0U;
+}
+
+static bool parse_motor_arg(serial_gateway_handle_t handle,
+                            const char *text,
+                            uint8_t *value)
 {
     if (!text || !value) {
         return false;
     }
     char *end = NULL;
     long parsed = strtol(text, &end, 10);
-    if (*text == '\0' || *end != '\0' || parsed < 0 || parsed >= SVD48_MOTOR_COUNT) {
+    size_t motor_count = configured_motor_count(handle);
+    if (*text == '\0' || *end != '\0' || parsed < 0 ||
+        (size_t)parsed >= motor_count) {
         return false;
     }
     *value = (uint8_t)parsed;
@@ -418,7 +433,8 @@ static uint32_t gateway_monotonic_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
 
-static bool motion_command_active(const robot_motion_command_t *command)
+static bool motion_command_active(const robot_motion_command_t *command,
+                                  size_t motor_count)
 {
     if (!command) {
         return false;
@@ -428,7 +444,7 @@ static bool motion_command_active(const robot_motion_command_t *command)
         fabsf(command->wz_radps) > PLATFORM_SAFE_FLOAT_THRESHOLD) {
         return true;
     }
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         if (command->wheel_rpm[motor] != 0) {
             return true;
         }
@@ -446,7 +462,9 @@ static void handle_platform_status(serial_gateway_handle_t handle, int argc, cha
 
     robot_motion_command_t command = {0};
     bool have_command = robot_control_get_last_motion(handle->config.robot, &command);
-    bool command_active = have_command && motion_command_active(&command);
+    size_t motor_count = configured_motor_count(handle);
+    bool command_active = have_command && motion_command_active(&command,
+                                                                motor_count);
     uint32_t last_age_ms = 0;
     if (have_command && command.sequence != 0) {
         last_age_ms = gateway_monotonic_ms() - command.issued_ms;
@@ -456,7 +474,7 @@ static void handle_platform_status(serial_gateway_handle_t handle, int argc, cha
     uint8_t stale_count = 0;
     uint8_t running_count = 0;
     uint8_t faulted_count = 0;
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         svd48_motor_telemetry_t telemetry;
         if (!robot_control_get_motor(handle->config.robot, motor, &telemetry)) {
             continue;
@@ -1990,7 +2008,80 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+}
+
+static void print_diagnostic_help(serial_gateway_handle_t handle)
+{
+    print_locked(
+        handle,
+        "DATA HELP MODE:DIAGNOSTIC_ONLY COMMANDS:PING,VERSION,HELP,PLATFORM_STATUS,CONFIG_STATUS,WIFI_STATUS,PROFILE_STATUS,COMPOSITION_STATUS,STOP ALL\n");
+}
+
+static void handle_profile_status(serial_gateway_handle_t handle)
+{
+    print_locked(handle,
+                 "DATA PROFILE NAME:%s SCHEMA_VALID:%u COMPOSITION_SUPPORTED:%u\n",
+                 safe_text(handle->config.profile_name, "UNKNOWN"),
+                 handle->config.profile_schema_valid ? 1U : 0U,
+                 handle->config.composition_supported ? 1U : 0U);
+}
+
+static void handle_composition_status(serial_gateway_handle_t handle)
+{
+    print_locked(
+        handle,
+        "DATA COMPOSITION MODE:%s RUNTIME_READY:%u CODE:%s STAGE:%s DRIVER:%u BUS:%u DEVICE:%u ENDPOINT:%u ERROR:0x%x REQUIRED_STORAGE:%u AVAILABLE_STORAGE:%u OUTPUTS_INITIALIZED:%u\n",
+        handle->config.diagnostic_only ? "DIAGNOSTIC_ONLY" : "ACTIVE",
+        handle->config.composition_runtime_ready ? 1U : 0U,
+        safe_text(handle->config.composition_code, "UNKNOWN"),
+        safe_text(handle->config.composition_stage, "UNKNOWN"),
+        (unsigned)handle->config.composition_driver_id,
+        (unsigned)handle->config.composition_bus_id,
+        (unsigned)handle->config.composition_device_id,
+        (unsigned)handle->config.composition_endpoint_id,
+        handle->config.composition_error,
+        (unsigned)handle->config.composition_required_storage,
+        (unsigned)handle->config.composition_available_storage,
+        handle->config.composition_runtime_ready ? 1U : 0U);
+}
+
+static void handle_diagnostic_command(serial_gateway_handle_t handle,
+                                      int argc,
+                                      char *argv[])
+{
+    const char *diagnostic_argv[GATEWAY_ARG_MAX] = {0};
+    for (int index = 0; index < argc && index < GATEWAY_ARG_MAX; ++index) {
+        diagnostic_argv[index] = argv[index];
+    }
+    if (!serial_gateway_diagnostic_command_allowed(argc, diagnostic_argv)) {
+        print_locked(handle,
+                     "ERR DIAGNOSTIC_MODE_COMMAND_BLOCKED %s\n",
+                     argv[0]);
+        return;
+    }
+
+    if (strcasecmp(argv[0], "PING") == 0) {
+        print_locked(handle, "OK PONG\n");
+    } else if (strcasecmp(argv[0], "VERSION") == 0) {
+        handle_version(handle);
+    } else if (strcasecmp(argv[0], "HELP") == 0) {
+        print_diagnostic_help(handle);
+    } else if (strcasecmp(argv[0], "PLATFORM_STATUS") == 0) {
+        print_locked(
+            handle,
+            "DATA PLATFORM STATE:DIAGNOSTIC_ONLY AUTHORITY:SERIAL_ASCII PROTOCOL:ASCII_V1 OUTPUTS_INITIALIZED:0 MOTION_ACTIVE:0 SAFE_FOR_OTA:0 SAFE_REASON:COMPOSITION_UNAVAILABLE TRACE:0 STREAM:0\n");
+    } else if (strcasecmp(argv[0], "CONFIG_STATUS") == 0) {
+        handle_config_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "WIFI_STATUS") == 0) {
+        handle_wifi_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "PROFILE_STATUS") == 0) {
+        handle_profile_status(handle);
+    } else if (strcasecmp(argv[0], "COMPOSITION_STATUS") == 0) {
+        handle_composition_status(handle);
+    } else {
+        print_locked(handle, "ERR STOP_UNAVAILABLE OUTPUTS_NOT_INITIALIZED\n");
+    }
 }
 
 static void print_ibus_status(serial_gateway_handle_t handle, bool include_channels)
@@ -2262,7 +2353,8 @@ static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *
 {
     if (strcasecmp(target, "ALL") == 0) {
         esp_err_t first_error = ESP_OK;
-        for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        size_t motor_count = configured_motor_count(handle);
+        for (uint8_t motor = 0; motor < motor_count; motor++) {
             esp_err_t err = fn(handle->config.robot, motor);
             if (err != ESP_OK && first_error == ESP_OK) {
                 first_error = err;
@@ -2272,7 +2364,7 @@ static esp_err_t command_each_motor(serial_gateway_handle_t handle, const char *
     }
 
     uint8_t motor = 0;
-    if (!parse_u8_arg(target, &motor)) {
+    if (!parse_motor_arg(handle, target, &motor)) {
         return ESP_ERR_INVALID_ARG;
     }
     return fn(handle->config.robot, motor);
@@ -2326,7 +2418,7 @@ static void handle_stop(serial_gateway_handle_t handle, int argc, char *argv[])
     }
 
     uint8_t motor = 0;
-    if (!parse_u8_arg(argv[1], &motor)) {
+    if (!parse_motor_arg(handle, argv[1], &motor)) {
         print_locked(handle, "ERR BAD_MOTOR\n");
         return;
     }
@@ -2350,7 +2442,8 @@ static void handle_clear_fault(serial_gateway_handle_t handle, int argc, char *a
 
     if (strcasecmp(argv[1], "ALL") == 0) {
         esp_err_t first_error = ESP_OK;
-        for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+        size_t motor_count = configured_motor_count(handle);
+        for (uint8_t motor = 0; motor < motor_count; motor++) {
             esp_err_t err = robot_control_clear_motor_alarm(handle->config.robot, motor);
             if (err != ESP_OK && first_error == ESP_OK) {
                 first_error = err;
@@ -2365,7 +2458,7 @@ static void handle_clear_fault(serial_gateway_handle_t handle, int argc, char *a
     }
 
     uint8_t motor = 0;
-    if (!parse_u8_arg(argv[1], &motor)) {
+    if (!parse_motor_arg(handle, argv[1], &motor)) {
         print_locked(handle, "ERR BAD_MOTOR\n");
         return;
     }
@@ -2424,6 +2517,11 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         return;
     }
 
+    if (handle->config.diagnostic_only) {
+        handle_diagnostic_command(handle, argc, argv);
+        return;
+    }
+
     if (robot_control_get_trace_enabled(handle->config.robot)) {
         print_pc_rx_trace(handle, original);
     }
@@ -2436,6 +2534,18 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
             return;
         }
         handle_version(handle);
+    } else if (strcasecmp(argv[0], "PROFILE_STATUS") == 0) {
+        if (argc != 1) {
+            print_locked(handle, "ERR USAGE PROFILE_STATUS\n");
+            return;
+        }
+        handle_profile_status(handle);
+    } else if (strcasecmp(argv[0], "COMPOSITION_STATUS") == 0) {
+        if (argc != 1) {
+            print_locked(handle, "ERR USAGE COMPOSITION_STATUS\n");
+            return;
+        }
+        handle_composition_status(handle);
     } else if (strcasecmp(argv[0], "PLATFORM_STATUS") == 0) {
         handle_platform_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SAFETY_STATUS") == 0) {
@@ -2555,7 +2665,7 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_apply_py6514_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SPEED") == 0) {
         uint8_t motor = 0;
-        if (argc != 2 || !parse_u8_arg(argv[1], &motor)) {
+        if (argc != 2 || !parse_motor_arg(handle, argv[1], &motor)) {
             print_locked(handle, "ERR USAGE GET_SPEED n\n");
             return;
         }
@@ -2567,7 +2677,7 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         }
     } else if (strcasecmp(argv[0], "GET_MOTOR") == 0) {
         uint8_t motor = 0;
-        if (argc != 2 || !parse_u8_arg(argv[1], &motor)) {
+        if (argc != 2 || !parse_motor_arg(handle, argv[1], &motor)) {
             print_locked(handle, "ERR USAGE GET_MOTOR n\n");
             return;
         }
@@ -2575,16 +2685,26 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
     } else if (strcasecmp(argv[0], "SET_SPEED") == 0) {
         uint8_t motor = 0;
         int16_t rpm = 0;
-        if (argc != 3 || !parse_u8_arg(argv[1], &motor) || !parse_i16_arg(argv[2], &rpm)) {
+        if (argc != 3 || !parse_motor_arg(handle, argv[1], &motor) || !parse_i16_arg(argv[2], &rpm)) {
             print_locked(handle, "ERR USAGE SET_SPEED n rpm\n");
             return;
         }
-        const float max_rpm = robot_control_get_max_wheel_rpm(handle->config.robot);
-        if (fabsf((float)rpm) > max_rpm) {
+        int16_t min_rpm = 0;
+        int16_t max_rpm = 0;
+        if (!actuation_application_legacy_motor_limits_rpm(handle->config.actuation,
+                                                           motor,
+                                                           &min_rpm,
+                                                           &max_rpm)) {
+            print_locked(handle, "ERR BAD_MOTOR\n");
+            return;
+        }
+        float max_abs_rpm = fmaxf(fabsf((float)min_rpm),
+                                  fabsf((float)max_rpm));
+        if (rpm < min_rpm || rpm > max_rpm) {
             print_locked(handle,
                          "ERR SET_SPEED_OUT_OF_RANGE REQUESTED:%d MAX_RPM:%.1f\n",
                          rpm,
-                         (double)max_rpm);
+                         (double)max_abs_rpm);
             return;
         }
         esp_err_t err = actuation_application_set_legacy_motor_speed_rpm(
@@ -2667,7 +2787,11 @@ static void gateway_rx_task(void *arg)
     }
 
     print_locked(handle, "OK READY SVD48_GATEWAY\n");
-    print_help(handle);
+    if (handle->config.diagnostic_only) {
+        print_diagnostic_help(handle);
+    } else {
+        print_help(handle);
+    }
     print_prompt(handle);
 
     while (handle->running) {
@@ -2714,7 +2838,8 @@ static void gateway_stream_task(void *arg)
     serial_gateway_handle_t handle = (serial_gateway_handle_t)arg;
     while (handle->running) {
         if (handle->stream_enabled) {
-            for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+            size_t motor_count = configured_motor_count(handle);
+            for (uint8_t motor = 0; motor < motor_count; motor++) {
                 print_motor_full(handle, motor);
             }
         }
@@ -2764,7 +2889,8 @@ esp_err_t serial_gateway_execute_command(serial_gateway_handle_t handle,
 
 serial_gateway_handle_t serial_gateway_init(const serial_gateway_config_t *config)
 {
-    if (!config || !config->robot || !config->actuation) {
+    if (!config ||
+        (!config->diagnostic_only && (!config->robot || !config->actuation))) {
         return NULL;
     }
 
@@ -2821,7 +2947,13 @@ esp_err_t serial_gateway_start(serial_gateway_handle_t handle)
         handle->running = false;
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(gateway_stream_task, "gateway_stream", GATEWAY_STREAM_TASK_STACK, handle, 4, &handle->stream_task) != pdPASS) {
+    if (!handle->config.diagnostic_only &&
+        xTaskCreate(gateway_stream_task,
+                    "gateway_stream",
+                    GATEWAY_STREAM_TASK_STACK,
+                    handle,
+                    4,
+                    &handle->stream_task) != pdPASS) {
         handle->running = false;
         return ESP_ERR_NO_MEM;
     }

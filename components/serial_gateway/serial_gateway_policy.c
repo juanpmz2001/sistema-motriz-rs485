@@ -13,6 +13,8 @@ static bool no_arg_command_allowed(const char *command)
     static const char *const allowed[] = {
         "PING",
         "VERSION",
+        "PROFILE_STATUS",
+        "COMPOSITION_STATUS",
         "PLATFORM_STATUS",
         "SAFETY_STATUS",
         "CONFIG_STATUS",
@@ -77,4 +79,32 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
         return true;
     }
     return false;
+}
+
+bool serial_gateway_diagnostic_command_allowed(int argc,
+                                               const char *const argv[])
+{
+    static const char *const read_only[] = {
+        "PING",
+        "VERSION",
+        "HELP",
+        "PLATFORM_STATUS",
+        "CONFIG_STATUS",
+        "WIFI_STATUS",
+        "PROFILE_STATUS",
+        "COMPOSITION_STATUS",
+    };
+    if (argc <= 0 || !argv || !argv[0]) {
+        return false;
+    }
+    if (argc == 1) {
+        for (size_t index = 0;
+             index < sizeof(read_only) / sizeof(read_only[0]);
+             ++index) {
+            if (arg_is(argv[0], read_only[index])) {
+                return true;
+            }
+        }
+    }
+    return argc == 2 && arg_is(argv[0], "STOP") && arg_is(argv[1], "ALL");
 }

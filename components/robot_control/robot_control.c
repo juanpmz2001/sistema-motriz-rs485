@@ -92,6 +92,10 @@ static void record_stop_command(robot_control_handle_t handle)
 
 static void record_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
 {
+    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48) ||
+        motor >= SVD48_MOTOR_COUNT) {
+        return;
+    }
     xSemaphoreTake(handle->lock, portMAX_DELAY);
     handle->last_command.wheel_rpm[motor] = rpm;
     stamp_command(handle, &handle->last_command);
@@ -118,7 +122,8 @@ static esp_err_t stop_all_after_failure(robot_control_handle_t handle,
 
 static esp_err_t enable_prepared_targets(robot_control_handle_t handle)
 {
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         esp_err_t err = svd48_enable_motor(handle->config.svd48, motor);
         if (err != ESP_OK) {
             return stop_all_after_failure(handle, err, "enable prepared target", motor);
@@ -186,7 +191,11 @@ static esp_err_t steering_init(robot_control_handle_t handle)
 
 robot_control_handle_t robot_control_init(const robot_control_config_t *config)
 {
-    if (!config || !config->svd48) {
+    size_t motor_count = config && config->svd48
+                             ? svd48_get_motor_count(config->svd48)
+                             : 0U;
+    if (!config || !config->svd48 || motor_count == 0U ||
+        motor_count > SVD48_MOTOR_COUNT) {
         return NULL;
     }
 
@@ -196,14 +205,13 @@ robot_control_handle_t robot_control_init(const robot_control_config_t *config)
     }
 
     handle->config = *config;
-    if (handle->config.wheelbase_m <= 0.0f) {
-        handle->config.wheelbase_m = 0.50f;
-    }
-    if (handle->config.track_width_m <= 0.0f) {
-        handle->config.track_width_m = 0.40f;
-    }
-    if (handle->config.wheel_radius_m <= 0.0f) {
-        handle->config.wheel_radius_m = 0.10f;
+    if (handle->config.motion_kinematics_enabled &&
+        (motor_count != SVD48_MOTOR_COUNT ||
+         handle->config.wheelbase_m <= 0.0f ||
+         handle->config.track_width_m <= 0.0f ||
+         handle->config.wheel_radius_m <= 0.0f)) {
+        free(handle);
+        return NULL;
     }
     if (handle->config.max_wheel_rpm <= 0.0f) {
         handle->config.max_wheel_rpm = 1000.0f;
@@ -233,10 +241,10 @@ robot_control_handle_t robot_control_init(const robot_control_config_t *config)
         return NULL;
     }
 
-    ESP_LOGI(TAG, "robot geometry wheelbase=%.3fm track=%.3fm radius=%.3fm max=%.1frpm",
-             handle->config.wheelbase_m,
-             handle->config.track_width_m,
-             handle->config.wheel_radius_m,
+    ESP_LOGI(TAG,
+             "legacy control view motors=%u motion_kinematics=%u max=%.1frpm",
+             (unsigned)motor_count,
+             handle->config.motion_kinematics_enabled ? 1U : 0U,
              handle->config.max_wheel_rpm);
     return handle;
 }
@@ -258,7 +266,8 @@ esp_err_t robot_control_enable_all(robot_control_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, 0);
         if (err != ESP_OK) {
             return stop_all_after_failure(handle, err, "prepare zero target", motor);
@@ -294,9 +303,21 @@ esp_err_t robot_control_record_coordinated_stop(robot_control_handle_t handle)
     return ESP_OK;
 }
 
+esp_err_t robot_control_record_coordinated_motor_speed(robot_control_handle_t handle,
+                                                       uint8_t motor,
+                                                       int16_t rpm)
+{
+    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48) ||
+        motor >= SVD48_MOTOR_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    record_last_motor_rpm(handle, motor, rpm);
+    return ESP_OK;
+}
+
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
 {
-    if (!handle || motor >= SVD48_MOTOR_COUNT) {
+    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
         return ESP_ERR_INVALID_ARG;
     }
     esp_err_t err = svd48_stop_motor(handle->config.svd48, motor);
@@ -308,7 +329,7 @@ esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
 
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor)
 {
-    if (!handle || motor >= SVD48_MOTOR_COUNT) {
+    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
         return ESP_ERR_INVALID_ARG;
     }
     return svd48_clear_motor_alarm(handle->config.svd48, motor);
@@ -316,7 +337,7 @@ esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t
 
 esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
 {
-    if (!handle || motor >= SVD48_MOTOR_COUNT) {
+    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -352,10 +373,19 @@ float robot_control_get_max_wheel_rpm(robot_control_handle_t handle)
     return handle ? handle->config.max_wheel_rpm : 0.0f;
 }
 
+size_t robot_control_get_motor_count(robot_control_handle_t handle)
+{
+    return handle ? svd48_get_motor_count(handle->config.svd48) : 0U;
+}
+
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps)
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!handle->config.motion_kinematics_enabled ||
+        svd48_get_motor_count(handle->config.svd48) != SVD48_MOTOR_COUNT) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
     const float half_l = handle->config.wheelbase_m * 0.5f;
@@ -496,14 +526,15 @@ bool robot_control_is_safe_for_ota(robot_control_handle_t handle, char *reason, 
         return false;
     }
 
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         if (command.wheel_rpm[motor] != 0) {
             set_reason(reason, reason_size, "MOTOR_COMMAND_ACTIVE");
             return false;
         }
     }
 
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         svd48_motor_telemetry_t telemetry;
         if (!robot_control_get_motor(handle, motor, &telemetry)) {
             continue;
@@ -532,7 +563,8 @@ esp_err_t robot_control_prepare_for_ota(robot_control_handle_t handle)
     (void)robot_control_get_last_motion(handle, &command);
 
     esp_err_t first_error = ESP_OK;
-    for (uint8_t motor = 0; motor < SVD48_MOTOR_COUNT; motor++) {
+    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    for (uint8_t motor = 0; motor < motor_count; motor++) {
         svd48_motor_telemetry_t telemetry;
         bool online = robot_control_get_motor(handle, motor, &telemetry) && telemetry.online && !telemetry.stale;
         bool commanded = command.wheel_rpm[motor] != 0;

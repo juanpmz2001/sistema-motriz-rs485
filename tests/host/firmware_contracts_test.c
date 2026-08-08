@@ -26,9 +26,20 @@ static bool test_svd48_request_builders(void)
     HOST_TEST_CHECK(svd48_build_read_request(0xEE, 0x5410, 2, frame) == sizeof(expected_read));
     HOST_TEST_CHECK(memcmp(frame, expected_read, sizeof(expected_read)) == 0);
     HOST_TEST_CHECK(svd48_frame_has_valid_crc(frame, sizeof(expected_read)));
+    HOST_TEST_CHECK(svd48_build_read_request(0U, 0x5410U, 2U, frame) == 0U);
+    HOST_TEST_CHECK(svd48_build_read_request(248U, 0x5410U, 2U, frame) == 0U);
+    HOST_TEST_CHECK(svd48_build_read_request(1U,
+                                             0x5410U,
+                                             SVD48_READ_MAX_REGISTERS + 1U,
+                                             frame) == 0U);
+    HOST_TEST_CHECK(svd48_build_read_request(1U, 0xFFFFU, 2U, frame) == 0U);
 
     HOST_TEST_CHECK(svd48_build_write_single_request(0x01, 0x5304, 100, frame) == sizeof(expected_write));
     HOST_TEST_CHECK(memcmp(frame, expected_write, sizeof(expected_write)) == 0);
+    HOST_TEST_CHECK(svd48_build_write_single_request(0U,
+                                                     0x5304U,
+                                                     100U,
+                                                     frame) == 0U);
 
     const uint16_t values[] = { 2, 2 };
     HOST_TEST_CHECK(svd48_build_write_multiple_request(0xEE, 0x5100, values, 2, frame, sizeof(frame)) ==
@@ -295,6 +306,8 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *set_speed_bad_shape[] = { "SET_SPEED", "2" };
     const char *stop_one[] = { "STOP", "0" };
     const char *stop_all[] = { "STOP", "ALL" };
+    const char *profile_status[] = { "PROFILE_STATUS" };
+    const char *composition_status[] = { "COMPOSITION_STATUS" };
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
@@ -315,7 +328,32 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, set_speed_bad_shape));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, profile_status));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, composition_status));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
+    return true;
+}
+
+static bool test_gateway_diagnostic_policy(void)
+{
+    const char *ping[] = {"ping"};
+    const char *version[] = {"VERSION"};
+    const char *profile[] = {"PROFILE_STATUS"};
+    const char *composition[] = {"COMPOSITION_STATUS"};
+    const char *stop_all[] = {"stop", "all"};
+    const char *stop_one[] = {"STOP", "0"};
+    const char *set_speed[] = {"SET_SPEED", "0", "1"};
+    const char *write[] = {"WRITE_REG", "1", "0x5018", "1", "CONFIRM"};
+
+    HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, ping));
+    HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, version));
+    HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, profile));
+    HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, composition));
+    HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(2, stop_all));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, stop_one));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_speed));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(5, write));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(0, NULL));
     return true;
 }
 
@@ -329,6 +367,7 @@ int main(void)
         HOST_TEST_CASE(test_serial_framing),
         HOST_TEST_CASE(test_gateway_error_result),
         HOST_TEST_CASE(test_gateway_lan_maintenance_policy),
+        HOST_TEST_CASE(test_gateway_diagnostic_policy),
     };
 
     host_test_summary_t summary =
