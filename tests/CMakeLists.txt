@@ -221,3 +221,27 @@ set_tests_properties(application_compatibility_test PROPERTIES
     TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
 )
+
+add_test(
+    NAME hil_runner_test
+    COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+            -s "${CMAKE_CURRENT_LIST_DIR}/hil"
+            -p "test_*.py"
+)
+set_tests_properties(hil_runner_test PROPERTIES
+    LABELS "host;hil;safety"
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
+)
+
+add_test(
+    NAME firmware_identity_test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/../tools/test_firmware_identity.py"
+)
+set_tests_properties(firmware_identity_test PROPERTIES
+    LABELS "host;build;provenance"
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+)
