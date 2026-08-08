@@ -25,6 +25,11 @@ typedef struct {
 
 typedef struct {
     robot_endpoint_id_t endpoint_id;
+    float degrees;
+} actuation_position_request_t;
+
+typedef struct {
+    robot_endpoint_id_t endpoint_id;
     robot_capability_error_t error;
     bool applied;
     bool rollback_stop_attempted;
@@ -54,6 +59,23 @@ actuation_result_t actuation_coordinator_set_velocity_rpm(
 actuation_result_t actuation_coordinator_apply_velocity_rpm(
     actuation_coordinator_t *coordinator,
     const actuation_velocity_request_t *requests,
+    size_t request_count,
+    actuation_report_t *report);
+actuation_result_t actuation_coordinator_set_position_degrees(
+    actuation_coordinator_t *coordinator,
+    robot_endpoint_id_t endpoint_id,
+    float degrees,
+    actuation_report_t *report);
+/* Maintenance operation: stop first, then explicitly establish the logical
+ * reference while holding the same authority lock as normal setpoints. */
+actuation_result_t actuation_coordinator_set_position_reference_degrees(
+    actuation_coordinator_t *coordinator,
+    robot_endpoint_id_t endpoint_id,
+    float degrees,
+    actuation_report_t *report);
+actuation_result_t actuation_coordinator_apply_position_degrees(
+    actuation_coordinator_t *coordinator,
+    const actuation_position_request_t *requests,
     size_t request_count,
     actuation_report_t *report);
 actuation_result_t actuation_coordinator_stop_endpoint(

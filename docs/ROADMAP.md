@@ -55,8 +55,11 @@ Implemented but transitional:
   speed/stop paths, not every hardware-changing command.
 - Safety consumes legacy motor telemetry and does not yet apply full profile-aware
   degraded/stale/offline policy.
-- The executable registry contains SVD48 only; other schema driver descriptors are
-  non-executable fixtures.
+- The executable registry now includes a narrow, development-only motor-mode PWM,
+  AS5600 and steering-position-controller chain in addition to SVD48. Its
+  `bench_single_steering_as5600` profile, provisional LUT and generic position
+  boundary are software preparation, not a physical steering qualification or a
+  general driver framework.
 
 Not available now:
 
@@ -128,7 +131,8 @@ proves bounded stop after every source timeout.
 - Define migration/signing rules and the small subset, if any, that NVS may override.
 - Add a driver only through a complete executable factory and typed capabilities.
 - Add fixtures for servo-only, mixed steering/traction and intentionally absent
-  hardware after the relevant factories exist.
+  hardware after the relevant factories exist. The current one-axis AS5600 fixture
+  remains development-only until its physical evidence is recorded.
 - Cross-check endpoint names, units, limits, capacity and required safety dependencies.
 
 Exit: supported profiles compile deterministically, unsupported factories fail with

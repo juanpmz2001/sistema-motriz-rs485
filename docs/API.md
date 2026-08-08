@@ -34,9 +34,10 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
-| Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION` |
+| AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
+| Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
-| Actuation | `SET_SPEED`, `ENABLE`, `STOP`, `CLEAR_FAULT`, `MOVE_VEL`, `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` |
+| Actuation | `SET_SPEED`, `ENABLE`, `STOP`, `CLEAR_FAULT`, `MOVE_VEL`, `SET_ENDPOINT_SPEED`, `SET_ENDPOINT_POSITION`, `SET_ENDPOINT_POSITION_REFERENCE`, `STOP_ENDPOINT` |
 | Telemetry | `STREAM` |
 
 Commands that write drive registers require the literal `CONFIRM` where shown by
@@ -56,6 +57,8 @@ PROFILE_STATUS
 COMPOSITION_STATUS
 ENDPOINTS
 GET_ENDPOINT_OBSERVATION 1
+GET_ENDPOINT_POSITION_OBSERVATION 2
+GET_AS5600_DIAGNOSTICS 2
 SAFETY_STATUS
 WIFI_STATUS
 OTA_CONFIG
@@ -121,14 +124,17 @@ legacy `GET_SPEED`, `GET_MOTOR`, `SET_SPEED` and `STOP` commands remain unchange
 
 ```text
 DATA ENDPOINTS COUNT:<n>
-DATA ENDPOINT ID:<id> NAME:<name> CRITICALITY:<REQUIRED|OPTIONAL|DEVELOPMENT> AVAILABLE:<0|1> CAPABILITIES:0x<mask> VELOCITY_RPM:<0|1> VELOCITY_OBSERVATION:<0|1> STOPPABLE:<0|1> MIN_RPM:<rpm> MAX_RPM:<rpm>
+DATA ENDPOINT ID:<id> NAME:<name> CRITICALITY:<REQUIRED|OPTIONAL|DEVELOPMENT> AVAILABLE:<0|1> CAPABILITIES:0x<mask> VELOCITY_RPM:<0|1> VELOCITY_OBSERVATION:<0|1> STOPPABLE:<0|1> MIN_RPM:<rpm> MAX_RPM:<rpm> POSITION:<0|1> POSITION_REFERENCE:<0|1> POSITION_OBSERVATION:<0|1> MIN_POSITION_DEG:<degrees> MAX_POSITION_DEG:<degrees>
 ```
 
 `CRITICALITY` lets a test distinguish required, optional and development-only
 hardware without embedding profile implementation details. The named `VELOCITY_RPM`,
-`VELOCITY_OBSERVATION` and `STOPPABLE` fields let it choose actuation and observation
-independently without knowing a concrete driver. `MIN_RPM`/`MAX_RPM` apply when
-`VELOCITY_RPM:1`.
+`VELOCITY_OBSERVATION`, `POSITION`, `POSITION_REFERENCE`,
+`POSITION_OBSERVATION` and `STOPPABLE` fields let it choose actuation, maintenance
+reference and observation independently without knowing a concrete driver.
+`MIN_RPM`/`MAX_RPM` apply when `VELOCITY_RPM:1`; `MIN_POSITION_DEG`/
+`MAX_POSITION_DEG` apply when `POSITION:1`. A client must ignore limits for absent
+capabilities rather than treating their numeric placeholder values as a usable range.
 Actuation uses the same coordinator and stop serialization as migrated legacy paths:
 
 ```text
@@ -138,6 +144,36 @@ OK SET_ENDPOINT_SPEED ID:<id> RPM_TARGET:<rpm>
 STOP_ENDPOINT <id>
 OK STOP_ENDPOINT ID:<id>
 ```
+
+Position requests use the same generic application/coordinator boundary:
+
+```text
+SET_ENDPOINT_POSITION <id> <degrees>
+OK SET_ENDPOINT_POSITION ID:<id> POSITION_TARGET_DEG:<degrees>
+```
+
+The gateway rejects unknown, unavailable or non-position endpoints, non-finite
+values and requests outside the published position range. A position request is not
+a reference, homing or calibration command: it is interpreted only in the endpoint's
+configured physical coordinate system.
+
+An endpoint with both `POSITION_REFERENCE:1` and `STOPPABLE:1` may expose the
+separate maintenance operation:
+
+```text
+SET_ENDPOINT_POSITION_REFERENCE <id> <degrees> CONFIRM
+OK SET_ENDPOINT_POSITION_REFERENCE ID:<id> REFERENCE_DEG:<degrees>
+```
+
+It is available only through the full serial gateway, never through the LAN-safe or
+restricted-diagnostic policy. The gateway validates the endpoint, availability,
+position range and literal `CONFIRM`; the coordinator stops the endpoint before
+establishing the reference. This operation maps a fresh, physically verified current
+pose into the endpoint's configured coordinates. It must not command motion,
+auto-home, seek a mechanical stop, calibrate the sensor or be interpreted as proof
+that the physical pose is correct. It also cannot clear, recover or re-arm a latched
+steering fault; fault recovery needs its own separately reviewed policy. It requires
+a separately reviewed and explicitly authorized maintenance workflow.
 
 Unknown or unsupported endpoints are rejected before either request. Speed requests
 also reject `AVAILABLE:0` and out-of-range RPM. A configured stoppable endpoint still
@@ -157,6 +193,61 @@ sample's monotonic update time (`0` before the first valid sample). `STALE` appl
 the velocity sample itself. `RPM` must not be treated as measured data when
 `VALID:0`. `HEALTH_AVAILABLE:0` pairs with `HEALTH:UNKNOWN`. These fields intentionally
 do not expose a concrete controller type, bus address or register number.
+
+`GET_ENDPOINT_POSITION_OBSERVATION <id>` requests an explicitly typed position
+observation from the endpoint's application port:
+
+```text
+DATA ENDPOINT_POSITION_OBSERVATION ID:<id> TYPE:POSITION_DEGREES VALID:<0|1> CALIBRATED:<0|1> REFERENCED:<0|1> DEGREES:<degrees> TIMESTAMP_MS:<n> SOURCE_ENDPOINT_ID:<id> SOURCE:<DEVICE_FEEDBACK|INDEPENDENT_SENSOR|INFERRED|UNKNOWN> ONLINE:<0|1> STALE:<0|1> HEALTH:<UNKNOWN|HEALTHY|DEGRADED|OFFLINE|FAULT|STALE> HEALTH_AVAILABLE:<0|1> STATUS:<OK|INVALID_ARGUMENT|UNAVAILABLE|UNSUPPORTED|OUT_OF_RANGE|IO_ERROR|UNKNOWN>
+```
+
+`VALID:1` means a fresh measured value is usable in the associated actuator's logical
+position coordinate. For a calibrated cyclic sensor this requires both
+`CALIBRATED:1` and `REFERENCED:1`: calibration makes the sensor phase suitably
+linear, while reference explicitly maps the current accepted sample into the logical
+coordinate system. An AS5600 phase without an approved LUT or without an established
+reference must not be presented as valid logical position feedback.
+`CALIBRATED:1` and `REFERENCED:1` are provenance/state fields, not proof that the
+operator's physical reference or the measured physical angle is correct.
+`SOURCE_ENDPOINT_ID` identifies the endpoint that supplied the observation, which can
+differ from the actuator endpoint. `STATUS` is the normalized result of acquiring the
+snapshot, while `HEALTH` and `STALE` preserve health/freshness semantics. This
+response exposes neither controller registers nor sensor bus details, and it is
+observation rather than proof that a physical qualification gate passed.
+
+## AS5600 device diagnostics
+
+`GET_AS5600_DIAGNOSTICS <device_id>` is a concrete L2/L3 diagnostic operation for
+an AS5600 declared by the active immutable profile. Its argument is a **profile
+device ID**, not an endpoint ID. It is available only through the normal full serial
+gateway; maintenance LAN and restricted diagnostic startup reject it.
+
+The command copies the most recent cached device snapshot. It does not poll I2C,
+retry communication, alter cadence, command PWM, establish a reference, write a
+calibration or cause motion. It is therefore useful for powered read-only bring-up,
+but its response is not a sensor or steering qualification result.
+
+```text
+DATA AS5600_DIAGNOSTICS DEVICE_ID:<id> ADDRESS:0x<7-bit-address> RAW_VALID:<0|1> RAW_ANGLE:<0..4095> STATUS:0x<status> MAGNET_DETECTED:<0|1> MAGNET_TOO_WEAK:<0|1> MAGNET_TOO_STRONG:<0|1> SAMPLE_TIMESTAMP_MS:<n> LAST_POLL_TIMESTAMP_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<UNKNOWN|HEALTHY|DEGRADED|OFFLINE|STALE> LAST_POLL_RESULT:<result> LAST_ERROR:<result> DIAGNOSTICS_REQUESTED:<0|1> DIAGNOSTICS_ATTEMPTED:<0|1> DIAGNOSTICS_VALID:<0|1> AGC:<n> MAGNITUDE:<n> DIAGNOSTICS_TIMESTAMP_MS:<n> DIAGNOSTICS_RESULT:<result> CALIBRATION_CONFIGURED:<0|1> CALIBRATION_FORMAT:<n>
+DATA AS5600_COMMUNICATION DEVICE_ID:<id> POLLS:<n> SUCCESSFUL_SAMPLES:<n> FAILED_POLLS:<n> CONSECUTIVE_FAILURES:<n> LAST_SUCCESS_MS:<n> LAST_FAILURE_MS:<n> LAST_ERROR:<result>
+DATA AS5600_CALIBRATION DEVICE_ID:<id> ID:<id|NONE> ID_TRUNCATED:<0|1> ID_SANITIZED:<0|1> HARDWARE:<id|NONE> HARDWARE_TRUNCATED:<0|1> HARDWARE_SANITIZED:<0|1> PROVENANCE:<sha-or-reference|NONE> PROVENANCE_TRUNCATED:<0|1> PROVENANCE_SANITIZED:<0|1>
+```
+
+`RAW_ANGLE` is one-turn device phase, not a mechanical steering coordinate. AGC and
+`MAGNITUDE` are the optional one-shot diagnostic read; consume them only when
+`DIAGNOSTICS_VALID:1` and retain their own timestamp rather than treating them as a
+fresh control-rate observation. The command is intentionally not part of the generic
+position-observation/capability API used by L4/L5 tests.
+
+`AS5600_COMMUNICATION` reports cached polling counters and timestamps. It does not
+perform a retry or a new read; use it to distinguish no samples, recurring transport
+errors and the last observed error from a fresh sensor observation.
+
+The calibration metadata is emitted separately from the sensor snapshot so either
+wire line remains bounded. Each metadata token is converted to a serial-safe token
+and capped at 128 characters; its `*_SANITIZED` or `*_TRUNCATED` flag makes that
+transformation explicit. A normal 64-character SHA-256 provenance is retained in
+full.
 
 ## Restricted diagnostic startup
 

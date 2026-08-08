@@ -1,7 +1,8 @@
 # Testing Architecture Guide
 
 > **Contract version:** 1.0
-> **Status:** Current testing contract from `bench-baseline-v1`.
+> **Status:** Current testing contract from `bench-baseline-v1`, including the
+> unqualified steering-development preparation. It does not record a physical pass.
 > **Operational companion:** [Physical test runbooks](testing/README.md) and
 > [evidence template](testing/EVIDENCE_TEMPLATE.md).
 
@@ -850,6 +851,14 @@ Before implementing a sensor, the agent must answer:
 14. How is the sensor physically qualified?
 15. What independent reference can validate its measurement?
 
+For a cyclic position sensor, keep three claims separate: raw phase acquisition,
+linearity correction, and mechanical reference. A bidirectional multi-turn analysis
+may produce a versioned correction candidate only when its complete passes are
+coherent and monotonic; it must retain fixture/input provenance and reject an
+incomplete capture. That candidate does not establish physical zero or absolute
+angle. Mechanical reference is a separate, explicitly authorized maintenance action,
+and raw capture data remains an external evidence artifact.
+
 Preferred dependency direction:
 
 ```text
@@ -1048,10 +1057,20 @@ Avoid one universal untyped `Sensor` interface.
 
 Different physical quantities have different semantics.
 
-The application now exposes a minimal typed velocity-observation port used by the HIL
-runner without knowing the driver. Iteration E still owns expansion to position,
-current, temperature and richer status/error semantics; do not turn the velocity
-slice into a universal sensor.
+The application exposes typed velocity and position-observation ports without
+requiring the caller to know the driver. A position observation carries degrees,
+timestamp, valid/stale/online state, source endpoint/source class, health,
+acquisition status and explicit calibration/reference provenance. `valid` means a
+fresh measurement usable in the actuator's logical coordinate system, not merely
+that a sensor returned a raw phase. For example, an AS5600 adapter must leave the
+generic observation invalid without both a profile-approved LUT and an explicit
+operator-established reference. Neither provenance field proves that the physical
+reference is correct.
+
+The executable HIL runner remains limited to its velocity manifest. Iteration E is
+therefore still incomplete: position HIL/L5 reuse, current/temperature/health
+expansion and physical evidence remain open. Do not turn either typed slice into a
+universal sensor or let a closed-loop test import a concrete sensor API.
 
 Until that boundary exists, hardware-specific L3 tests may use driver telemetry, but L4/L5 tests should not normalize that workaround into the permanent architecture.
 

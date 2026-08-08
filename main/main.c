@@ -394,6 +394,8 @@ void app_main(void)
     serial_gateway_config_t gateway_config = {
         .robot = robot,
         .actuation = &composition.application_port,
+        .as5600_diagnostics =
+            robot_composition_as5600_diagnostics_port(&composition),
         .config_manager = config_manager,
         .wifi_manager = wifi_manager,
         .ota_manager = ota_manager,

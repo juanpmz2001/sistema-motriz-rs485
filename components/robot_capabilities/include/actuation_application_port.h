@@ -28,6 +28,9 @@ typedef struct {
     bool velocity_observation_supported;
     int16_t min_rpm;
     int16_t max_rpm;
+    bool position_observation_supported;
+    float min_position_degrees;
+    float max_position_degrees;
 } actuation_application_endpoint_info_t;
 
 /* Internal source-level application vtable; it is not a stable binary ABI. */
@@ -57,6 +60,18 @@ typedef struct {
         actuation_application_port_t *port,
         robot_endpoint_id_t endpoint_id,
         robot_velocity_observation_t *observation);
+    actuation_application_result_t (*set_endpoint_position_degrees)(
+        actuation_application_port_t *port,
+        robot_endpoint_id_t endpoint_id,
+        float degrees);
+    actuation_application_result_t (*set_endpoint_position_reference_degrees)(
+        actuation_application_port_t *port,
+        robot_endpoint_id_t endpoint_id,
+        float degrees);
+    bool (*get_endpoint_position_observation)(
+        actuation_application_port_t *port,
+        robot_endpoint_id_t endpoint_id,
+        robot_position_observation_t *observation);
 } actuation_application_ops_t;
 
 struct actuation_application_port {
@@ -175,6 +190,44 @@ static inline bool actuation_application_get_endpoint_velocity_observation(
 {
     return port && port->ops && port->ops->get_endpoint_velocity_observation
                ? port->ops->get_endpoint_velocity_observation(port,
+                                                              endpoint_id,
+                                                              observation)
+               : false;
+}
+
+static inline actuation_application_result_t
+actuation_application_set_endpoint_position_degrees(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    float degrees)
+{
+    return port && port->ops && port->ops->set_endpoint_position_degrees
+               ? port->ops->set_endpoint_position_degrees(port,
+                                                          endpoint_id,
+                                                          degrees)
+               : ACTUATION_APPLICATION_INVALID_ARGUMENT;
+}
+
+static inline actuation_application_result_t
+actuation_application_set_endpoint_position_reference_degrees(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    float degrees)
+{
+    return port && port->ops &&
+                   port->ops->set_endpoint_position_reference_degrees
+               ? port->ops->set_endpoint_position_reference_degrees(
+                     port, endpoint_id, degrees)
+               : ACTUATION_APPLICATION_INVALID_ARGUMENT;
+}
+
+static inline bool actuation_application_get_endpoint_position_observation(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    robot_position_observation_t *observation)
+{
+    return port && port->ops && port->ops->get_endpoint_position_observation
+               ? port->ops->get_endpoint_position_observation(port,
                                                               endpoint_id,
                                                               observation)
                : false;

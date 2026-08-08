@@ -18,7 +18,10 @@ and typed actuator endpoints.
 - The `current_robot` profile maps four logical traction motors through two
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
   only logical index `0` to M1 of one controller and has no motion geometry.
-- Steering servo support exists but is disabled in the active configuration.
+- A separate build-selected `bench_single_steering_as5600` development profile
+  composes one motor-mode PWM output, one AS5600 position sensor and one local
+  steering controller. It has no traction geometry and is not a qualified robot
+  profile; its PWM output is not a conventional position-servo command.
 - On a supported normal startup, Wi-Fi reconnect, manifest checks, OTA announcements
   and maintenance LAN run as low-priority services. The main loop itself only sleeps.
 - Board, bus, device and endpoint configuration is selected from an immutable C
@@ -30,9 +33,12 @@ and typed actuator endpoints.
   port backed by the serialized `actuation_coordinator` and the direct SVD48
   channel endpoint adapter.
 - The full serial gateway can enumerate logical endpoint IDs, capabilities and
-  criticality, command/stop an endpoint through that application port, and read a
-  typed controller-derived velocity observation. These commands are not exposed by
-  the LAN-safe or diagnostic-only policies.
+  criticality, command/stop velocity or position through that application port, and
+  read typed observations. Velocity observations are controller-derived; the steering
+  profile's position observation is supplied by its separate AS5600 endpoint.
+  Explicit position reference is a separately confirmed maintenance operation, never
+  automatic homing. These commands are not exposed by the LAN-safe or diagnostic-only
+  policies.
 - `VERSION` reports the build Git SHA/dirty state and `PROFILE_STATUS` reports the
   board profile. A host-only manifest runner uses those fields for bounded HIL
   orchestration; it is not a motion authority or a physical-test result.
@@ -90,12 +96,13 @@ python3 tools/test_svd48_protocol.py
 python3 tools/test_dependency_contracts.py
 python3 tools/test_application_compatibility.py
 python3 tools/test_firmware_identity.py
+python3 tools/test_as5600_linearity.py
 python3 -m unittest tests.hil.test_hil_runner
 ```
 
 GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
-ESP-IDF 5.4.1 builds for both versioned profile fragments under `ci/`. The workflow
-never flashes or contacts robot hardware.
+ESP-IDF 5.4.1 builds for every versioned profile fragment under `ci/`, including the
+isolated steering bench profile. The workflow never flashes or contacts robot hardware.
 
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.
@@ -160,19 +167,22 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
   wait up to 500 ms behind an in-progress driver operation.
 - `ENABLE`, `MOVE_VEL`, fault clearing, OTA preparation, motor identification and
   maintenance register/configuration writes still bypass the coordinator.
-- The executable factory registry supports SVD48 only; other schema driver
-  descriptors are validation fixtures, not runtime factories.
+- The executable factory registry supports SVD48 plus the narrow development
+  motor-mode-PWM/AS5600/steering-controller chain; it is not a general runtime
+  factory for arbitrary hardware.
 - The compatibility `svd48_handle_t` view is limited to four channel bindings.
 - SVD48 given and observed speed registers are treated as signed raw RPM without
   artificial scaling. That unconfirmed value already feeds the legacy 5-RPM
   OTA/maintenance readiness gate and `PLATFORM_STATUS`; it is not qualified safety
   evidence. A controlled future physical test must confirm the interpretation.
-- Servo output has no position feedback and cannot prove physical position.
+- The development steering path separates the PWM actuator from an AS5600
+  observation endpoint, but no L2–L5 steering session has run. The provisional LUT
+  and controller estimate do not prove mechanical reference or physical angle.
 - Clean ESP-IDF 5.4.1 builds report 1 byte free in the dedicated 16 KiB IRAM
-  category, but the ESP32-S3 linker continues into shared D/IRAM. The audited
-  linker-map margin is 232,272 bytes and CI enforces a 192 KiB floor for both
-  profiles; see the [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md).
-  Runtime heap, stack and timing qualification remain open.
+  category, but the ESP32-S3 linker continues into shared D/IRAM. CI enforces a
+  192 KiB effective-headroom floor for every supported build profile; see the
+  [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md). Runtime heap, stack
+  and timing qualification remain open.
 - `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are
   compiled foundations but are not wired into the active runtime.
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images

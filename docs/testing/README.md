@@ -1,7 +1,8 @@
 # Physical test runbooks
 
 > **Runbook version:** 1.0
-> **Status:** Current operational index from `bench-baseline-v1`.
+> **Status:** Current operational index from `bench-baseline-v1`. The steering
+> development preparation below is not a physical qualification result.
 
 This file selects the next physical gate. It does not redefine test levels, evidence
 classes or lifecycle rules; those are owned by the
@@ -48,6 +49,11 @@ because a clean Git tree does not capture ignored `sdkconfig` or every build inp
 The current executable runner is intentionally limited to L4 generic velocity with
 E2 controller feedback. L5+ and E3/E4 require different actuation or independent
 observation paths; a manifest label alone cannot claim them.
+
+The repository now also contains a prepared motor-mode steering/AS5600 path, but no
+steering HIL manifest or physical execution. Its narrow operator procedure is
+[AS5600 motor-mode steering bench runbook](STEERING_AS5600_BENCH_RUNBOOK.md); it
+supplements this index and the testing guide rather than authorizing motion.
 
 Every motion-capable executor must attempt application-level `STOP ALL` on success,
 failure, timeout, interruption and exception, then record its response and verify
@@ -135,8 +141,13 @@ Exit gate:
 - limit and cleanup behavior are bounded; and
 - no generic position test contains PWM pins or driver-specific details.
 
-The Iteration 4 baseline does not expose an active, independently observed steering
-path; this gate remains blocked until the required profile/capabilities exist.
+The source now contains the development-only
+`bench_single_steering_as5600` profile with separate motor-mode PWM, AS5600 and
+controller devices, a generic position actuator endpoint and a separate position
+observation endpoint. It is software preparation only: no L2–L5 steering result has
+been recorded. Use the [AS5600 motor-mode steering bench runbook](STEERING_AS5600_BENCH_RUNBOOK.md)
+to prepare the named fixture; do not elevate an accepted PWM command, a controller
+estimate or a LUT report into a physical-angle claim.
 
 ## Sensor qualification — L3/L4
 
@@ -150,6 +161,12 @@ At L3, qualify transport/device conversion, sign, scale, wrap and error behavior
 L4, read through its typed observation capability and exercise timestamp, validity,
 freshness, stale and offline semantics. Compare against an independent reference
 when claiming measurement accuracy.
+
+For the AS5600 steering fixture, a valid generic position observation additionally
+requires an approved profile LUT **and** an explicit logical reference, and reports
+both calibration/reference provenance. The offline 7+7 analysis tool can prepare the
+LUT candidate; it is not a measurement-accuracy result or a mechanical-reference
+procedure. See the steering runbook for fixture/provenance and evidence requirements.
 
 Exit gate:
 

@@ -3,14 +3,17 @@
 ## Scope and status
 
 This document is the primary source for the architecture implemented by the
-`bench-baseline-v1` Iteration 4 baseline plus the current Iteration A integration.
-It is an as-built description, not the target design. The target and migration
-rationale live in [Architecture refactor](ARCHITECTURE_REFACTOR.md).
+`bench-baseline-v1` Iteration 4 baseline, the current Iteration A integration and
+the unqualified single-axis steering development slice. It is an as-built
+description, not a target design or a physical qualification record. The target and
+migration rationale live in [Architecture refactor](ARCHITECTURE_REFACTOR.md).
 
 The firmware is bench-only. `app_main()` is the composition root; component-owned
 FreeRTOS tasks perform runtime work after startup, and the main task sleeps. The
 runtime topology comes from one immutable, build-selected C profile. There is no
-JSON/YAML loader and the executable factory registry supports only SVD48.
+JSON/YAML loader. The executable factory registry supports SVD48 plus the narrow
+development steering chain described below (motor-mode PWM, AS5600 and a steering
+position controller); it is not a general runtime factory for arbitrary drivers.
 
 ## Components and dependencies
 
@@ -27,10 +30,19 @@ flowchart TB
   PREFLIGHT --> COMPOSE[robot_composition]:::transition
   COMPOSE --> RSBUS[one rs485_transport per referenced RS485 bus]:::infra
   COMPOSE --> DEV[one svd48_device per physical controller]:::active
+  COMPOSE --> PWM[bounded motor-mode PWM output]:::active
+  COMPOSE --> AS5600[as5600_device]:::active
+  COMPOSE --> STEER[steering position controller]:::active
   COMPOSE --> REG[typed endpoint registry]:::active
   DEV --> CHANNEL[M1 and M2 channels]:::active
   CHANNEL --> DIRECT[svd48_channel_endpoint_adapter]:::active
   DIRECT --> REG
+  AS5600 --> ASOBS[AS5600 position-observation adapter]:::active
+  ASOBS --> REG
+  AS5600 -->|corrected cyclic sample| STEER
+  STEER -->|bounded pulse request| PWM
+  STEER --> STEERADAPT[steering position endpoint adapter]:::active
+  STEERADAPT --> REG
   REG --> COORD[actuation_coordinator]:::active
   RSBUS --> UART[ESP-IDF UART]:::infra
   DEV --> BUSPORT[bus_transport port]:::infra --> RSBUS
@@ -38,7 +50,9 @@ flowchart TB
   SERIAL[serial_gateway]:::transition --> APP[actuation_application_port]:::active
   APP --> COORD
   APP --> VOBS[typed velocity observation port]:::active
+  APP --> POBS[typed position observation port]:::active
   VOBS --> DIRECT
+  POBS --> ASOBS
   SAFETY[robot_safety]:::transition --> APP
   MAINT[maintenance_lan]:::transition --> SERIAL
   RC[ibus_receiver / PPM]:::active --> SAFETY
@@ -56,13 +70,16 @@ flowchart TB
   CLAN[control_lan]:::dormant
 ```
 
-The active speed/stop adapter is the direct SVD48 channel adapter. The
-`robot_control_endpoint_adapter` is retained only for host characterization and is
-not wired by `robot_composition`. `serial_gateway` depends on the application port
-and primitive diagnostic data; it does not depend on profile, composition or the
-coordinator implementation. It can enumerate endpoints, command velocity or stop by
-logical endpoint ID, and read a typed velocity observation without exposing the
-concrete controller to its client.
+The active speed/stop adapter is the direct SVD48 channel adapter. In the selected
+steering development profile, the steering-position endpoint adapter is instead the
+only normal owner of the motor-mode PWM output after initialization; the raw PWM
+device is not exposed as a position endpoint. The `robot_control_endpoint_adapter`
+is retained only for host characterization and is not wired by `robot_composition`.
+`serial_gateway` depends on the application port and primitive diagnostic data; it
+does not depend on profile, composition or the coordinator implementation. It can
+enumerate endpoints, command velocity or position, stop by logical endpoint ID, and
+read typed velocity or position observations without exposing the concrete controller
+or sensor to its client.
 
 ## `SET_SPEED` sequence
 
@@ -153,11 +170,11 @@ up to 500 ms to acquire it and then behind the current bus transaction.
 
 ```mermaid
 flowchart TD
-  SELECT[Kconfig selects current_robot or bench_single_svd48_motor]
+  SELECT[Kconfig selects current_robot, bench_single_svd48_motor or bench_single_steering_as5600]
   SCHEMA[robot_profile_validate schema and board resources]
   LOOKUP[lookup executable factory by driver_id]
   CAPACITY[validate factory ops, capabilities, storage and legacy capacity]
-  BUSES[construct each referenced RS485 bus]
+  BUSES[construct each referenced RS485, PWM or I2C bus]
   DEVICES[construct each device using its bus_id]
   ENDPOINTS[create endpoints in profile array order]
   LEGACY[create legacy index bindings, maximum four]
@@ -188,15 +205,76 @@ across buses are rejected until that API carries bus/device identity.
 
 The supported profiles are:
 
-| Profile | RS485 topology | Endpoint topology | Geometry |
+| Profile | Bus/device topology | Endpoint topology | Geometry |
 | --- | --- | --- | --- |
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
+| `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
 
-The bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0` and
-`STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
-there is no application geometry. Both profiles also declare a GPIO RC bus, which
-`main` consumes separately from SVD48 composition.
+The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
+and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
+there is no application geometry. Both SVD48 profiles also declare a GPIO RC bus,
+which `main` consumes separately from SVD48 composition.
+
+`bench_single_steering_as5600` is deliberately isolated from the traction profiles:
+its PWM GPIO is a motor-mode output rather than an RC input, and it has no geometry
+or traction endpoints. Its actuator, sensor and controller are three distinct
+profile devices. The controller owns the actuator's bounded PWM callback; the AS5600
+adapter exposes a separate read-only observation endpoint. This is a development
+composition, not evidence that the connected mechanism, wiring, PWM polarity or
+reported angle has been physically qualified.
+
+## Motor-mode steering, AS5600 and calibration boundary
+
+The steering development chain has three intentionally independent responsibilities:
+
+- `motor_mode_pwm` bounds and writes a PWM pulse. In this mode a pulse requests a
+  direction and speed; it never means that a requested steering angle was reached.
+- `as5600_device` owns I2C/register decoding, magnetic-status diagnostics, raw phase
+  and the profile-supplied cyclic correction. Its endpoint adapter converts only an
+  approved, fresh and magnet-detected sample that has also been explicitly referenced
+  into a generic `PositionObservation`. It reports the source as an independent
+  sensor and makes `valid` false when calibration or reference is absent, or when the
+  sample is stale, offline or not magnet-backed.
+- `steering_position_controller` receives corrected cyclic samples and owns the local
+  target/neutral/reversal policy. It owns neither I2C nor GPIO; the endpoint adapter
+  supplies the sensor sample and bounded PWM callback.
+
+The public position actuator and position-observation endpoints remain separate even
+though this bench controller uses the AS5600 as its local feedback input. That
+separation prevents a generic test from reaching into PWM, I2C or AS5600 registers;
+it does not by itself establish independent physical evidence or a passed L5 gate.
+
+The controller begins **UNHOMED** and commands neutral until a maintenance operation
+explicitly maps a fresh, physically verified pose to the logical coordinate system.
+Neither initialization nor a normal position request infers mechanical zero from the
+cyclic AS5600 phase. The normal serial position API does not auto-home; the explicit
+reference operation is maintenance-only, requires an already stopped and safe setup,
+is not evidence that the physical reference is correct, and cannot clear or re-arm a
+latched steering-controller fault.
+
+The empirical material on `origin/ensayo-nueva-pata` is design input, not a physical
+pass for this integration. The offline
+[`analyze_as5600_linearity.py`](../tools/analyze_as5600_linearity.py) tool accepts a
+positive and a negative capture with at least seven complete turns each, rejects
+incomplete, non-monotonic or mutually incoherent passes, and emits a candidate
+128-node cyclic centidegree LUT. Candidate and fixture identity are required; a
+separate cross-validation mode applies a fixed candidate to a distinct capture and
+reports residuals without refitting it. Its JSON contains input/LUT hashes, pass
+counts and quality metadata but never preserves raw samples. A strictly monotonic LUT
+prevents an invalid phase mapping; it does not prove mechanical zero, absolute physical
+angle, current magnet alignment or closed-loop performance. Per-turn checks also
+cannot prove that intra-turn speed ripple was not mistaken for phase nonlinearity. A
+reviewed candidate must remain scoped to its named fixture, sensor, magnet, shaft and
+geometry before it becomes a static profile calibration. Raw captures and durable
+evidence remain external.
+
+The scoped historical candidate reduced an inferred historical validation from 8.171°
+to 3.597° combined RMSE, but still had 7.925° P95 and 15.924° maximum absolute
+post-correction residual. It was based on a constant-speed inference and is not a
+physical accuracy claim for this profile. The controller's `[0°, +3°]` arrival band
+therefore controls its local neutral/drive decision only; it cannot be reused as an
+L4/L5 measurement tolerance without new independent L3 evidence.
 
 ## Polling, observations and health
 
@@ -234,8 +312,39 @@ Iteration A exposes the same controller-derived speed through the typed
 `robot_velocity_observation_t` application boundary. The value includes validity,
 RPM, sample timestamp, source, online, speed-specific stale and channel-health
 semantics. `GET_ENDPOINT_OBSERVATION` uses that boundary and identifies its type as
-`VELOCITY_RPM`; it is E2 controller feedback, not an independent E3 sensor. Other
-observation types remain future work and actuation does not imply observation.
+`VELOCITY_RPM`; it is E2 controller feedback, not an independent E3 sensor.
+
+The steering slice adds a typed `robot_position_observation_t` boundary without
+making position actuation imply position observation. It preserves degrees, timestamp,
+source endpoint/source class, online, stale, health, acquisition status and explicit
+`calibrated`/`referenced` provenance. The AS5600 adapter sets `calibrated` only for
+the profile-approved LUT and refuses to expose the value as valid logical feedback
+without both that approval and an explicit controller reference. This source-level
+contract makes a future generic position test possible; it is not a physical sensor
+qualification, E3 result or L5 pass.
+Current and temperature observations remain future work.
+
+The current one-axis profile clocks the bit-banged AS5600 bus at 5 kHz and schedules
+each control-rate poll every 40 ms. Each poll makes one contiguous three-byte
+`STATUS+RAW_ANGLE` transaction; a separate
+three-byte AGC/magnitude diagnostic is attempted only once after the first successful
+primary sample. The profile's 25 ms response deadline includes a conservative
+bit-bang recovery-path and CPU/GPIO allowance. Profile validation then budgets the
+initial two-transaction slot, the 40 ms polling cadence and the 10 ms service cadence
+against the controller's 120 ms stale-to-neutral window. Deadlines schedule from their
+prior slot rather than from completion, skipping an overdue slot instead of accumulating
+drift. This prevents a profile from making that local software policy internally
+impossible, but it is not a scheduler-jitter, physical neutral or stop-latency
+measurement.
+
+The steering adapter treats a known `STATUS.ML` field warning as a narrowly named
+development exception only when `STATUS.MD` remains set and the primary read succeeded.
+It does not generalize `DEGRADED` health into permission to drive: `MH`, missing `MD`,
+partial diagnostics and failed primary reads are rejected. A first-poll diagnostic
+failure consequently becomes a local latched sensor fault rather than an automatic
+retry/re-arm route. PWM construction attaches neutral duty before routing the pin;
+deinit requests neutral, stops LEDC and releases the GPIO. Its electrical transition
+remains an L3 hardware observation, not an asserted physical safety guarantee.
 
 ## Tasks and locks
 
@@ -265,13 +374,14 @@ updated. This avoids a bus/state lock cycle, but it does not create stop precede
 or global single-writer authority.
 
 Composition configures a 1000 ms RS485 lock cap. `bus_transport` clips lock
-acquisition to the transaction timeout, however, and both current profiles configure
+acquisition to the transaction timeout, however, and both SVD48 profiles configure
 100 ms, so 100 ms is the effective bus-lock acquisition bound for their SVD48 calls.
 
 | Task | Priority | Stack | Active mode |
 | --- | ---: | ---: | --- |
 | `robot_safety` | 9 | 4096 | Supported normal runtime |
 | `svd48_poll` | 8 | 4096 | Supported normal runtime |
+| `steering_ctl` | 8 | 4096 | Only when a selected profile contains AS5600 steering; 10 ms controller tick, profile-scheduled sensor polling |
 | `serial_gateway` | 6 | 12288 | Normal and restricted diagnostic runtime |
 | `ibus_rx` | 5 | 4096 | Normal runtime when the RC bus is present |
 | `gateway_stream` | 4 | 4096 | Normal runtime only |
@@ -284,8 +394,9 @@ acquisition to the transaction timeout, however, and both current profiles confi
 ## Startup and lifecycle
 
 Normal startup initializes NVS/configuration, initializes Wi-Fi/OTA handles, selects
-and composes the profile, creates the legacy facade, attempts boot stop, starts
-polling, RC and safety, then starts the serial gateway and optional network tasks.
+and composes the profile, creates the legacy facade, attempts boot stop, starts the
+profile's polling/control services, RC and safety where present, then starts the
+serial gateway and optional network tasks.
 Shutdown and construction failure unwind tasks, adapters, devices and buses in
 reverse order. A poll-task stop timeout preserves every device, lock and transport
 dependency; restart is rejected until a later stop call collects the task's completion
@@ -305,19 +416,23 @@ mode as a successful self-test.
 
 In normal serial mode, `VERSION` reports the full build Git SHA and dirty flag,
 `PROFILE_STATUS` reports the selected board, and `ENDPOINTS` reports logical IDs,
-names, criticality, capability discovery, availability and RPM bounds. The endpoint-scoped
-`SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` and `GET_ENDPOINT_OBSERVATION` commands use the
+names, criticality, capability discovery, availability and velocity/position bounds.
+The endpoint-scoped speed, position, stop and typed-observation commands use the
 application boundary; they are deliberately unavailable through the LAN-safe policy
-and in restricted diagnostic mode. Availability inhibits speed and observation, but
-does not suppress a stop attempt for an existing stoppable endpoint. Legacy
-numeric-index commands remain compatible.
+and in restricted diagnostic mode. An explicit position-reference operation is a
+maintenance path: it first stops the endpoint, requires an affirmative confirmation
+token and must not be confused with a normal position command or automatic homing.
+Availability inhibits ordinary actuation and observation, but does not suppress a
+stop attempt for an existing stoppable endpoint. Legacy numeric-index commands remain
+compatible.
 
 The host-only runner in `tools/hil_runner.py` consumes this normal application API
 from a versioned manifest. It adds orchestration, identity gates, bounded commands,
 assertions, evidence and best-effort cleanup outside the firmware; there is no
 firmware test mode or hardware-specific bypass. The runner is not an actuation
 authority, TTL/deadman implementation or emergency stop, so it does not close the
-minimum-safe-motion gate.
+minimum-safe-motion gate. Its current executable manifests cover only generic
+velocity; the steering preparation does not claim a runnable steering HIL pass.
 
 ## Transitional and dormant boundaries
 

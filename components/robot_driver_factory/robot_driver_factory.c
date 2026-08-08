@@ -48,8 +48,9 @@ bool robot_composition_preflight(
     }
     diagnostics->schema_valid = true;
 
-    /* The active composition always constructs the transitional legacy view.
-     * It cannot represent a runtime with no endpoint bindings. */
+    /* Every active composition needs an application endpoint, but the
+     * transitional SVD48 legacy view is optional.  A position-only bench
+     * profile must not be rejected merely because it has no SVD48 channels. */
     if (profile->endpoint_count == 0U) {
         diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED;
         diagnostics->stage = ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT;
@@ -64,11 +65,26 @@ bool robot_composition_preflight(
         diagnostics->available_storage = registry ? registry->endpoint_capacity : 0U;
         return false;
     }
-    if (profile->endpoint_count > registry->legacy_binding_capacity) {
+    size_t legacy_binding_count = 0U;
+    for (size_t index = 0U; index < profile->endpoint_count; ++index) {
+        const robot_endpoint_profile_t *endpoint = &profile->endpoints[index];
+        const robot_device_profile_t *device = NULL;
+        for (size_t device_index = 0U; device_index < profile->device_count;
+             ++device_index) {
+            if (profile->devices[device_index].id == endpoint->device_id) {
+                device = &profile->devices[device_index];
+                break;
+            }
+        }
+        if (device && device->driver_id == ROBOT_DRIVER_SVD48) {
+            ++legacy_binding_count;
+        }
+    }
+    if (legacy_binding_count > registry->legacy_binding_capacity) {
         diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_LEGACY_BINDING_LIMIT;
         diagnostics->stage = ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT;
         diagnostics->factory_result = ROBOT_FACTORY_ENDPOINT_FAILED;
-        diagnostics->required_storage = profile->endpoint_count;
+        diagnostics->required_storage = legacy_binding_count;
         diagnostics->available_storage = registry->legacy_binding_capacity;
         return false;
     }
@@ -86,15 +102,22 @@ bool robot_composition_preflight(
             diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_FACTORY_MISSING;
             return false;
         }
-        const robot_bus_profile_t *bus = find_bus(profile, device->bus_id);
-        if (!bus || factory->bus_type != bus->type) {
+        const robot_bus_profile_t *bus =
+            device->bus_id == ROBOT_PROFILE_NO_BUS
+                ? NULL
+                : find_bus(profile, device->bus_id);
+        const bool bus_matches =
+            factory->bus_type == ROBOT_BUS_NONE
+                ? bus == NULL && device->bus_id == ROBOT_PROFILE_NO_BUS
+                : bus != NULL && factory->bus_type == bus->type;
+        if (!bus_matches) {
             diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_BUS_INCOMPATIBLE;
             return false;
         }
         diagnostics->stage = ROBOT_COMPOSITION_STAGE_FACTORY_VALIDATE;
         /* Poll deadlines use signed modular comparison and must stay below
          * INT32_MAX to remain unambiguous across uint32_t clock wraparound. */
-        if (bus->telemetry_period_ms >= INT32_MAX ||
+        if ((bus && bus->telemetry_period_ms >= INT32_MAX) ||
             !factory->ops || !factory->ops->validate ||
             !factory->ops->storage_required || !factory->ops->construct ||
             !factory->ops->create_endpoint || !factory->ops->start ||
@@ -143,10 +166,16 @@ bool robot_composition_preflight(
         diagnostics->device_id = endpoint->device_id;
         diagnostics->driver_id = device ? device->driver_id : 0;
         diagnostics->bus_id = device ? device->bus_id : 0U;
-        const bool velocity_without_stop =
-            (endpoint->capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) != 0U &&
+        /* A profile capability that can move an output must carry an
+         * independently invokable stop path.  This applies equally to the
+         * newer position actuator boundary; otherwise a future PWM/position
+         * factory could bypass the velocity-only invariant. */
+        const bool motion_without_stop =
+            (endpoint->capabilities &
+             (ROBOT_CAPABILITY_VELOCITY_RPM | ROBOT_CAPABILITY_POSITION)) !=
+                0U &&
             (endpoint->capabilities & ROBOT_CAPABILITY_STOPPABLE) == 0U;
-        if (!factory || endpoint->capabilities == 0U || velocity_without_stop ||
+        if (!factory || endpoint->capabilities == 0U || motion_without_stop ||
             (endpoint->capabilities & ~factory->capabilities) != 0U ||
             endpoint->min_rpm > endpoint->max_rpm) {
             diagnostics->code = ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED;

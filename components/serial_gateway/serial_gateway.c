@@ -1,5 +1,7 @@
 #include "serial_gateway.h"
 
+#include "as5600_diagnostics_port.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -37,6 +39,7 @@ static const char *TAG = "serial_gateway";
 #define GATEWAY_STREAM_TASK_STACK 4096
 #define GATEWAY_COMMAND_LOCK_TIMEOUT_MS 1000
 #define GATEWAY_OUTPUT_CHUNK_MAX 768
+#define AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX 128U
 #define MAINTENANCE_LAN_DEFAULT_PORT 32321
 #define PLATFORM_SAFE_RPM_THRESHOLD 5
 #define PLATFORM_SAFE_FLOAT_THRESHOLD 0.001f
@@ -439,6 +442,47 @@ static const char *safe_text(const char *value, const char *fallback)
     return (value && value[0] != '\0') ? value : fallback;
 }
 
+/* Calibration metadata originates in the immutable build profile, but it is
+ * still text carried over a whitespace-delimited serial protocol. Keep every
+ * token bounded and wire-safe so an unexpectedly long or malformed profile
+ * string cannot truncate a diagnostic response line. The 128-character bound
+ * preserves a full SHA-256 provenance value and ordinary calibration IDs. */
+static void as5600_diagnostics_token(const char *value,
+                                     const char *fallback,
+                                     char output[AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX +
+                                                 1U],
+                                     bool *truncated,
+                                     bool *sanitized)
+{
+    const char *source = safe_text(value, fallback);
+    bool token_truncated = false;
+    bool token_sanitized = false;
+    size_t index = 0U;
+    for (; source[index] != '\0' &&
+           index < AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX;
+         ++index) {
+        const unsigned char character = (unsigned char)source[index];
+        if (isalnum(character) || character == '-' || character == '_' ||
+            character == '.' || character == ':' || character == '/' ||
+            character == '@') {
+            output[index] = (char)character;
+        } else {
+            output[index] = '_';
+            token_sanitized = true;
+        }
+    }
+    if (source[index] != '\0') {
+        token_truncated = true;
+    }
+    output[index] = '\0';
+    if (truncated != NULL) {
+        *truncated = token_truncated;
+    }
+    if (sanitized != NULL) {
+        *sanitized = token_sanitized;
+    }
+}
+
 static const char *endpoint_health_name(robot_endpoint_health_t health)
 {
     switch (health) {
@@ -458,12 +502,91 @@ static const char *endpoint_health_name(robot_endpoint_health_t health)
     }
 }
 
+/* Concrete device diagnostic names intentionally stay out of the generic
+ * endpoint/position-observation handlers below. */
+static const char *as5600_device_result_name(as5600_device_result_t result)
+{
+    switch (result) {
+    case AS5600_DEVICE_OK:
+        return "OK";
+    case AS5600_DEVICE_INVALID_ARGUMENT:
+        return "INVALID_ARGUMENT";
+    case AS5600_DEVICE_NOT_READY:
+        return "NOT_READY";
+    case AS5600_DEVICE_BUS_BUSY:
+        return "BUS_BUSY";
+    case AS5600_DEVICE_TIMEOUT:
+        return "TIMEOUT";
+    case AS5600_DEVICE_IO_ERROR:
+        return "IO_ERROR";
+    case AS5600_DEVICE_BAD_RESPONSE:
+        return "BAD_RESPONSE";
+    case AS5600_DEVICE_PARTIAL:
+        return "PARTIAL";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *as5600_device_health_name(as5600_device_health_t health)
+{
+    switch (health) {
+    case AS5600_DEVICE_HEALTH_HEALTHY:
+        return "HEALTHY";
+    case AS5600_DEVICE_HEALTH_DEGRADED:
+        return "DEGRADED";
+    case AS5600_DEVICE_HEALTH_OFFLINE:
+        return "OFFLINE";
+    case AS5600_DEVICE_HEALTH_STALE:
+        return "STALE";
+    case AS5600_DEVICE_HEALTH_UNKNOWN:
+    default:
+        return "UNKNOWN";
+    }
+}
+
 static const char *velocity_observation_source_name(
     robot_velocity_observation_source_t source)
 {
     return source == ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK
                ? "DEVICE_FEEDBACK"
                : "UNKNOWN";
+}
+
+static const char *position_observation_source_name(
+    robot_position_observation_source_t source)
+{
+    switch (source) {
+    case ROBOT_POSITION_OBSERVATION_SOURCE_DEVICE_FEEDBACK:
+        return "DEVICE_FEEDBACK";
+    case ROBOT_POSITION_OBSERVATION_SOURCE_INDEPENDENT_SENSOR:
+        return "INDEPENDENT_SENSOR";
+    case ROBOT_POSITION_OBSERVATION_SOURCE_INFERRED:
+        return "INFERRED";
+    case ROBOT_POSITION_OBSERVATION_SOURCE_UNKNOWN:
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *capability_error_name(robot_capability_error_t error)
+{
+    switch (error) {
+    case ROBOT_CAP_OK:
+        return "OK";
+    case ROBOT_CAP_INVALID_ARGUMENT:
+        return "INVALID_ARGUMENT";
+    case ROBOT_CAP_UNAVAILABLE:
+        return "UNAVAILABLE";
+    case ROBOT_CAP_UNSUPPORTED:
+        return "UNSUPPORTED";
+    case ROBOT_CAP_OUT_OF_RANGE:
+        return "OUT_OF_RANGE";
+    case ROBOT_CAP_IO_ERROR:
+        return "IO_ERROR";
+    default:
+        return "UNKNOWN";
+    }
 }
 
 static const char *endpoint_criticality_name(
@@ -2082,7 +2205,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_diagnostic_help(serial_gateway_handle_t handle)
@@ -2126,7 +2249,7 @@ static void handle_endpoints(serial_gateway_handle_t handle,
         }
         print_locked(
             handle,
-            "DATA ENDPOINT ID:%u NAME:%s CRITICALITY:%s AVAILABLE:%u CAPABILITIES:0x%08lx VELOCITY_RPM:%u VELOCITY_OBSERVATION:%u STOPPABLE:%u MIN_RPM:%d MAX_RPM:%d\n",
+            "DATA ENDPOINT ID:%u NAME:%s CRITICALITY:%s AVAILABLE:%u CAPABILITIES:0x%08lx VELOCITY_RPM:%u VELOCITY_OBSERVATION:%u STOPPABLE:%u MIN_RPM:%d MAX_RPM:%d POSITION:%u POSITION_REFERENCE:%u POSITION_OBSERVATION:%u MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f\n",
             (unsigned)endpoint.id,
             safe_text(endpoint.name, "UNKNOWN"),
             endpoint_criticality_name(endpoint.criticality),
@@ -2139,7 +2262,15 @@ static void handle_endpoints(serial_gateway_handle_t handle,
             (endpoint.capabilities & ROBOT_CAPABILITY_STOPPABLE) != 0U ? 1U
                                                                         : 0U,
             endpoint.min_rpm,
-            endpoint.max_rpm);
+            endpoint.max_rpm,
+            (endpoint.capabilities & ROBOT_CAPABILITY_POSITION) != 0U ? 1U
+                                                                        : 0U,
+            (endpoint.capabilities & ROBOT_CAPABILITY_POSITION_REFERENCE) != 0U
+                ? 1U
+                : 0U,
+            endpoint.position_observation_supported ? 1U : 0U,
+            (double)endpoint.min_position_degrees,
+            (double)endpoint.max_position_degrees);
     }
 }
 
@@ -2198,6 +2329,145 @@ static void handle_set_endpoint_speed(serial_gateway_handle_t handle,
                  "ERR SET_ENDPOINT_SPEED_FAILED ID:%u RESULT:%s\n",
                  (unsigned)endpoint_id,
                  application_result_name(result));
+}
+
+static void handle_set_endpoint_position(serial_gateway_handle_t handle,
+                                         int argc,
+                                         char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    float degrees = 0.0f;
+    if (argc != 3 || !parse_endpoint_id_arg(argv[1], &endpoint_id) ||
+        !parse_float_arg(argv[2], &degrees) || !isfinite(degrees)) {
+        print_locked(handle, "ERR USAGE SET_ENDPOINT_POSITION id degrees\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    if (!endpoint.available) {
+        print_locked(handle,
+                     "ERR ENDPOINT_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    if ((endpoint.capabilities & ROBOT_CAPABILITY_POSITION) == 0U) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:POSITION\n",
+            (unsigned)endpoint_id);
+        return;
+    }
+    if (!isfinite(endpoint.min_position_degrees) ||
+        !isfinite(endpoint.max_position_degrees) ||
+        endpoint.min_position_degrees > endpoint.max_position_degrees) {
+        print_locked(handle,
+                     "ERR ENDPOINT_POSITION_RANGE_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    if (degrees < endpoint.min_position_degrees ||
+        degrees > endpoint.max_position_degrees) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_POSITION_OUT_OF_RANGE ID:%u REQUESTED:%.3f MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f\n",
+            (unsigned)endpoint_id,
+            (double)degrees,
+            (double)endpoint.min_position_degrees,
+            (double)endpoint.max_position_degrees);
+        return;
+    }
+    actuation_application_result_t result =
+        actuation_application_set_endpoint_position_degrees(
+            handle->config.actuation, endpoint_id, degrees);
+    if (result == ACTUATION_APPLICATION_OK) {
+        print_locked(handle,
+                     "OK SET_ENDPOINT_POSITION ID:%u POSITION_TARGET_DEG:%.3f\n",
+                     (unsigned)endpoint_id,
+                     (double)degrees);
+        return;
+    }
+    print_locked(handle,
+                 "ERR SET_ENDPOINT_POSITION_FAILED ID:%u RESULT:%s\n",
+                 (unsigned)endpoint_id,
+                 application_result_name(result));
+}
+
+static void handle_set_endpoint_position_reference(
+    serial_gateway_handle_t handle,
+    int argc,
+    char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    float degrees = 0.0f;
+    if (argc != 4 || !parse_endpoint_id_arg(argv[1], &endpoint_id) ||
+        !parse_float_arg(argv[2], &degrees) || !isfinite(degrees) ||
+        strcasecmp(argv[3], "CONFIRM") != 0) {
+        print_locked(
+            handle,
+            "ERR USAGE SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    if (!endpoint.available) {
+        print_locked(handle,
+                     "ERR ENDPOINT_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    if ((endpoint.capabilities & ROBOT_CAPABILITY_POSITION_REFERENCE) == 0U ||
+        (endpoint.capabilities & ROBOT_CAPABILITY_STOPPABLE) == 0U) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:POSITION_REFERENCE\n",
+            (unsigned)endpoint_id);
+        return;
+    }
+    if (!isfinite(endpoint.min_position_degrees) ||
+        !isfinite(endpoint.max_position_degrees) ||
+        endpoint.min_position_degrees > endpoint.max_position_degrees) {
+        print_locked(handle,
+                     "ERR ENDPOINT_POSITION_RANGE_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    if (degrees < endpoint.min_position_degrees ||
+        degrees > endpoint.max_position_degrees) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_POSITION_OUT_OF_RANGE ID:%u REQUESTED:%.3f MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f\n",
+            (unsigned)endpoint_id,
+            (double)degrees,
+            (double)endpoint.min_position_degrees,
+            (double)endpoint.max_position_degrees);
+        return;
+    }
+    actuation_application_result_t result =
+        actuation_application_set_endpoint_position_reference_degrees(
+            handle->config.actuation, endpoint_id, degrees);
+    if (result == ACTUATION_APPLICATION_OK) {
+        print_locked(
+            handle,
+            "OK SET_ENDPOINT_POSITION_REFERENCE ID:%u REFERENCE_DEG:%.3f\n",
+            (unsigned)endpoint_id,
+            (double)degrees);
+        return;
+    }
+    print_locked(
+        handle,
+        "ERR SET_ENDPOINT_POSITION_REFERENCE_FAILED ID:%u RESULT:%s\n",
+        (unsigned)endpoint_id,
+        application_result_name(result));
 }
 
 static void handle_stop_endpoint(serial_gateway_handle_t handle,
@@ -2273,6 +2543,165 @@ static void handle_get_endpoint_observation(serial_gateway_handle_t handle,
         observation.stale ? 1U : 0U,
         endpoint_health_name(observation.health),
         observation.health != ROBOT_ENDPOINT_HEALTH_UNKNOWN ? 1U : 0U);
+}
+
+static void handle_get_endpoint_position_observation(
+    serial_gateway_handle_t handle,
+    int argc,
+    char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    if (argc != 2 || !parse_endpoint_id_arg(argv[1], &endpoint_id)) {
+        print_locked(handle,
+                     "ERR USAGE GET_ENDPOINT_POSITION_OBSERVATION id\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    robot_position_observation_t observation;
+    if (!actuation_application_get_endpoint_position_observation(
+            handle->config.actuation, endpoint_id, &observation)) {
+        print_locked(handle,
+                     "ERR ENDPOINT_POSITION_OBSERVATION_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    print_locked(
+        handle,
+        "DATA ENDPOINT_POSITION_OBSERVATION ID:%u TYPE:POSITION_DEGREES VALID:%u CALIBRATED:%u REFERENCED:%u DEGREES:%.3f TIMESTAMP_MS:%lu SOURCE_ENDPOINT_ID:%u SOURCE:%s ONLINE:%u STALE:%u HEALTH:%s HEALTH_AVAILABLE:%u STATUS:%s\n",
+        (unsigned)endpoint_id,
+        observation.valid ? 1U : 0U,
+        observation.calibrated ? 1U : 0U,
+        observation.referenced ? 1U : 0U,
+        (double)observation.degrees,
+        (unsigned long)observation.timestamp_ms,
+        (unsigned)observation.source_endpoint_id,
+        position_observation_source_name(observation.source),
+        observation.online ? 1U : 0U,
+        observation.stale ? 1U : 0U,
+        endpoint_health_name(observation.health),
+        observation.health != ROBOT_ENDPOINT_HEALTH_UNKNOWN ? 1U : 0U,
+        capability_error_name(observation.status));
+}
+
+/* L2/L3-only, profile-device-scoped diagnostics. This reads the last cached
+ * AS5600 snapshot through an injected port; it never polls I2C or affects any
+ * actuator/controller state. */
+static void handle_get_as5600_diagnostics(serial_gateway_handle_t handle,
+                                          int argc,
+                                          char *argv[])
+{
+    uint16_t device_id = 0U;
+    if (argc != 2 || !parse_u16_any_arg(argv[1], &device_id) ||
+        device_id == 0U) {
+        print_locked(handle,
+                     "ERR USAGE GET_AS5600_DIAGNOSTICS device_id\n");
+        return;
+    }
+
+    as5600_device_diagnostics_t diagnostics;
+    if (!as5600_diagnostics_port_read(handle->config.as5600_diagnostics,
+                                      device_id,
+                                      &diagnostics)) {
+        print_locked(handle,
+                     "ERR AS5600_DIAGNOSTICS_UNAVAILABLE DEVICE_ID:%u\n",
+                     (unsigned)device_id);
+        return;
+    }
+
+    char calibration_id[AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX + 1U];
+    char calibration_hardware[AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX + 1U];
+    char calibration_provenance[AS5600_DIAGNOSTICS_METADATA_TOKEN_MAX + 1U];
+    bool calibration_id_truncated = false;
+    bool calibration_hardware_truncated = false;
+    bool calibration_provenance_truncated = false;
+    bool calibration_id_sanitized = false;
+    bool calibration_hardware_sanitized = false;
+    bool calibration_provenance_sanitized = false;
+    as5600_diagnostics_token(
+        diagnostics.calibration_configured
+            ? diagnostics.calibration_metadata.calibration_id
+            : NULL,
+        "NONE",
+        calibration_id,
+        &calibration_id_truncated,
+        &calibration_id_sanitized);
+    as5600_diagnostics_token(
+        diagnostics.calibration_configured
+            ? diagnostics.calibration_metadata.hardware_identity
+            : NULL,
+        "NONE",
+        calibration_hardware,
+        &calibration_hardware_truncated,
+        &calibration_hardware_sanitized);
+    as5600_diagnostics_token(
+        diagnostics.calibration_configured
+            ? diagnostics.calibration_metadata.provenance
+            : NULL,
+        "NONE",
+        calibration_provenance,
+        &calibration_provenance_truncated,
+        &calibration_provenance_sanitized);
+
+    const as5600_device_snapshot_t *snapshot = &diagnostics.snapshot;
+    const as5600_device_communication_t *communication =
+        &diagnostics.communication;
+    print_locked(
+        handle,
+        "DATA AS5600_DIAGNOSTICS DEVICE_ID:%u ADDRESS:0x%02X RAW_VALID:%u RAW_ANGLE:%u STATUS:0x%02X MAGNET_DETECTED:%u MAGNET_TOO_WEAK:%u MAGNET_TOO_STRONG:%u SAMPLE_TIMESTAMP_MS:%lu LAST_POLL_TIMESTAMP_MS:%lu ONLINE:%u STALE:%u HEALTH:%s LAST_POLL_RESULT:%s LAST_ERROR:%s DIAGNOSTICS_REQUESTED:%u DIAGNOSTICS_ATTEMPTED:%u DIAGNOSTICS_VALID:%u AGC:%u MAGNITUDE:%u DIAGNOSTICS_TIMESTAMP_MS:%lu DIAGNOSTICS_RESULT:%s CALIBRATION_CONFIGURED:%u CALIBRATION_FORMAT:%u\n",
+        (unsigned)diagnostics.device_id,
+        (unsigned)diagnostics.i2c_address,
+        snapshot->raw_angle_valid ? 1U : 0U,
+        (unsigned)snapshot->raw_angle,
+        (unsigned)snapshot->status,
+        snapshot->magnet_detected ? 1U : 0U,
+        snapshot->magnet_too_weak ? 1U : 0U,
+        snapshot->magnet_too_strong ? 1U : 0U,
+        (unsigned long)snapshot->sample_timestamp_ms,
+        (unsigned long)snapshot->last_poll_timestamp_ms,
+        snapshot->online ? 1U : 0U,
+        snapshot->stale ? 1U : 0U,
+        as5600_device_health_name(snapshot->health),
+        as5600_device_result_name(snapshot->last_poll_result),
+        as5600_device_result_name(snapshot->last_error),
+        snapshot->diagnostics_requested ? 1U : 0U,
+        snapshot->diagnostics_attempted ? 1U : 0U,
+        snapshot->diagnostics_valid ? 1U : 0U,
+        (unsigned)snapshot->automatic_gain_control,
+        (unsigned)snapshot->magnitude,
+        (unsigned long)snapshot->diagnostics_timestamp_ms,
+        as5600_device_result_name(snapshot->diagnostics_last_result),
+        diagnostics.calibration_configured ? 1U : 0U,
+        (unsigned)diagnostics.calibration_metadata.format_version);
+    print_locked(
+        handle,
+        "DATA AS5600_COMMUNICATION DEVICE_ID:%u POLLS:%lu SUCCESSFUL_SAMPLES:%lu FAILED_POLLS:%lu CONSECUTIVE_FAILURES:%lu LAST_SUCCESS_MS:%lu LAST_FAILURE_MS:%lu LAST_ERROR:%s\n",
+        (unsigned)diagnostics.device_id,
+        (unsigned long)communication->polls,
+        (unsigned long)communication->successful_samples,
+        (unsigned long)communication->failed_polls,
+        (unsigned long)communication->consecutive_failures,
+        (unsigned long)communication->last_success_ms,
+        (unsigned long)communication->last_failure_ms,
+        as5600_device_result_name(communication->last_error));
+    print_locked(
+        handle,
+        "DATA AS5600_CALIBRATION DEVICE_ID:%u ID:%s ID_TRUNCATED:%u ID_SANITIZED:%u HARDWARE:%s HARDWARE_TRUNCATED:%u HARDWARE_SANITIZED:%u PROVENANCE:%s PROVENANCE_TRUNCATED:%u PROVENANCE_SANITIZED:%u\n",
+        (unsigned)diagnostics.device_id,
+        calibration_id,
+        calibration_id_truncated ? 1U : 0U,
+        calibration_id_sanitized ? 1U : 0U,
+        calibration_hardware,
+        calibration_hardware_truncated ? 1U : 0U,
+        calibration_hardware_sanitized ? 1U : 0U,
+        calibration_provenance,
+        calibration_provenance_truncated ? 1U : 0U,
+        calibration_provenance_sanitized ? 1U : 0U);
 }
 
 static void handle_composition_status(serial_gateway_handle_t handle)
@@ -2915,10 +3344,18 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_endpoints(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SET_ENDPOINT_SPEED") == 0) {
         handle_set_endpoint_speed(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SET_ENDPOINT_POSITION") == 0) {
+        handle_set_endpoint_position(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SET_ENDPOINT_POSITION_REFERENCE") == 0) {
+        handle_set_endpoint_position_reference(handle, argc, argv);
     } else if (strcasecmp(argv[0], "STOP_ENDPOINT") == 0) {
         handle_stop_endpoint(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_ENDPOINT_OBSERVATION") == 0) {
         handle_get_endpoint_observation(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "GET_ENDPOINT_POSITION_OBSERVATION") == 0) {
+        handle_get_endpoint_position_observation(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "GET_AS5600_DIAGNOSTICS") == 0) {
+        handle_get_as5600_diagnostics(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SPEED") == 0) {
         uint8_t motor = 0;
         if (argc != 2 || !parse_motor_arg(handle, argv[1], &motor)) {

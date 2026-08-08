@@ -34,6 +34,17 @@ struct robot_control_t {
     uint32_t command_sequence;
 };
 
+/* The composition may expose a bench-only non-SVD48 subsystem (for example
+ * steering position).  Keep the legacy facade present for gateway/safety
+ * status plumbing, but never let an empty legacy view masquerade as a motor
+ * controller. */
+static size_t legacy_motor_count(const robot_control_handle_t handle)
+{
+    return handle != NULL && handle->config.svd48 != NULL
+               ? svd48_get_motor_count(handle->config.svd48)
+               : 0U;
+}
+
 static const ledc_channel_t SERVO_CHANNELS[SVD48_MOTOR_COUNT] = {
     LEDC_CHANNEL_0,
     LEDC_CHANNEL_1,
@@ -92,7 +103,7 @@ static void record_stop_command(robot_control_handle_t handle)
 
 static void record_last_motor_rpm(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
 {
-    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48) ||
+    if (!handle || motor >= legacy_motor_count(handle) ||
         motor >= SVD48_MOTOR_COUNT) {
         return;
     }
@@ -107,6 +118,9 @@ static esp_err_t stop_all_after_failure(robot_control_handle_t handle,
                                         const char *stage,
                                         uint8_t motor)
 {
+    if (!handle || !handle->config.svd48) {
+        return cause;
+    }
     esp_err_t stop_err = svd48_stop_all(handle->config.svd48);
     if (stop_err == ESP_OK) {
         record_stop_command(handle);
@@ -122,7 +136,7 @@ static esp_err_t stop_all_after_failure(robot_control_handle_t handle,
 
 static esp_err_t enable_prepared_targets(robot_control_handle_t handle)
 {
-    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    size_t motor_count = legacy_motor_count(handle);
     for (uint8_t motor = 0; motor < motor_count; motor++) {
         esp_err_t err = svd48_enable_motor(handle->config.svd48, motor);
         if (err != ESP_OK) {
@@ -194,8 +208,7 @@ robot_control_handle_t robot_control_init(const robot_control_config_t *config)
     size_t motor_count = config && config->svd48
                              ? svd48_get_motor_count(config->svd48)
                              : 0U;
-    if (!config || !config->svd48 || motor_count == 0U ||
-        motor_count > SVD48_MOTOR_COUNT) {
+    if (!config || motor_count > SVD48_MOTOR_COUNT) {
         return NULL;
     }
 
@@ -206,7 +219,7 @@ robot_control_handle_t robot_control_init(const robot_control_config_t *config)
 
     handle->config = *config;
     if (handle->config.motion_kinematics_enabled &&
-        (motor_count != SVD48_MOTOR_COUNT ||
+        (handle->config.svd48 == NULL || motor_count != SVD48_MOTOR_COUNT ||
          handle->config.wheelbase_m <= 0.0f ||
          handle->config.track_width_m <= 0.0f ||
          handle->config.wheel_radius_m <= 0.0f)) {
@@ -236,7 +249,8 @@ robot_control_handle_t robot_control_init(const robot_control_config_t *config)
         return NULL;
     }
 
-    if (steering_init(handle) != ESP_OK) {
+    if (handle->config.enable_steering_servos &&
+        steering_init(handle) != ESP_OK) {
         robot_control_deinit(handle);
         return NULL;
     }
@@ -265,8 +279,11 @@ esp_err_t robot_control_enable_all(robot_control_handle_t handle)
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
-    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    size_t motor_count = legacy_motor_count(handle);
     for (uint8_t motor = 0; motor < motor_count; motor++) {
         esp_err_t err = svd48_set_motor_speed(handle->config.svd48, motor, 0);
         if (err != ESP_OK) {
@@ -285,6 +302,9 @@ esp_err_t robot_control_stop_all(robot_control_handle_t handle)
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
     esp_err_t err = svd48_stop_all(handle->config.svd48);
@@ -307,7 +327,7 @@ esp_err_t robot_control_record_coordinated_motor_speed(robot_control_handle_t ha
                                                        uint8_t motor,
                                                        int16_t rpm)
 {
-    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48) ||
+    if (!handle || !handle->config.svd48 || motor >= legacy_motor_count(handle) ||
         motor >= SVD48_MOTOR_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -317,7 +337,7 @@ esp_err_t robot_control_record_coordinated_motor_speed(robot_control_handle_t ha
 
 esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
 {
-    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
+    if (!handle || !handle->config.svd48 || motor >= legacy_motor_count(handle)) {
         return ESP_ERR_INVALID_ARG;
     }
     esp_err_t err = svd48_stop_motor(handle->config.svd48, motor);
@@ -329,7 +349,7 @@ esp_err_t robot_control_stop_motor(robot_control_handle_t handle, uint8_t motor)
 
 esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t motor)
 {
-    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
+    if (!handle || !handle->config.svd48 || motor >= legacy_motor_count(handle)) {
         return ESP_ERR_INVALID_ARG;
     }
     return svd48_clear_motor_alarm(handle->config.svd48, motor);
@@ -337,7 +357,7 @@ esp_err_t robot_control_clear_motor_alarm(robot_control_handle_t handle, uint8_t
 
 esp_err_t robot_control_set_motor_speed(robot_control_handle_t handle, uint8_t motor, int16_t rpm)
 {
-    if (!handle || motor >= svd48_get_motor_count(handle->config.svd48)) {
+    if (!handle || !handle->config.svd48 || motor >= legacy_motor_count(handle)) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -375,7 +395,7 @@ float robot_control_get_max_wheel_rpm(robot_control_handle_t handle)
 
 size_t robot_control_get_motor_count(robot_control_handle_t handle)
 {
-    return handle ? svd48_get_motor_count(handle->config.svd48) : 0U;
+    return legacy_motor_count(handle);
 }
 
 esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, float vy_mps, float wz_radps)
@@ -384,6 +404,7 @@ esp_err_t robot_control_move_vel(robot_control_handle_t handle, float vx_mps, fl
         return ESP_ERR_INVALID_ARG;
     }
     if (!handle->config.motion_kinematics_enabled ||
+        !handle->config.svd48 ||
         svd48_get_motor_count(handle->config.svd48) != SVD48_MOTOR_COUNT) {
         return ESP_ERR_NOT_SUPPORTED;
     }
@@ -468,12 +489,15 @@ esp_err_t robot_control_poll_once(robot_control_handle_t handle)
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     return svd48_poll_once(handle->config.svd48);
 }
 
 void robot_control_set_trace_enabled(robot_control_handle_t handle, bool enabled)
 {
-    if (!handle) {
+    if (!handle || !handle->config.svd48) {
         return;
     }
     svd48_set_trace_enabled(handle->config.svd48, enabled);
@@ -481,7 +505,7 @@ void robot_control_set_trace_enabled(robot_control_handle_t handle, bool enabled
 
 bool robot_control_get_trace_enabled(robot_control_handle_t handle)
 {
-    if (!handle) {
+    if (!handle || !handle->config.svd48) {
         return false;
     }
     return svd48_get_trace_enabled(handle->config.svd48);
@@ -489,7 +513,7 @@ bool robot_control_get_trace_enabled(robot_control_handle_t handle)
 
 bool robot_control_get_motor(robot_control_handle_t handle, uint8_t motor, svd48_motor_telemetry_t *telemetry)
 {
-    if (!handle) {
+    if (!handle || !handle->config.svd48) {
         return false;
     }
     return svd48_get_motor_telemetry(handle->config.svd48, motor, telemetry);
@@ -512,6 +536,10 @@ bool robot_control_is_safe_for_ota(robot_control_handle_t handle, char *reason, 
         set_reason(reason, reason_size, "NO_ROBOT");
         return false;
     }
+    if (!handle->config.svd48) {
+        set_reason(reason, reason_size, "NO_LEGACY_TRACTION");
+        return false;
+    }
 
     robot_motion_command_t command;
     if (!robot_control_get_last_motion(handle, &command)) {
@@ -526,7 +554,7 @@ bool robot_control_is_safe_for_ota(robot_control_handle_t handle, char *reason, 
         return false;
     }
 
-    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    size_t motor_count = legacy_motor_count(handle);
     for (uint8_t motor = 0; motor < motor_count; motor++) {
         if (command.wheel_rpm[motor] != 0) {
             set_reason(reason, reason_size, "MOTOR_COMMAND_ACTIVE");
@@ -557,13 +585,16 @@ esp_err_t robot_control_prepare_for_ota(robot_control_handle_t handle)
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     robot_motion_command_t command;
     memset(&command, 0, sizeof(command));
     (void)robot_control_get_last_motion(handle, &command);
 
     esp_err_t first_error = ESP_OK;
-    size_t motor_count = svd48_get_motor_count(handle->config.svd48);
+    size_t motor_count = legacy_motor_count(handle);
     for (uint8_t motor = 0; motor < motor_count; motor++) {
         svd48_motor_telemetry_t telemetry;
         bool online = robot_control_get_motor(handle, motor, &telemetry) && telemetry.online && !telemetry.stale;
@@ -589,6 +620,9 @@ esp_err_t robot_control_read_svd48_registers(robot_control_handle_t handle, uint
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     return svd48_read_registers_by_id(handle->config.svd48, drive_id, reg, quantity, out_regs);
 }
 
@@ -596,6 +630,9 @@ esp_err_t robot_control_write_svd48_register(robot_control_handle_t handle, uint
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     return svd48_write_register_by_id(handle->config.svd48, drive_id, reg, value);
 }
@@ -608,6 +645,9 @@ esp_err_t robot_control_write_svd48_registers(robot_control_handle_t handle,
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!handle->config.svd48) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     return svd48_write_registers_by_id(handle->config.svd48,
                                        drive_id,

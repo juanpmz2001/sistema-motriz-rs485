@@ -10,6 +10,11 @@
 #define ROBOT_CAPABILITY_STOPPABLE (UINT32_C(1) << 1)
 #define ROBOT_CAPABILITY_POSITION (UINT32_C(1) << 2)
 #define ROBOT_CAPABILITY_POSITION_SENSOR (UINT32_C(1) << 3)
+#define ROBOT_CAPABILITY_POSITION_OBSERVATION (UINT32_C(1) << 4)
+/* Maintenance-only capability: explicitly map a verified physical pose into
+ * an actuator's logical coordinates. A cyclic sensor phase is never an
+ * implicit mechanical zero. */
+#define ROBOT_CAPABILITY_POSITION_REFERENCE (UINT32_C(1) << 5)
 
 typedef uint16_t robot_endpoint_id_t;
 typedef enum {
@@ -44,6 +49,42 @@ typedef struct {
     robot_endpoint_health_t health;
 } robot_velocity_observation_t;
 
+typedef enum {
+    ROBOT_POSITION_OBSERVATION_SOURCE_UNKNOWN = 0,
+    ROBOT_POSITION_OBSERVATION_SOURCE_DEVICE_FEEDBACK,
+    ROBOT_POSITION_OBSERVATION_SOURCE_INDEPENDENT_SENSOR,
+    ROBOT_POSITION_OBSERVATION_SOURCE_INFERRED,
+} robot_position_observation_source_t;
+
+typedef struct {
+    /* True when degrees is a fresh, measured position in the actuator's
+     * logical coordinate system. A device-local cyclic source phase alone is
+     * not valid here. */
+    bool valid;
+    /* True only when degrees uses a suitable calibration for the configured
+     * physical coordinate system. Without an approved calibration, this
+     * application-boundary observation must not be valid. */
+    bool calibrated;
+    /* True only when degrees has been explicitly mapped into the logical
+     * coordinate system of the associated actuator. A caller comparing this
+     * observation with an actuator target must require valid, calibrated and
+     * referenced; a device-level source coordinate alone is not a mechanical
+     * zero.
+     */
+    bool referenced;
+    float degrees;
+    uint32_t timestamp_ms;
+    /* A port may report a distinct sensor endpoint; zero defaults to the
+     * endpoint queried through robot_endpoint_read_position_observation(). */
+    robot_endpoint_id_t source_endpoint_id;
+    robot_position_observation_source_t source;
+    bool online;
+    bool stale;
+    robot_endpoint_health_t health;
+    /* Result of acquiring this sample; it is not an actuation result. */
+    robot_capability_error_t status;
+} robot_position_observation_t;
+
 typedef struct robot_velocity_rpm_port robot_velocity_rpm_port_t;
 typedef struct {
     robot_capability_error_t (*set_velocity_rpm)(robot_velocity_rpm_port_t *, int16_t);
@@ -70,11 +111,33 @@ struct robot_position_port {
     float max_degrees;
 };
 
+typedef struct robot_position_reference_port robot_position_reference_port_t;
+typedef struct {
+    robot_capability_error_t (*set_reference_degrees)(
+        robot_position_reference_port_t *, float);
+} robot_position_reference_ops_t;
+struct robot_position_reference_port {
+    const robot_position_reference_ops_t *ops;
+    void *context;
+    float min_degrees;
+    float max_degrees;
+};
+
 typedef struct robot_position_sensor_port robot_position_sensor_port_t;
 typedef struct {
     robot_capability_error_t (*read_position_degrees)(robot_position_sensor_port_t *, float *);
 } robot_position_sensor_ops_t;
 struct robot_position_sensor_port { const robot_position_sensor_ops_t *ops; void *context; };
+
+typedef struct robot_position_observation_port robot_position_observation_port_t;
+typedef struct {
+    robot_capability_error_t (*read)(robot_position_observation_port_t *,
+                                     robot_position_observation_t *);
+} robot_position_observation_ops_t;
+struct robot_position_observation_port {
+    const robot_position_observation_ops_t *ops;
+    void *context;
+};
 
 typedef struct robot_velocity_observation_port robot_velocity_observation_port_t;
 typedef struct {
@@ -94,8 +157,10 @@ typedef struct {
     robot_velocity_rpm_port_t *velocity_rpm;
     robot_stoppable_port_t *stoppable;
     robot_position_port_t *position;
+    robot_position_reference_port_t *position_reference;
     robot_position_sensor_port_t *position_sensor;
     robot_velocity_observation_port_t *velocity_observation;
+    robot_position_observation_port_t *position_observation;
 } robot_endpoint_t;
 
 typedef struct { robot_endpoint_t *items[ROBOT_ENDPOINT_REGISTRY_MAX]; size_t count; } robot_endpoint_registry_t;
@@ -106,16 +171,25 @@ typedef enum {
 
 uint32_t robot_endpoint_capabilities(const robot_endpoint_t *endpoint);
 robot_capability_error_t robot_velocity_set_rpm(robot_endpoint_t *endpoint, int16_t rpm);
+robot_capability_error_t robot_position_set_degrees(robot_endpoint_t *endpoint,
+                                                     float degrees);
+robot_capability_error_t robot_position_set_reference_degrees(
+    robot_endpoint_t *endpoint,
+    float degrees);
 robot_capability_error_t robot_endpoint_stop(robot_endpoint_t *endpoint);
 robot_capability_error_t robot_endpoint_read_velocity_observation(
     robot_endpoint_t *endpoint,
     robot_velocity_observation_t *observation);
+robot_capability_error_t robot_endpoint_read_position_observation(
+    robot_endpoint_t *endpoint,
+    robot_position_observation_t *observation);
 void robot_endpoint_registry_init(robot_endpoint_registry_t *registry);
 robot_registry_error_t robot_endpoint_registry_add(robot_endpoint_registry_t *registry,
                                                    robot_endpoint_t *endpoint);
 robot_endpoint_t *robot_endpoint_registry_find(const robot_endpoint_registry_t *registry,
                                                robot_endpoint_id_t id);
 bool robot_endpoint_has_capability(const robot_endpoint_t *endpoint, uint32_t capability);
+bool robot_endpoint_has_position_observation(const robot_endpoint_t *endpoint);
 const robot_endpoint_t *robot_endpoint_registry_at(const robot_endpoint_registry_t *registry,
                                                    size_t index);
 #endif

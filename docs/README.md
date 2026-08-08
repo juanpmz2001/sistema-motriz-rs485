@@ -30,16 +30,20 @@ current [Safety](SAFETY.md) contract or counts as verification evidence.
 - [Physical test runbooks](testing/README.md) — concise entry/exit gates for PCB,
   single-motor, servo, sensor, closed-loop and mobility sessions; it links to rather
   than restates the testing contract.
+- [AS5600 motor-mode steering bench runbook](testing/STEERING_AS5600_BENCH_RUNBOOK.md)
+  — prepared fixture/provenance, explicit-reference and staged-evidence procedure
+  for the isolated steering development profile; it records no physical pass.
 - [Evidence template](testing/EVIDENCE_TEMPLATE.md) — versioned record for identity,
   safety preconditions, observations, cleanup, result and verification boundaries.
 - [Host HIL runner](../tests/hil/README.md) — executable `validate`, `identify` and
   bounded `run` workflow, required identity gates and explicit motion confirmations.
 
 These documents define how future physical evidence must be produced. A minimal host
-HIL runner, one capability-oriented L4 manifest and a typed velocity-observation slice
-now exist; they do not mean that any physical milestone passed or that the broader
-observation architecture is complete. Raw captures and durable evidence remain
-external artifacts.
+HIL runner, one capability-oriented L4 velocity manifest, typed velocity and position
+observation slices, and an offline AS5600 calibration-candidate analyzer now exist;
+they do not mean that any physical milestone passed or that the broader observation
+architecture is complete. Raw captures and durable evidence remain external
+artifacts.
 
 There is no standalone `CONFIGURATION.md`, `CONCURRENCY_MODEL.md` or
 `PROFILE_SCHEMA.md` in this iteration. Build profile/configuration is documented in

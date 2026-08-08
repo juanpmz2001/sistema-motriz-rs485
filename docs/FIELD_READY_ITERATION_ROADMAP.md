@@ -151,7 +151,7 @@ The following areas are still transitional or incomplete and should be re-verifi
 
 If the code has evolved, update this document rather than following obsolete assumptions.
 
-## 2.1 Verified roadmap state — 2026-08-07
+## 2.1 Verified roadmap state — 2026-08-08
 
 The status words below are deliberate: `DONE`, `IN PROGRESS`, `READY TO START`,
 `BLOCKED BY HARDWARE`, `BLOCKED BY DECISION` and `NOT STARTED`. A status may have
@@ -163,8 +163,8 @@ additional prerequisite gates explained in its evidence column.
 | Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
 | Iteration B — memory headroom | **DONE** | PR [#8](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/8) merged as `cf726482a1aed453b749b0338c1fad789f0fdc52`; post-merge workflow [`31239836099`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31239836099) passed host, sanitizer and both profile builds. Both maps passed with 232,272 B effective headroom against the 196,608 B floor, and both artifacts retain placement evidence. |
 | Iteration C — traction qualification | **BLOCKED BY HARDWARE** | This is the first incomplete iteration. No L2–L5 physical result exists. |
-| Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Real actuator/encoder/profile evidence is absent. |
-| Iteration E — generic observations | **NOT STARTED** | Iteration A supplies only the minimum typed velocity slice; the broader typed boundary remains. |
+| Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Software preparation now composes the isolated `bench_single_steering_as5600` development profile, separate motor-mode PWM/AS5600/controller devices, position endpoints, TTL/neutral policy, explicit logical reference and a provisional scoped LUT. No L2–L5 steering session or physical profile evidence exists. |
+| Iteration E — generic observations | **IN PROGRESS** | Typed velocity and position observations now preserve source, validity/freshness/health and position calibration/reference provenance. This is software preparation only; position HIL/L5 reuse, remaining observation types and every physical result remain **BLOCKED BY HARDWARE**. |
 | Iteration F — motion service + geometry | **NOT STARTED** | Existing legacy motion path must first be audited against the real geometry. |
 | Iteration G — minimum safe authority | **NOT STARTED** | Mandatory before complete-robot floor motion. |
 | Iteration H — controlled chassis | **BLOCKED BY HARDWARE** | Also blocked by C–G evidence. |
@@ -178,15 +178,17 @@ Main physical gates are currently:
 | SVD48/device qualification L3 | **BLOCKED BY HARDWARE** | Real controller/channel/sign/scaling/error evidence. |
 | Generic single-motor velocity L4 | **BLOCKED BY HARDWARE** | Operator-authorized bounded run through the application endpoint API. |
 | Traction closed loop L5 | **BLOCKED BY HARDWARE** | Fresh E2 feedback, then independent E3 sensing for the stronger physical claim. |
-| Steering L3–L5 | **BLOCKED BY HARDWARE** | Real actuator plus independent position feedback. |
+| Steering/AS5600 read-only L2–L3 | **BLOCKED BY HARDWARE** | Named development fixture, safe power-up, fresh sensor/magnet/calibration evidence and bounded output evidence. |
+| Generic steering position L4 and closed loop L5 | **BLOCKED BY HARDWARE** | Explicit physical reference, operator-authorized bounded endpoint commands, separate endpoint-2 observations and recorded stop/TTL/fault behavior. |
 | Chassis H1/H2/H3 | **BLOCKED BY HARDWARE** | All component, motion-service and minimum-safe-authority gates. |
 | Supervised field test | **BLOCKED BY HARDWARE** | Controlled chassis and pre-field hardening evidence. |
 
-No physical gate is marked `PASS`. The first incomplete iteration is C, and its next
-exit evidence requires the named bench hardware, an operator-confirmed safe setup
-and an explicitly authorized physical session. The repository has the runbook and
-read-only interfaces needed to begin that gate, but compilation or simulated
-feedback cannot close it.
+No physical gate is marked `PASS`. The first incomplete iteration is still C, and its
+next exit evidence requires the named traction bench hardware, an operator-confirmed
+safe setup and an explicitly authorized physical session. The steering/AS5600 work is
+preparation for D/E and may improve their software readiness, but it does not reorder
+the next physical milestone. Branch-derived parameters, host tests, compilation or
+simulated feedback cannot close C, D or E physical gates.
 
 ---
 
@@ -637,16 +639,82 @@ PositionObservation capability
 
 If the current encoder is AS5600 or another device, treat it as a sensor device rather than embedding it inside servo code.
 
+## Current software preparation and verification boundary
+
+The current source provides an isolated equivalent profile named
+`bench_single_steering_as5600`. It declares one motor-mode PWM device, one AS5600
+device and one portable steering controller as distinct profile devices; its position
+actuator and position-observation endpoints are separate. The controller starts
+unhomed, uses an explicit mechanical-reference operation rather than automatic home,
+has a finite position-command TTL, neutralizes stale feedback and latches a later
+sensor-timeout fault. The generic position observation carries validity, freshness,
+health, source and explicit calibration/reference provenance.
+
+This is implementation preparation, not Iteration D evidence. The historical
+`origin/ensayo-nueva-pata` branch informed control/calibration parameters, but it
+does not identify the current flashed artifact or prove the present fixture. The
+offline 7+7 analyzer produces a provenance-bearing, 128-node cyclic LUT candidate;
+it requires candidate/fixture identity and can cross-validate a frozen candidate
+against a distinct capture without refitting it. It cannot prove mechanical zero,
+absolute angle, a correct mounting geometry, that intra-turn velocity ripple was not
+mistaken for sensor nonlinearity, or a physical closed-loop result. The prepared profile
+is development-only and no physical PASS may be inferred from source, host tests, a
+build or an analyzer report.
+
+The currently scoped static candidate's historical validation-capture report still
+measured 3.597° combined post-correction RMSE, 7.925° P95 absolute residual and
+15.924° maximum absolute residual. It was itself based on a constant-speed inference,
+not a current external-angle qualification. The controller's 3° arrival band is
+therefore a control policy only, not a promised physical accuracy or a D3/D4 acceptance
+tolerance. Establish an L3 independent-angle bound on the named fixture before
+declaring any L4/L5 position tolerance.
+
+### Integration checkpoint — software complete, hardware evidence absent
+
+This checkpoint integrates the empirical `ensayo-nueva-pata` learning without
+merging its obsolete composition root. It has delivered:
+
+- an isolated build-selected steering profile with separate motor-mode PWM, AS5600
+  and closed-loop controller devices;
+- generic position actuation, explicit maintenance reference and typed logical
+  position-observation boundaries, all routed through the application/coordinator
+  path rather than GPIO or sensor commands in the gateway;
+- a read-only, cached device-scoped AS5600 L2/L3 diagnostic command with raw phase,
+  magnetic state, timing, calibration provenance and communication counters;
+- bounded PWM policy, command TTL, stale-to-neutral/fault behavior, stop routing,
+  an explicit no-auto-home rule, and a latched no-go response to missing magnet,
+  magnet-too-strong, failed primary reads or a failed one-shot diagnostic; and
+- an offline 7+7 candidate/cross-validation tool and an operator runbook. Neither
+  connects to the target nor sends motor commands.
+
+The remaining work is deliberately physical and must not be inferred from these
+software results:
+
+1. L2 read-only power-up of the named fixture, including I2C timing, magnetic state,
+   diagnostics counters and timeout behavior.
+2. L3 sensor and actuator qualification: external-angle reference, direction/wrap,
+   LUT review, PWM neutral/limits and physical stop behavior.
+3. An explicitly authorized reference procedure followed by bounded L4 endpoint
+   position commands and L5 evidence with recorded settling/error/stop behavior.
+4. The separate Iteration C traction hardware gate, then Iterations F/G before any
+   complete-chassis or floor test.
+
+No firmware was flashed and no PWM, motor, servo or physical calibration sweep was
+executed while preparing this checkpoint. It leaves Iteration D `BLOCKED BY HARDWARE`;
+it does not change the first incomplete physical iteration, C.
+
 ## Required profiles
 
-At least:
+At least one equivalent, isolated profile is required. The current implementation
+uses:
 
 ```text
-single_steering_actuator
-single_steering_actuator_with_encoder
+bench_single_steering_as5600
 ```
 
-or equivalent profiles.
+It exposes the actuator and observation as separate endpoints within that one profile
+because both are required for the same one-axis bench fixture. Additional profiles
+must be created only for hardware actually being qualified.
 
 No fake additional steering units.
 
@@ -659,6 +727,11 @@ Prove command generation.
 ### D2 — Encoder L3
 
 Prove raw-to-angle conversion, sign, wrap and freshness.
+
+For a cyclic AS5600, separately qualify magnet/transport state, raw-phase behavior,
+approved-LUT linearity and the explicit physical-reference procedure. The offline
+calibration report is a prerequisite/provenance artifact, not a replacement for this
+physical test.
 
 ### D3 — Position capability L4
 
@@ -692,7 +765,8 @@ physical evidence, Iteration D remains incomplete.
 ## Explicitly defer
 
 - sophisticated steering control loops if the physical actuator already closes its loop adequately;
-- auto-calibration unless mechanically necessary;
+- runtime auto-calibration or auto-home; the reviewed offline LUT workflow is separate
+  because this fixture needs a repeatable linearity correction;
 - arbitrary actuator families not used by the current robot.
 
 ---
@@ -748,6 +822,21 @@ A `VelocityActuator` does not automatically imply a `VelocityObservation`.
 A motor controller may provide both.
 
 Another actuator may need an external sensor.
+
+## Current software slice
+
+The current implementation adds a typed position-observation port alongside the
+existing velocity port. Its position snapshot includes degrees, timestamp, valid,
+stale, online, health, acquisition status, source endpoint/source class and explicit
+`calibrated`/`referenced` fields. The AS5600 bridge refuses to present an unapproved
+or unreferenced cyclic phase as valid logical feedback, while preserving device-local
+diagnostics for lower-level work. Position actuation and observation remain distinct
+endpoint contracts.
+
+This advances the software part of E only. The executable HIL runner still exercises
+velocity rather than a reusable position/closed-loop manifest; current, temperature
+and broader health observations remain unimplemented at this boundary. No physical
+observation, calibration or closed-loop gate is passed.
 
 ## Exit criteria
 

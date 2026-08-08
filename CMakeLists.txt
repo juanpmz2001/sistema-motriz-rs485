@@ -64,6 +64,12 @@ set(COMPONENTS
     robot_state
     command_authority
     robot_kinematics
+    as5600_device
+    as5600_position_endpoint_adapter
+    i2c_bitbang_transport
+    motor_mode_pwm
+    steering_position_controller
+    steering_position_endpoint_adapter
     serial_gateway
     ibus_receiver
     ota_announce

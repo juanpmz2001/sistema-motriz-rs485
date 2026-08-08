@@ -541,8 +541,42 @@ static bool endpoints_must_be_constructable_before_runtime_setup(void)
     HOST_TEST_CHECK(storage_calls == 1U);
     HOST_TEST_CHECK(runtime_calls == 0U);
 
+    /* The factory gate applies to every physical-motion capability, not only
+     * legacy velocity.  Use the schema-valid PWM-servo descriptor so this
+     * reaches composition preflight rather than failing earlier as a profile
+     * capability mismatch. */
     reset_factory_behavior();
     profile = make_profile(1U, 1U);
+    profile.buses[0].type = ROBOT_BUS_PWM;
+    profile.buses[0].rate = 50U;
+    profile.devices[0].driver_id = ROBOT_DRIVER_PWM_SERVO;
+    profile.devices[0].channel_count = 1U;
+    profile.endpoints[0].capabilities = ROBOT_CAPABILITY_POSITION;
+    profile.endpoints[0].min_position_degrees = -90.0f;
+    profile.endpoints[0].max_position_degrees = 90.0f;
+    factory = make_factory();
+    factory.driver_id = ROBOT_DRIVER_PWM_SERVO;
+    factory.bus_type = ROBOT_BUS_PWM;
+    factory.capabilities = ROBOT_CAPABILITY_POSITION;
+    factory.max_channels = 1U;
+    registry = make_registry(&factory);
+    HOST_TEST_CHECK(robot_profile_validate(&profile) == ROBOT_PROFILE_VALID);
+    HOST_TEST_CHECK(!robot_composition_preflight(&profile,
+                                                 &registry,
+                                                 &diagnostics));
+    HOST_TEST_CHECK(diagnostics.code ==
+                    ROBOT_COMPOSITION_DIAGNOSTIC_ENDPOINT_FAILED);
+    HOST_TEST_CHECK(diagnostics.stage ==
+                    ROBOT_COMPOSITION_STAGE_ENDPOINT_CONSTRUCT);
+    HOST_TEST_CHECK(diagnostics.endpoint_id == 1U);
+    HOST_TEST_CHECK(validate_calls == 1U);
+    HOST_TEST_CHECK(storage_calls == 1U);
+    HOST_TEST_CHECK(runtime_calls == 0U);
+
+    reset_factory_behavior();
+    profile = make_profile(1U, 1U);
+    factory = make_factory();
+    registry = make_registry(&factory);
     profile.endpoints[0].capabilities = ROBOT_CAPABILITY_STOPPABLE;
     profile.endpoints[0].min_rpm = 1;
     profile.endpoints[0].max_rpm = -1;

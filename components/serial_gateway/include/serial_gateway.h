@@ -20,6 +20,7 @@ extern "C" {
 #endif
 
 typedef struct serial_gateway_t *serial_gateway_handle_t;
+typedef struct as5600_diagnostics_port as5600_diagnostics_port_t;
 
 typedef enum {
     SERIAL_GATEWAY_POLICY_FULL_SERIAL = 0,
@@ -33,6 +34,9 @@ typedef void (*serial_gateway_output_fn_t)(void *ctx, const char *chunk);
 typedef struct {
     robot_control_handle_t robot;
     actuation_application_port_t *actuation;
+    /* Optional concrete L2/L3 read-only sensor diagnostic path. It is not an
+     * endpoint capability or an actuation interface. */
+    as5600_diagnostics_port_t *as5600_diagnostics;
     config_manager_handle_t config_manager;
     wifi_manager_handle_t wifi_manager;
     ota_manager_handle_t ota_manager;

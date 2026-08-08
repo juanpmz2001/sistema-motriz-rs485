@@ -2,19 +2,22 @@
 
 ## Classification
 
-The `bench-baseline-v1` Iteration 4 baseline and current Iteration A integration
-remain bench firmware. They are not approved for a robot on the floor, around people
-or with mechanically loaded actuators. Software stop commands are not a replacement
-for an independent emergency power path.
+The `bench-baseline-v1` Iteration 4 baseline, current Iteration A integration and
+the single-axis AS5600 steering development slice remain bench firmware. They are
+not approved for a robot on the floor, around people or with mechanically loaded
+actuators. Software stop commands are not a replacement for an independent emergency
+power path.
 
 ## Implemented startup and stop behavior
 
 - Startup selects and validates an immutable C profile, preflights executable
-  factories, constructs one serialized bus transport, one device per configured SVD48
-  controller and direct M1/M2 endpoint adapters.
+  factories, constructs only the profile's transports/devices and creates typed
+  endpoint adapters. The supported paths include SVD48 channels and the isolated
+  motor-mode-PWM/AS5600/steering-controller bench chain.
 - Preflight rejects an empty/nonconstructible endpoint set and rejects every
-  velocity-capable SVD48 endpoint that lacks `STOPPABLE`, before any output is
-  initialized.
+  velocity- or position-capable endpoint that lacks `STOPPABLE`, before any output is initialized.
+  The steering-axis profile validator separately requires its `POSITION` endpoint to
+  include `STOPPABLE` and explicit reference capability.
 - A schema-valid but composition-unsupported profile does not construct actuator
   outputs. It starts only a restricted serial diagnostic gateway; motion, enable,
   fault clear, register writes, OTA actions and streaming are blocked.
@@ -27,6 +30,41 @@ for an independent emergency power path.
   startup currently continues.
 - Reported endpoint unavailability inhibits speed/observation but does not suppress
   a stop attempt for an existing stoppable endpoint.
+- The `bench_single_steering_as5600` profile is a development-only bench profile.
+  Its motor-mode PWM output is owned by the steering controller, not by a direct
+  gateway/PWM command. The controller initializes neutral and **UNHOMED**; no normal
+  position command may infer a mechanical zero from an AS5600 phase.
+- In that profile, a missing fresh steering sample becomes stale at 120 ms and the
+  controller commands neutral; at 400 ms it latches a sensor-timeout fault and keeps
+  neutral. A hard sensor-health fault also neutralizes and latches. These are
+  controller-level behaviors, not a measured physical stop guarantee.
+- Each control-rate AS5600 sample is one contiguous three-byte `STATUS+RAW` I2C
+  transaction. The optional three-byte AGC/magnitude diagnostic is attempted once
+  after the first primary sample. At 5 kHz, profile validation budgets the recovery
+  path plus CPU/GPIO margin within a 25 ms transaction deadline and budgets that
+  initial pair plus the 40 ms sensor cadence and 10 ms service cadence before the
+  120 ms stale-neutral window. This is a source-level scheduling budget only; task
+  latency and physical neutral/stop response still need hardware evidence.
+- The development profile's sole degraded-feedback exception is the known AS5600
+  `ML` warning with `MD` present and a successful primary poll. `MH`, missing `MD`,
+  a partial diagnostic result or an invalid primary read are not covered by that
+  exception and inhibit/latch the local controller. A one-shot diagnostic failure
+  therefore leaves this steering slice in a latched NO-GO state; there is no automatic
+  retry or fault-clear path.
+- Motor-mode PWM attaches the LEDC channel with neutral duty already configured.
+  On teardown it requests neutral, stops LEDC and resets the GPIO routing. This
+  prevents a retained generated waveform after a construction/deinit path, but the
+  electrical transition and detached-level behavior still require L3 hardware
+  characterization; they are not claimed as a proven physical stop.
+- Every accepted steering position request uses the profile's 650 ms TTL. Expiry,
+  explicit endpoint/global stop, output failure and move timeout clear the target and
+  request neutral. The normal stop path is still best effort and remains subordinate
+  to the known coordinator/physical-power limitations below.
+- Establishing the logical steering reference is a separate, explicitly confirmed
+  maintenance operation. It stops first and maps a freshly observed, physically
+  verified pose into the configured coordinate system; it never drives, auto-homes or
+  proves that the selected pose is mechanically correct. It also cannot clear or
+  re-arm a latched steering fault.
 - A priority-9 safety task runs every 20 ms. After a valid RC frame has been seen,
   invalid RC for at least 150 ms activates RC-loss handling.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates
@@ -49,9 +87,11 @@ all hazards are controlled.
 | Path | Current physical write path | Status |
 | --- | --- | --- |
 | `SET_SPEED` | application port → coordinator → direct SVD48 channel adapter | Migrated |
-| `STOP n`, `STOP ALL` | application port → coordinator → direct adapter | Migrated |
-| `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct adapter | Migrated; serial only |
-| Boot and safety stop | application port → coordinator → direct adapter | Migrated |
+| `SET_ENDPOINT_POSITION` | application port → coordinator → steering endpoint adapter → controller → motor-mode PWM | Migrated only for the development steering profile; controller TTL applies; not physically qualified |
+| `SET_ENDPOINT_POSITION_REFERENCE` | application port → coordinator → stop endpoint → explicit steering reference | Maintenance-only full-serial path; confirmation required; never auto-homes or drives |
+| `STOP n`, `STOP ALL` | application port → coordinator → direct SVD48 or steering endpoint adapter | Migrated for constructed stoppable endpoints |
+| `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct SVD48 or steering adapter | Migrated; serial only |
+| Boot and safety stop | application port → coordinator → constructed stoppable adapters | Migrated; physical effectiveness remains unqualified |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
 | `CLEAR_FAULT` | gateway → `robot_control` compatibility facade | Bypass |
 | `MOVE_VEL` | gateway → legacy kinematics/facade | Bypass; unsupported by bench profile |
@@ -111,6 +151,16 @@ controller-feedback source, online, speed-specific stale and health fields. It l
 an L4 host test avoid concrete driver knowledge, but it does not make the feedback
 independent physical evidence and it is not yet an active motion inhibit.
 
+The typed position-observation boundary carries the same freshness/health separation
+plus source endpoint, acquisition status and explicit `calibrated`/`referenced`
+fields. For the AS5600 adapter, `valid: true` requires a fresh, online,
+magnet-detected sample, a profile-approved LUT and an explicit reference that maps
+the accepted cyclic phase into the actuator's logical coordinates. Without calibration
+or reference, raw device diagnostics can still support an L3 investigation, but the
+generic logical-position observation remains invalid. Neither field proves that the
+operator's mechanical reference or angle accuracy is correct, nor that a physical
+closed-loop test passed.
+
 ## Required invariants
 
 Future code must preserve these rules:
@@ -141,7 +191,8 @@ The following block a production baseline:
 | Stop latency | May wait 500 ms for coordinator mutex plus driver timeout | Measured deadline with stop precedence |
 | Command lifetime | Maintenance speed has no TTL/deadman | Lease expiry forces stop |
 | LAN trust | Shared token and plaintext UDP | Replay protection, rotation and threat model |
-| Servo feedback | PWM command only | Report command only or add independent feedback |
+| Steering development axis | A separate AS5600 observation endpoint, local controller and provisional profile LUT are composed in source, but no physical session has run | L2/L3 sensor and actuator qualification, explicit-reference verification, then bounded L4/L5 evidence on the named fixture |
+| AS5600 calibration/reference | Offline 7+7 analysis can reject a bad capture and produce a monotonic candidate LUT; it does not establish zero or absolute wheel angle. The scoped historical candidate still had 7.925° P95 / 15.924° maximum post-correction residual in its historical validation. | Preserve capture/hash/fixture provenance, independently verify reference/angle and direction effects, and review every LUT change before use; do not derive an L4/L5 tolerance from the controller's 3° arrival band. |
 | Watchdog evidence | Configured, not timing-qualified | Worst-case timing and fault injection |
 | OTA authenticity | SHA-256 integrity only | Signed firmware and protected verification key |
 | Memory/resource qualification | Static linker-map gate passes at 232,272 B effective shared D/IRAM margin; runtime margins are unqualified | Preserve the 192 KiB CI floor; qualify runtime heap/stacks before field use |
@@ -149,10 +200,10 @@ The following block a production baseline:
 
 The one-byte `IRAM` remainder reported by `idf.py size` is an alignment gap within
 the ESP32-S3's dedicated 16 KiB IRAM category, not the remaining linker capacity.
-The audited map has 232,272 bytes of effective shared D/IRAM headroom in
-both profiles, and CI fails below 192 KiB. This closes the static link-capacity
-interpretation gap; it does not qualify runtime heap, task stack high-water marks,
-watchdog timing or long-running polling stability.
+The audited Iteration B SVD48 maps had 232,272 bytes of effective shared D/IRAM
+headroom. CI applies the 192 KiB floor to every versioned build profile. This closes
+the static link-capacity interpretation gap; it does not qualify runtime heap, task
+stack high-water marks, watchdog timing or long-running polling stability.
 
 ## Profile-aware peripheral policy
 
@@ -196,6 +247,11 @@ identity and explicit operator confirmations for authorization, unloaded mechani
 and a working physical cut-off. The included L4/E2 manifest applies only to the
 one-endpoint bench profile and bounded ±5 RPM requests.
 
+The executable runner currently has no steering manifest or actuator control path.
+The steering-specific preparation and its offline calibration analyzer do not relax
+this boundary; use the dedicated [steering bench runbook](testing/STEERING_AS5600_BENCH_RUNBOOK.md)
+only after an operator explicitly authorizes the named hardware session.
+
 Before its steps the runner requests `STOP ALL` and checks application-level
 composition, safe-idle platform, no active RC-loss/motor-fault condition and a fresh
 stopped-observation gate. After every
@@ -226,5 +282,8 @@ A candidate is not a production baseline until all of these have executable evid
 - Memory, stack, watchdog and long-duration stability margins are recorded for each
   supported build profile.
 - SVD48 speed units and stop behavior are confirmed on the exact controller firmware.
+- Steering reference, AS5600 calibration provenance, stale/fault neutral behavior,
+  command expiry and physical stop behavior are qualified on every supported steering
+  fixture before it can be required for motion.
 - A wiring-specific commissioning checklist and emergency procedure exist outside
   this generic firmware repository.

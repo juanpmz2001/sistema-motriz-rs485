@@ -310,8 +310,15 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *composition_status[] = { "COMPOSITION_STATUS" };
     const char *endpoints[] = { "ENDPOINTS" };
     const char *set_endpoint_speed[] = { "SET_ENDPOINT_SPEED", "1", "5" };
+    const char *set_endpoint_position[] = { "SET_ENDPOINT_POSITION", "1", "5" };
+    const char *set_endpoint_position_reference[] = {
+        "SET_ENDPOINT_POSITION_REFERENCE", "1", "5", "CONFIRM"};
     const char *stop_endpoint[] = { "STOP_ENDPOINT", "1" };
     const char *endpoint_observation[] = { "GET_ENDPOINT_OBSERVATION", "1" };
+    const char *position_observation[] = {
+        "GET_ENDPOINT_POSITION_OBSERVATION", "1"};
+    const char *as5600_diagnostics[] = {
+        "GET_AS5600_DIAGNOSTICS", "2"};
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
@@ -336,8 +343,13 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, composition_status));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(1, endpoints));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, set_endpoint_speed));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, set_endpoint_position));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        4, set_endpoint_position_reference));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, stop_endpoint));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, endpoint_observation));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, position_observation));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, as5600_diagnostics));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
     return true;
 }
@@ -354,8 +366,15 @@ static bool test_gateway_diagnostic_policy(void)
     const char *write[] = {"WRITE_REG", "1", "0x5018", "1", "CONFIRM"};
     const char *endpoints[] = {"ENDPOINTS"};
     const char *set_endpoint_speed[] = {"SET_ENDPOINT_SPEED", "1", "5"};
+    const char *set_endpoint_position[] = {"SET_ENDPOINT_POSITION", "1", "5"};
+    const char *set_endpoint_position_reference[] = {
+        "SET_ENDPOINT_POSITION_REFERENCE", "1", "5", "CONFIRM"};
     const char *stop_endpoint[] = {"STOP_ENDPOINT", "1"};
     const char *endpoint_observation[] = {"GET_ENDPOINT_OBSERVATION", "1"};
+    const char *position_observation[] = {
+        "GET_ENDPOINT_POSITION_OBSERVATION", "1"};
+    const char *as5600_diagnostics[] = {
+        "GET_AS5600_DIAGNOSTICS", "2"};
 
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, ping));
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, version));
@@ -367,8 +386,14 @@ static bool test_gateway_diagnostic_policy(void)
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(5, write));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(1, endpoints));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_endpoint_speed));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_endpoint_position));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        4, set_endpoint_position_reference));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, stop_endpoint));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, endpoint_observation));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, position_observation));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2,
+                                                                as5600_diagnostics));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(0, NULL));
     return true;
 }

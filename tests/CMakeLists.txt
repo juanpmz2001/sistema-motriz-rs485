@@ -56,6 +56,36 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME steering_position_controller_test
+    SOURCES
+        host/steering_position_controller_test.c
+        ../components/steering_position_controller/steering_position_controller.c
+    INCLUDE_DIRS
+        ../components/steering_position_controller/include
+    LINK_LIBRARIES
+        m
+)
+
+botfarms_add_host_test(
+    NAME steering_position_endpoint_adapter_test
+    SOURCES
+        host/steering_position_endpoint_adapter_test.c
+        fakes/fake_as5600_register_port.c
+        ../components/as5600_device/as5600_device.c
+        ../components/robot_capabilities/robot_capabilities.c
+        ../components/steering_position_controller/steering_position_controller.c
+        ../components/steering_position_endpoint_adapter/steering_position_endpoint_adapter.c
+    INCLUDE_DIRS
+        fakes
+        ../components/as5600_device/include
+        ../components/robot_capabilities/include
+        ../components/steering_position_controller/include
+        ../components/steering_position_endpoint_adapter/include
+    LINK_LIBRARIES
+        m
+)
+
+botfarms_add_host_test(
     NAME firmware_contracts_test
     SOURCES
         host/firmware_contracts_test.c
@@ -100,6 +130,32 @@ botfarms_add_host_test(
         ../components/bus_transport/include
         ../components/svd48/include
     LINK_LIBRARIES pthread
+)
+
+botfarms_add_host_test(
+    NAME as5600_device_test
+    SOURCES
+        host/as5600_device_test.c
+        fakes/fake_as5600_register_port.c
+        ../components/as5600_device/as5600_device.c
+    INCLUDE_DIRS
+        fakes
+        ../components/as5600_device/include
+)
+
+botfarms_add_host_test(
+    NAME as5600_position_endpoint_adapter_test
+    SOURCES
+        host/as5600_position_endpoint_adapter_test.c
+        fakes/fake_as5600_register_port.c
+        ../components/as5600_device/as5600_device.c
+        ../components/robot_capabilities/robot_capabilities.c
+        ../components/as5600_position_endpoint_adapter/as5600_position_endpoint_adapter.c
+    INCLUDE_DIRS
+        fakes
+        ../components/as5600_device/include
+        ../components/robot_capabilities/include
+        ../components/as5600_position_endpoint_adapter/include
 )
 
 botfarms_add_host_test(
@@ -171,6 +227,20 @@ botfarms_add_host_test(
     COMPILE_DEFINITIONS
         CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR=1
         BOTFARMS_EXPECT_BENCH_PROFILE=1
+    LINK_LIBRARIES m
+)
+
+botfarms_add_host_test(
+    NAME robot_profile_steering_as5600_test
+    SOURCES
+        host/robot_profile_shape_test.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_profile/include
+    COMPILE_DEFINITIONS
+        CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600=1
+        BOTFARMS_EXPECT_STEERING_PROFILE=1
     LINK_LIBRARIES m
 )
 

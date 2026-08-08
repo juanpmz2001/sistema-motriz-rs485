@@ -169,11 +169,29 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         cls.handle_set_endpoint_speed = extract_c_function(
             cls.gateway, "handle_set_endpoint_speed"
         )
+        cls.handle_set_endpoint_position = extract_c_function(
+            cls.gateway, "handle_set_endpoint_position"
+        )
+        cls.handle_set_endpoint_position_reference = extract_c_function(
+            cls.gateway, "handle_set_endpoint_position_reference"
+        )
         cls.handle_stop_endpoint = extract_c_function(
             cls.gateway, "handle_stop_endpoint"
         )
         cls.handle_get_endpoint_observation = extract_c_function(
             cls.gateway, "handle_get_endpoint_observation"
+        )
+        cls.handle_get_endpoint_position_observation = extract_c_function(
+            cls.gateway, "handle_get_endpoint_position_observation"
+        )
+        cls.handle_get_as5600_diagnostics = extract_c_function(
+            cls.gateway, "handle_get_as5600_diagnostics"
+        )
+        cls.position_observation_source_name = extract_c_function(
+            cls.gateway, "position_observation_source_name"
+        )
+        cls.capability_error_name = extract_c_function(
+            cls.gateway, "capability_error_name"
         )
         cls.handle_version = extract_c_function(cls.gateway, "handle_version")
         cls.handle_profile_status = extract_c_function(
@@ -201,6 +219,9 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         cls.bench_profile = extract_c_initializer(cls.profile, "SINGLE_MOTOR")
         cls.application_ops = extract_c_initializer(
             cls.composition, "APPLICATION_OPS"
+        )
+        cls.composition_read_as5600_diagnostics = extract_c_function(
+            cls.composition, "composition_read_as5600_diagnostics"
         )
         cls.endpoint_for_legacy_motor = extract_c_function(
             cls.composition, "endpoint_for_legacy_motor"
@@ -289,8 +310,11 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         for syntax in (
             "ENDPOINTS",
             "SET_ENDPOINT_SPEED id rpm",
+            "SET_ENDPOINT_POSITION id degrees",
+            "SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM",
             "STOP_ENDPOINT id",
             "GET_ENDPOINT_OBSERVATION id",
+            "GET_ENDPOINT_POSITION_OBSERVATION id",
         ):
             with self.subTest(syntax=syntax):
                 self.assertIn(syntax, help_text)
@@ -298,9 +322,18 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         handlers = {
             "ENDPOINTS": "handle_endpoints(handle, argc, argv)",
             "SET_ENDPOINT_SPEED": "handle_set_endpoint_speed(handle, argc, argv)",
+            "SET_ENDPOINT_POSITION": (
+                "handle_set_endpoint_position(handle, argc, argv)"
+            ),
+            "SET_ENDPOINT_POSITION_REFERENCE": (
+                "handle_set_endpoint_position_reference(handle, argc, argv)"
+            ),
             "STOP_ENDPOINT": "handle_stop_endpoint(handle, argc, argv)",
             "GET_ENDPOINT_OBSERVATION": (
                 "handle_get_endpoint_observation(handle, argc, argv)"
+            ),
+            "GET_ENDPOINT_POSITION_OBSERVATION": (
+                "handle_get_endpoint_position_observation(handle, argc, argv)"
             ),
         }
         for command, call in handlers.items():
@@ -321,7 +354,7 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             "ERR USAGE ENDPOINTS",
             "DATA ENDPOINTS COUNT:%u",
             "ERR ENDPOINT_ENUMERATION_FAILED INDEX:%u",
-            "DATA ENDPOINT ID:%u NAME:%s CRITICALITY:%s AVAILABLE:%u CAPABILITIES:0x%08lx VELOCITY_RPM:%u VELOCITY_OBSERVATION:%u STOPPABLE:%u MIN_RPM:%d MAX_RPM:%d",
+            "DATA ENDPOINT ID:%u NAME:%s CRITICALITY:%s AVAILABLE:%u CAPABILITIES:0x%08lx VELOCITY_RPM:%u VELOCITY_OBSERVATION:%u STOPPABLE:%u MIN_RPM:%d MAX_RPM:%d POSITION:%u POSITION_REFERENCE:%u POSITION_OBSERVATION:%u MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f",
         )
         self.assertIn("endpoint_criticality_name", endpoint_list)
 
@@ -344,6 +377,53 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         self.assertIn(
             "rpm < endpoint.min_rpm || rpm > endpoint.max_rpm",
             compact(set_speed),
+        )
+
+        set_position = self.handle_set_endpoint_position
+        self.assert_has_calls(
+            set_position,
+            "actuation_application_find_endpoint",
+            "actuation_application_set_endpoint_position_degrees",
+        )
+        self.assert_has_strings(
+            set_position,
+            "ERR USAGE SET_ENDPOINT_POSITION id degrees",
+            "ERR BAD_ENDPOINT ID:%u",
+            "ERR ENDPOINT_UNAVAILABLE ID:%u",
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:POSITION",
+            "ERR ENDPOINT_POSITION_RANGE_UNAVAILABLE ID:%u",
+            "ERR ENDPOINT_POSITION_OUT_OF_RANGE ID:%u REQUESTED:%.3f MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f",
+            "OK SET_ENDPOINT_POSITION ID:%u POSITION_TARGET_DEG:%.3f",
+            "ERR SET_ENDPOINT_POSITION_FAILED ID:%u RESULT:%s",
+        )
+        position_compact = compact(set_position)
+        self.assertIn("!isfinite(degrees)", position_compact)
+        self.assertIn(
+            "degrees < endpoint.min_position_degrees || degrees > endpoint.max_position_degrees",
+            position_compact,
+        )
+
+        position_reference = self.handle_set_endpoint_position_reference
+        self.assert_has_calls(
+            position_reference,
+            "actuation_application_find_endpoint",
+            "actuation_application_set_endpoint_position_reference_degrees",
+        )
+        self.assert_has_strings(
+            position_reference,
+            "ERR USAGE SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM",
+            "ERR BAD_ENDPOINT ID:%u",
+            "ERR ENDPOINT_UNAVAILABLE ID:%u",
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:POSITION_REFERENCE",
+            "ERR ENDPOINT_POSITION_RANGE_UNAVAILABLE ID:%u",
+            "ERR ENDPOINT_POSITION_OUT_OF_RANGE ID:%u REQUESTED:%.3f MIN_POSITION_DEG:%.3f MAX_POSITION_DEG:%.3f",
+            "OK SET_ENDPOINT_POSITION_REFERENCE ID:%u REFERENCE_DEG:%.3f",
+            "ERR SET_ENDPOINT_POSITION_REFERENCE_FAILED ID:%u RESULT:%s",
+        )
+        reference_compact = compact(position_reference)
+        self.assertIn('strcasecmp(argv[3], "CONFIRM") != 0', reference_compact)
+        self.assertIn(
+            "ROBOT_CAPABILITY_POSITION_REFERENCE", reference_compact
         )
 
         stop = self.handle_stop_endpoint
@@ -382,9 +462,56 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             "DATA ENDPOINT_OBSERVATION ID:%u TYPE:VELOCITY_RPM VALID:%u RPM:%d TIMESTAMP_MS:%lu SOURCE:%s ONLINE:%u STALE:%u HEALTH:%s HEALTH_AVAILABLE:%u",
         )
 
-        for source in (endpoint_list, set_speed, stop, observation):
+        position_observation = self.handle_get_endpoint_position_observation
+        self.assert_has_calls(
+            position_observation,
+            "actuation_application_find_endpoint",
+            "actuation_application_get_endpoint_position_observation",
+            "endpoint_health_name",
+            "position_observation_source_name",
+            "capability_error_name",
+        )
+        self.assert_has_strings(
+            position_observation,
+            "ERR USAGE GET_ENDPOINT_POSITION_OBSERVATION id",
+            "ERR ENDPOINT_POSITION_OBSERVATION_UNAVAILABLE ID:%u",
+            "DATA ENDPOINT_POSITION_OBSERVATION ID:%u TYPE:POSITION_DEGREES VALID:%u CALIBRATED:%u REFERENCED:%u DEGREES:%.3f TIMESTAMP_MS:%lu SOURCE_ENDPOINT_ID:%u SOURCE:%s ONLINE:%u STALE:%u HEALTH:%s HEALTH_AVAILABLE:%u STATUS:%s",
+        )
+        source_names = compact(self.position_observation_source_name)
+        for source in (
+            "DEVICE_FEEDBACK",
+            "INDEPENDENT_SENSOR",
+            "INFERRED",
+            "UNKNOWN",
+        ):
+            with self.subTest(position_source=source):
+                self.assertIn(f'return "{source}";', source_names)
+        status_names = compact(self.capability_error_name)
+        for status in (
+            "OK",
+            "INVALID_ARGUMENT",
+            "UNAVAILABLE",
+            "UNSUPPORTED",
+            "OUT_OF_RANGE",
+            "IO_ERROR",
+            "UNKNOWN",
+        ):
+            with self.subTest(position_status=status):
+                self.assertIn(f'return "{status}";', status_names)
+
+        for source in (
+            endpoint_list,
+            set_speed,
+            set_position,
+            position_reference,
+            stop,
+            observation,
+            position_observation,
+        ):
             with self.subTest(handler=source.split("(", 1)[0].strip()):
                 self.assertNotIn("svd48", source.lower())
+                self.assertNotIn("as5600", source.lower())
+                self.assertNotIn("pwm", source.lower())
                 self.assert_no_calls(
                     source,
                     "robot_control_set_motor_speed",
@@ -396,6 +523,78 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         result_names = compact(self.application_result_name)
         self.assertIn("case ACTUATION_APPLICATION_OK: return \"OK\";", result_names)
         self.assertIn("default: return \"UNKNOWN\";", result_names)
+
+    def test_as5600_l2_diagnostics_use_a_concrete_read_only_port(self) -> None:
+        help_text = compact(self.print_help)
+        dispatch = compact(self.handle_command)
+        handler = self.handle_get_as5600_diagnostics
+
+        self.assertIn("GET_AS5600_DIAGNOSTICS device_id", help_text)
+        self.assertIn(
+            'strcasecmp(argv[0], "GET_AS5600_DIAGNOSTICS") == 0', dispatch
+        )
+        self.assertIn(
+            "handle_get_as5600_diagnostics(handle, argc, argv)", dispatch
+        )
+        self.assertIn(
+            "as5600_diagnostics_port_t *as5600_diagnostics", self.header
+        )
+        self.assert_has_calls(
+            handler,
+            "parse_u16_any_arg",
+            "as5600_diagnostics_port_read",
+            "as5600_device_health_name",
+            "as5600_device_result_name",
+        )
+        self.assert_has_strings(
+            handler,
+            "ERR USAGE GET_AS5600_DIAGNOSTICS device_id",
+            "ERR AS5600_DIAGNOSTICS_UNAVAILABLE DEVICE_ID:%u",
+        )
+        for field in (
+            "DATA AS5600_DIAGNOSTICS DEVICE_ID:%u",
+            "RAW_VALID:%u",
+            "MAGNET_DETECTED:%u",
+            "DIAGNOSTICS_VALID:%u",
+            "CALIBRATION_CONFIGURED:%u",
+            "DATA AS5600_COMMUNICATION DEVICE_ID:%u",
+            "POLLS:%lu",
+            "CONSECUTIVE_FAILURES:%lu",
+            "LAST_ERROR:%s",
+            "DATA AS5600_CALIBRATION DEVICE_ID:%u",
+            "PROVENANCE:%s",
+            "PROVENANCE_TRUNCATED:%u",
+            "PROVENANCE_SANITIZED:%u",
+        ):
+            with self.subTest(diagnostic_field=field):
+                self.assertIn(field, handler)
+        self.assertIn("as5600_diagnostics_token", handler)
+        for forbidden in (
+            "as5600_device_poll",
+            "as5600_device_get_snapshot",
+            "actuation_application_",
+            "actuation_coordinator",
+            "motor_mode_pwm",
+            "steering_position",
+            "robot_control_",
+        ):
+            with self.subTest(handler_forbidden=forbidden):
+                self.assertNotIn(forbidden, handler)
+
+        composition_reader = self.composition_read_as5600_diagnostics
+        self.assert_has_calls(
+            composition_reader,
+            "find_as5600_slot",
+            "as5600_device_get_diagnostics",
+        )
+        self.assertIn("composition->constructed", composition_reader)
+        self.assertNotIn("as5600_device_poll", composition_reader)
+        self.assertNotIn("motor_mode_pwm", composition_reader)
+        self.assertNotIn("steering_position", composition_reader)
+        self.assertIn(
+            "robot_composition_as5600_diagnostics_port(&composition)",
+            self.main,
+        )
 
     def test_version_and_profile_report_reproducible_build_identity(self) -> None:
         self.assertIn("GIT_SHA:%s GIT_DIRTY:%u", self.handle_version)
@@ -426,7 +625,7 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         self.assertIn("add_dependencies(${COMPONENT_LIB} botfarms_firmware_identity)", self.main_cmake)
         self.assertIn("botfarms_firmware_identity.h", self.version_header)
 
-    def test_observation_boundary_is_explicitly_velocity_typed(self) -> None:
+    def test_observation_boundaries_are_explicitly_typed(self) -> None:
         capability = compact(self.capabilities_header)
         application = compact(self.application_port_header)
         self.assertIn("robot_velocity_observation_t", capability)
@@ -436,6 +635,15 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         self.assertIn("get_endpoint_velocity_observation", application)
         self.assertIn(
             "actuation_application_get_endpoint_velocity_observation",
+            application,
+        )
+        self.assertIn("robot_position_observation_t", capability)
+        self.assertIn("robot_position_observation_port_t", capability)
+        self.assertIn("robot_position_observation_source_t", capability)
+        self.assertIn("robot_endpoint_read_position_observation", capability)
+        self.assertIn("get_endpoint_position_observation", application)
+        self.assertIn(
+            "actuation_application_get_endpoint_position_observation",
             application,
         )
         self.assertNotIn("robot_endpoint_observation", capability)
@@ -744,8 +952,11 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             "SVD48_IDENTIFY",
             "ENDPOINTS",
             "SET_ENDPOINT_SPEED",
+            "SET_ENDPOINT_POSITION",
             "STOP_ENDPOINT",
             "GET_ENDPOINT_OBSERVATION",
+            "GET_ENDPOINT_POSITION_OBSERVATION",
+            "GET_AS5600_DIAGNOSTICS",
         ):
             with self.subTest(blocked=blocked):
                 self.assertNotIn(blocked, diagnostic_help)

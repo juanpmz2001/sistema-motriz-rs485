@@ -40,9 +40,11 @@ contract changes.
 
 - The active topology comes from a build-selected immutable C profile. There is no
   JSON/YAML loader or general runtime factory for every declared driver yet.
-- The executable factory registry currently supports SVD48 only. It composes both
-  the two-controller `current_robot` profile and the one-controller/one-endpoint
-  `bench_single_svd48_motor` profile; other driver descriptors are schema fixtures.
+- The executable factory registry composes the two-controller `current_robot` and
+  one-controller/one-endpoint `bench_single_svd48_motor` SVD48 profiles plus the
+  isolated development `bench_single_steering_as5600` chain (motor-mode PWM, AS5600
+  and steering controller). The steering profile is unqualified bench software, not
+  a general driver framework or a physical test result.
 - One `svd48_device` represents each physical controller and exposes explicit M1/M2
   channels over a shared serialized RS485 transport and N-device polling service.
 - `actuation_coordinator` serializes migrated speed and stop paths with a mutex, but
@@ -70,6 +72,9 @@ contract changes.
 - Missing configured-required hardware must inhibit affected capabilities. Hardware
   omitted from a development profile must not create a fault merely because it is
   absent.
+- A cyclic sensor phase is not a mechanical zero. Do not add auto-home/reference
+  behavior to motor-mode steering; explicit reference and 7+7 calibration capture
+  are separately authorized maintenance/physical-test operations.
 - Wi-Fi, JSON, HTTP, OTA, NVS and maintenance work must stay out of high-priority
   control and safety tasks.
 - Do not weaken fail-safe behavior to make a bench test pass.

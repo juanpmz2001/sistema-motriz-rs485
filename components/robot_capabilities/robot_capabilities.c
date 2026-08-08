@@ -1,5 +1,7 @@
 #include "robot_capabilities.h"
 
+#include <math.h>
+
 uint32_t robot_endpoint_capabilities(const robot_endpoint_t *endpoint)
 {
     if (!endpoint) return 0;
@@ -7,7 +9,13 @@ uint32_t robot_endpoint_capabilities(const robot_endpoint_t *endpoint)
     if (endpoint->velocity_rpm) result |= ROBOT_CAPABILITY_VELOCITY_RPM;
     if (endpoint->stoppable) result |= ROBOT_CAPABILITY_STOPPABLE;
     if (endpoint->position) result |= ROBOT_CAPABILITY_POSITION;
+    if (endpoint->position_reference) {
+        result |= ROBOT_CAPABILITY_POSITION_REFERENCE;
+    }
     if (endpoint->position_sensor) result |= ROBOT_CAPABILITY_POSITION_SENSOR;
+    if (endpoint->position_observation) {
+        result |= ROBOT_CAPABILITY_POSITION_OBSERVATION;
+    }
     return result;
 }
 
@@ -20,6 +28,49 @@ robot_capability_error_t robot_velocity_set_rpm(robot_endpoint_t *endpoint, int1
     if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
     if (rpm < port->min_rpm || rpm > port->max_rpm) return ROBOT_CAP_OUT_OF_RANGE;
     return port->ops->set_velocity_rpm(port, rpm);
+}
+
+robot_capability_error_t robot_position_set_degrees(robot_endpoint_t *endpoint,
+                                                     float degrees)
+{
+    if (!endpoint) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!endpoint->available) return ROBOT_CAP_UNAVAILABLE;
+    robot_position_port_t *port = endpoint->position;
+    if (!port || !port->ops || !port->ops->set_position_degrees) {
+        return ROBOT_CAP_UNSUPPORTED;
+    }
+    if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!isfinite(port->min_degrees) || !isfinite(port->max_degrees) ||
+        port->min_degrees > port->max_degrees) {
+        return ROBOT_CAP_INVALID_ARGUMENT;
+    }
+    if (!isfinite(degrees) || degrees < port->min_degrees ||
+        degrees > port->max_degrees) {
+        return ROBOT_CAP_OUT_OF_RANGE;
+    }
+    return port->ops->set_position_degrees(port, degrees);
+}
+
+robot_capability_error_t robot_position_set_reference_degrees(
+    robot_endpoint_t *endpoint,
+    float degrees)
+{
+    if (!endpoint) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!endpoint->available) return ROBOT_CAP_UNAVAILABLE;
+    robot_position_reference_port_t *port = endpoint->position_reference;
+    if (!port || !port->ops || !port->ops->set_reference_degrees) {
+        return ROBOT_CAP_UNSUPPORTED;
+    }
+    if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!isfinite(port->min_degrees) || !isfinite(port->max_degrees) ||
+        port->min_degrees > port->max_degrees) {
+        return ROBOT_CAP_INVALID_ARGUMENT;
+    }
+    if (!isfinite(degrees) || degrees < port->min_degrees ||
+        degrees > port->max_degrees) {
+        return ROBOT_CAP_OUT_OF_RANGE;
+    }
+    return port->ops->set_reference_degrees(port, degrees);
 }
 
 robot_capability_error_t robot_endpoint_stop(robot_endpoint_t *endpoint)
@@ -41,6 +92,22 @@ robot_capability_error_t robot_endpoint_read_velocity_observation(
     if (!port || !port->ops || !port->ops->read) return ROBOT_CAP_UNSUPPORTED;
     if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
     return port->ops->read(port, observation);
+}
+
+robot_capability_error_t robot_endpoint_read_position_observation(
+    robot_endpoint_t *endpoint,
+    robot_position_observation_t *observation)
+{
+    if (!endpoint || !observation) return ROBOT_CAP_INVALID_ARGUMENT;
+    if (!endpoint->available) return ROBOT_CAP_UNAVAILABLE;
+    robot_position_observation_port_t *port = endpoint->position_observation;
+    if (!port || !port->ops || !port->ops->read) return ROBOT_CAP_UNSUPPORTED;
+    if (!port->context) return ROBOT_CAP_INVALID_ARGUMENT;
+    robot_capability_error_t result = port->ops->read(port, observation);
+    if (result == ROBOT_CAP_OK && observation->source_endpoint_id == 0U) {
+        observation->source_endpoint_id = endpoint->id;
+    }
+    return result;
 }
 
 void robot_endpoint_registry_init(robot_endpoint_registry_t *registry)
@@ -73,6 +140,12 @@ robot_registry_error_t robot_endpoint_registry_add(robot_endpoint_registry_t *re
 bool robot_endpoint_has_capability(const robot_endpoint_t *endpoint, uint32_t capability)
 {
     return (robot_endpoint_capabilities(endpoint) & capability) == capability;
+}
+
+bool robot_endpoint_has_position_observation(const robot_endpoint_t *endpoint)
+{
+    return robot_endpoint_has_capability(endpoint,
+                                         ROBOT_CAPABILITY_POSITION_OBSERVATION);
 }
 
 const robot_endpoint_t *robot_endpoint_registry_at(const robot_endpoint_registry_t *registry,
