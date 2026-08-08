@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <string.h>
 
+#include "actuation_application_port.h"
 #include "actuation_coordinator.h"
 #include "robot_control_endpoint_adapter.h"
 #include "robot_profile.h"
@@ -102,6 +103,43 @@ static bool add_adapter(robot_endpoint_registry_t *registry,
     return true;
 }
 
+typedef struct {
+    size_t calls;
+} fake_stoppable_t;
+
+static robot_capability_error_t fake_stoppable_stop(
+    robot_stoppable_port_t *port)
+{
+    fake_stoppable_t *fake = port ? port->context : NULL;
+    if (!fake) {
+        return ROBOT_CAP_INVALID_ARGUMENT;
+    }
+    ++fake->calls;
+    return ROBOT_CAP_OK;
+}
+
+static bool unavailable_endpoint_still_attempts_stop(void)
+{
+    static const robot_stoppable_ops_t stop_ops = {
+        .stop = fake_stoppable_stop,
+    };
+    fake_stoppable_t fake = {0};
+    robot_stoppable_port_t stop_port = {
+        .ops = &stop_ops,
+        .context = &fake,
+    };
+    robot_endpoint_t endpoint = {
+        .id = 1U,
+        .name = "unavailable_stoppable",
+        .available = false,
+        .stoppable = &stop_port,
+    };
+
+    HOST_TEST_CHECK(robot_endpoint_stop(&endpoint) == ROBOT_CAP_OK);
+    HOST_TEST_CHECK(fake.calls == 1U);
+    return true;
+}
+
 static bool capabilities_and_registry(void)
 {
     fixture_t fixture = {.lock = PTHREAD_MUTEX_INITIALIZER};
@@ -123,6 +161,163 @@ static bool capabilities_and_registry(void)
     HOST_TEST_CHECK(robot_endpoint_registry_find(&registry, 99) == NULL);
     HOST_TEST_CHECK(robot_endpoint_registry_add(&registry, &adapter.endpoint) ==
                     ROBOT_REGISTRY_DUPLICATE_ID);
+    return true;
+}
+
+typedef struct {
+    actuation_application_endpoint_info_t endpoints[2];
+    robot_endpoint_id_t last_endpoint_id;
+    int16_t last_rpm;
+    bool stopped;
+} fake_application_t;
+
+static size_t fake_application_endpoint_count(
+    const actuation_application_port_t *port)
+{
+    return port && port->context ? 2U : 0U;
+}
+
+static bool fake_application_endpoint_at(
+    const actuation_application_port_t *port,
+    size_t index,
+    actuation_application_endpoint_info_t *endpoint)
+{
+    const fake_application_t *application = port ? port->context : NULL;
+    if (!application || !endpoint || index >= 2U) {
+        return false;
+    }
+    *endpoint = application->endpoints[index];
+    return true;
+}
+
+static actuation_application_result_t fake_application_set_speed(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    int16_t rpm)
+{
+    fake_application_t *application = port ? port->context : NULL;
+    if (!application || endpoint_id == 0U) {
+        return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+    }
+    application->last_endpoint_id = endpoint_id;
+    application->last_rpm = rpm;
+    return ACTUATION_APPLICATION_OK;
+}
+
+static actuation_application_result_t fake_application_stop(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id)
+{
+    fake_application_t *application = port ? port->context : NULL;
+    if (!application || endpoint_id == 0U) {
+        return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+    }
+    application->last_endpoint_id = endpoint_id;
+    application->stopped = true;
+    return ACTUATION_APPLICATION_OK;
+}
+
+static bool fake_application_observation(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    robot_velocity_observation_t *observation)
+{
+    fake_application_t *application = port ? port->context : NULL;
+    if (!application || endpoint_id == 0U || !observation) {
+        return false;
+    }
+    application->last_endpoint_id = endpoint_id;
+    *observation = (robot_velocity_observation_t){
+        .valid = true,
+        .rpm = -7,
+        .timestamp_ms = 123U,
+        .source = ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK,
+        .online = true,
+        .stale = false,
+        .health = ROBOT_ENDPOINT_HEALTH_HEALTHY,
+    };
+    return true;
+}
+
+static bool application_endpoint_boundary(void)
+{
+    fake_application_t application = {
+        .endpoints = {
+            {
+                .id = 11U,
+                .name = "left",
+                .capabilities = ROBOT_CAPABILITY_VELOCITY_RPM |
+                                ROBOT_CAPABILITY_STOPPABLE,
+                .criticality = ROBOT_ENDPOINT_REQUIRED,
+                .available = true,
+                .min_rpm = -15,
+                .max_rpm = 15,
+            },
+            {
+                .id = 12U,
+                .name = "right",
+                .capabilities = ROBOT_CAPABILITY_STOPPABLE,
+                .criticality = ROBOT_ENDPOINT_DEVELOPMENT,
+                .available = false,
+            },
+        },
+    };
+    static const actuation_application_ops_t ops = {
+        .endpoint_count = fake_application_endpoint_count,
+        .endpoint_at = fake_application_endpoint_at,
+        .set_endpoint_speed_rpm = fake_application_set_speed,
+        .stop_endpoint = fake_application_stop,
+        .get_endpoint_velocity_observation = fake_application_observation,
+    };
+    actuation_application_port_t port = {
+        .ops = &ops,
+        .context = &application,
+    };
+
+    HOST_TEST_CHECK(actuation_application_endpoint_count(&port) == 2U);
+    actuation_application_endpoint_info_t endpoint;
+    HOST_TEST_CHECK(actuation_application_endpoint_at(&port, 0U, &endpoint));
+    HOST_TEST_CHECK(endpoint.id == 11U);
+    HOST_TEST_CHECK(endpoint.criticality == ROBOT_ENDPOINT_REQUIRED);
+    HOST_TEST_CHECK((endpoint.capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) !=
+                    0U);
+    HOST_TEST_CHECK(actuation_application_find_endpoint(&port, 12U, &endpoint));
+    HOST_TEST_CHECK(strcmp(endpoint.name, "right") == 0);
+    HOST_TEST_CHECK(endpoint.criticality == ROBOT_ENDPOINT_DEVELOPMENT);
+    HOST_TEST_CHECK(!endpoint.available);
+    HOST_TEST_CHECK(!actuation_application_find_endpoint(&port, 99U, &endpoint));
+
+    HOST_TEST_CHECK(actuation_application_set_endpoint_speed_rpm(
+                        &port, 11U, -7) == ACTUATION_APPLICATION_OK);
+    HOST_TEST_CHECK(application.last_endpoint_id == 11U);
+    HOST_TEST_CHECK(application.last_rpm == -7);
+    /* Availability describes observed readiness; it must not suppress a
+     * fail-safe stop attempt for an existing stoppable endpoint. */
+    HOST_TEST_CHECK(!application.stopped);
+    HOST_TEST_CHECK(actuation_application_stop_endpoint(
+                        &port, 12U) == ACTUATION_APPLICATION_OK);
+    HOST_TEST_CHECK(application.last_endpoint_id == 12U);
+    HOST_TEST_CHECK(application.stopped);
+
+    robot_velocity_observation_t observation;
+    HOST_TEST_CHECK(actuation_application_get_endpoint_velocity_observation(
+        &port, 11U, &observation));
+    HOST_TEST_CHECK(observation.valid);
+    HOST_TEST_CHECK(observation.rpm == -7);
+    HOST_TEST_CHECK(observation.timestamp_ms == 123U);
+    HOST_TEST_CHECK(observation.source ==
+                    ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK);
+    HOST_TEST_CHECK(observation.online);
+    HOST_TEST_CHECK(!observation.stale);
+    HOST_TEST_CHECK(observation.health == ROBOT_ENDPOINT_HEALTH_HEALTHY);
+
+    actuation_application_port_t unavailable = {0};
+    HOST_TEST_CHECK(actuation_application_endpoint_count(&unavailable) == 0U);
+    HOST_TEST_CHECK(actuation_application_set_endpoint_speed_rpm(
+                        &unavailable, 11U, 0) ==
+                    ACTUATION_APPLICATION_INVALID_ARGUMENT);
+    HOST_TEST_CHECK(!actuation_application_get_endpoint_velocity_observation(
+        &unavailable, 11U, &observation));
     return true;
 }
 
@@ -266,7 +461,9 @@ static bool zero_stoppable_is_failure(void)
 int main(void)
 {
     const host_test_case_t tests[] = {
+        HOST_TEST_CASE(unavailable_endpoint_still_attempts_stop),
         HOST_TEST_CASE(capabilities_and_registry),
+        HOST_TEST_CASE(application_endpoint_boundary),
         HOST_TEST_CASE(profiles),
         HOST_TEST_CASE(coordinator_serialization),
         HOST_TEST_CASE(zero_stoppable_is_failure),

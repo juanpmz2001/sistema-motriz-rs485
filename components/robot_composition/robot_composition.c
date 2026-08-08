@@ -360,6 +360,23 @@ static robot_endpoint_id_t endpoint_for_legacy_motor(
                : 0U;
 }
 
+static bool legacy_motor_for_endpoint(
+    const robot_composition_t *composition,
+    robot_endpoint_id_t endpoint_id,
+    uint8_t *motor)
+{
+    if (!composition || !motor || endpoint_id == 0U) {
+        return false;
+    }
+    for (size_t index = 0; index < composition->legacy_binding_count; ++index) {
+        if (composition->legacy_endpoint_ids[index] == endpoint_id) {
+            *motor = (uint8_t)index;
+            return true;
+        }
+    }
+    return false;
+}
+
 static actuation_application_result_t map_actuation_result(
     actuation_result_t result)
 {
@@ -455,12 +472,113 @@ static bool application_motor_limits(const actuation_application_port_t *port,
     return true;
 }
 
+static size_t application_endpoint_count(
+    const actuation_application_port_t *port)
+{
+    const robot_composition_t *composition = port ? port->context : NULL;
+    return composition && composition->constructed
+               ? composition->registry.count
+               : 0U;
+}
+
+static bool application_endpoint_at(
+    const actuation_application_port_t *port,
+    size_t index,
+    actuation_application_endpoint_info_t *info)
+{
+    const robot_composition_t *composition = port ? port->context : NULL;
+    const robot_endpoint_t *endpoint = composition && composition->constructed
+                                           ? robot_endpoint_registry_at(
+                                                 &composition->registry, index)
+                                           : NULL;
+    if (!endpoint || !info) {
+        return false;
+    }
+    memset(info, 0, sizeof(*info));
+    info->id = endpoint->id;
+    info->name = endpoint->name;
+    info->capabilities = robot_endpoint_capabilities(endpoint);
+    info->criticality = endpoint->criticality;
+    info->available = endpoint->available;
+    info->velocity_observation_supported =
+        endpoint->velocity_observation != NULL;
+    if (endpoint->velocity_rpm) {
+        info->min_rpm = endpoint->velocity_rpm->min_rpm;
+        info->max_rpm = endpoint->velocity_rpm->max_rpm;
+    }
+    return true;
+}
+
+static actuation_application_result_t application_set_endpoint_speed(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    int16_t rpm)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || endpoint_id == 0U ||
+        !robot_endpoint_registry_find(&composition->registry, endpoint_id)) {
+        return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+    }
+    actuation_report_t report;
+    actuation_result_t result = actuation_coordinator_set_velocity_rpm(
+        &composition->coordinator, endpoint_id, rpm, &report);
+    uint8_t motor = 0U;
+    if (result == ACTUATION_RESULT_SUCCESS && composition->legacy_robot &&
+        legacy_motor_for_endpoint(composition, endpoint_id, &motor)) {
+        (void)robot_control_record_coordinated_motor_speed(
+            composition->legacy_robot, motor, rpm);
+    }
+    return map_actuation_result(result);
+}
+
+static actuation_application_result_t application_stop_endpoint(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || endpoint_id == 0U ||
+        !robot_endpoint_registry_find(&composition->registry, endpoint_id)) {
+        return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+    }
+    actuation_report_t report;
+    actuation_result_t result = actuation_coordinator_stop_endpoint(
+        &composition->coordinator, endpoint_id, &report);
+    uint8_t motor = 0U;
+    if (result == ACTUATION_RESULT_SUCCESS && composition->legacy_robot &&
+        legacy_motor_for_endpoint(composition, endpoint_id, &motor)) {
+        (void)robot_control_record_coordinated_motor_speed(
+            composition->legacy_robot, motor, 0);
+    }
+    return map_actuation_result(result);
+}
+
+static bool application_get_endpoint_velocity_observation(
+    actuation_application_port_t *port,
+    robot_endpoint_id_t endpoint_id,
+    robot_velocity_observation_t *observation)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    robot_endpoint_t *endpoint = composition && composition->constructed
+                                     ? robot_endpoint_registry_find(
+                                           &composition->registry, endpoint_id)
+                                     : NULL;
+    return endpoint && observation &&
+           robot_endpoint_read_velocity_observation(endpoint, observation) ==
+               ROBOT_CAP_OK;
+}
+
 static const actuation_application_ops_t APPLICATION_OPS = {
     .set_legacy_motor_speed_rpm = application_set_speed,
     .stop_legacy_motor = application_stop_motor,
     .stop_all = application_stop_all,
     .legacy_motor_count = application_motor_count,
     .legacy_motor_limits_rpm = application_motor_limits,
+    .endpoint_count = application_endpoint_count,
+    .endpoint_at = application_endpoint_at,
+    .set_endpoint_speed_rpm = application_set_endpoint_speed,
+    .stop_endpoint = application_stop_endpoint,
+    .get_endpoint_velocity_observation =
+        application_get_endpoint_velocity_observation,
 };
 
 static bool bus_is_referenced(const robot_profile_t *profile, uint16_t bus_id)

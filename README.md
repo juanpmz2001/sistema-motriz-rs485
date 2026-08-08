@@ -5,7 +5,7 @@ RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
 an active build-time robot profile with profile-driven buses, devices, channels
 and typed actuator endpoints.
 
-> **Status: bench firmware, not a production motion controller.** Build 19 has
+> **Status: bench firmware, not a production motion controller.** Build 20 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
 > cut-off available whenever actuation is possible. See [Safety](docs/SAFETY.md).
 
@@ -29,6 +29,13 @@ and typed actuator endpoints.
 - `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
   port backed by the serialized `actuation_coordinator` and the direct SVD48
   channel endpoint adapter.
+- The full serial gateway can enumerate logical endpoint IDs, capabilities and
+  criticality, command/stop an endpoint through that application port, and read a
+  typed controller-derived velocity observation. These commands are not exposed by
+  the LAN-safe or diagnostic-only policies.
+- `VERSION` reports the build Git SHA/dirty state and `PROFILE_STATUS` reports the
+  board profile. A host-only manifest runner uses those fields for bounded HIL
+  orchestration; it is not a motion authority or a physical-test result.
 - A schema-valid profile that cannot be composed enters a restricted serial
   diagnostic mode without constructing or enabling actuator outputs, except that a
   pending-verification OTA image follows rollback handling instead.
@@ -44,6 +51,7 @@ the difference between active, transitional and dormant modules are documented i
 | `main/` | Firmware composition root and build identity |
 | `components/` | ESP-IDF drivers, services and pure domain modules |
 | `tests/host/` | Native host tests for hardware-independent logic |
+| `tests/hil/` | Host-run physical-test manifests, safety rules and fake-only runner tests |
 | `tools/` | Serial, LAN and OTA command-line tools |
 | `docs/` | Indexed current contracts, target design, migration records and history |
 | `partitions_ota_16mb.csv` | 16 MB OTA partition layout |
@@ -57,7 +65,8 @@ the difference between active, transitional and dormant modules are documented i
 4. [Command API](docs/API.md)
 5. [SVD48 integration](docs/SVD48.md) when changing RS485 behavior
 6. [OTA](docs/OTA.md) when building or deploying releases
-7. [Roadmap](docs/ROADMAP.md) before adding architectural features
+7. [Field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md) for pre-field work
+8. [Platform roadmap](docs/ROADMAP.md) for longer-horizon architectural features
 
 Agent-specific rules are in [AGENTS.md](AGENTS.md).
 
@@ -80,6 +89,8 @@ BOTFARMS_HOST_TEST_SANITIZERS=ON tools/run_host_tests.sh
 python3 tools/test_svd48_protocol.py
 python3 tools/test_dependency_contracts.py
 python3 tools/test_application_compatibility.py
+python3 tools/test_firmware_identity.py
+python3 -m unittest tests.hil.test_hil_runner
 ```
 
 GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
@@ -165,5 +176,6 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images
   with a protected trust root.
 
-These items are release gates, not documentation footnotes. Their implementation
-order is maintained in [Roadmap](docs/ROADMAP.md).
+These items are release gates, not documentation footnotes. Pre-field ordering is
+maintained in the [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md); the
+[platform roadmap](docs/ROADMAP.md) owns the longer-horizon sequence.

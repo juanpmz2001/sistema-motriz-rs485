@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "id": "single-endpoint-velocity-l4",
+  "level": "L4",
+  "profile": "bench_single_svd48_motor",
+  "evidence_class": "E2",
+  "verification_limits": [
+    "Controller-derived feedback is not an independent E3 sensor.",
+    "No PCB, motor, stop-latency, current, thermal, endurance, or chassis gate is implied."
+  ],
+  "description": "L4 velocity exercise for exactly one available capability endpoint.",
+  "target": {
+    "endpoint_id": "1",
+    "endpoint_name": "bench_motor",
+    "capability": "VELOCITY_RPM"
+  },
+  "required_gates": [
+    "git_sha",
+    "git_dirty",
+    "profile",
+    "board"
+  ],
+  "motion": {
+    "enabled": true,
+    "variable": "test_rpm",
+    "required_confirmations": [
+      "motion_authorized",
+      "wheels_unloaded",
+      "power_cutoff_ready"
+    ]
+  },
+  "variables": {
+    "test_rpm": {
+      "type": "integer",
+      "required": true,
+      "nonzero": true,
+      "minimum": -5,
+      "maximum": 5,
+      "example": 1
+    }
+  },
+  "endpoint_selector": {
+    "capabilities": [
+      "VELOCITY_RPM",
+      "VELOCITY_OBSERVATION",
+      "STOPPABLE"
+    ],
+    "exact_count": 1,
+    "exact_inventory_count": 1,
+    "target_criticality": "DEVELOPMENT"
+  },
+  "safety": {
+    "unloaded_required": true,
+    "physical_cutoff_required": true,
+    "maximum_test_duration_seconds": 5
+  },
+  "cleanup": {
+    "stop_all": true,
+    "verify_ack": true,
+    "verify_stopped": true,
+    "settle_seconds": 0.5,
+    "observation": {
+      "record": "ENDPOINT_OBSERVATION",
+      "field": "RPM",
+      "expected_value": 0,
+      "tolerance": 0.5,
+      "required_fields": {
+        "TYPE": "VELOCITY_RPM",
+        "VALID": "1",
+        "SOURCE": "DEVICE_FEEDBACK",
+        "ONLINE": "1",
+        "STALE": "0",
+        "HEALTH": "HEALTHY"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "pre-stop-settle",
+      "sleep_seconds": 0.5
+    },
+    {
+      "id": "composition-ready",
+      "command": "COMPOSITION_STATUS",
+      "expect_prefix": "DATA COMPOSITION",
+      "safety_gate": true,
+      "assert": {
+        "record": "COMPOSITION",
+        "field": "RUNTIME_READY",
+        "expected_value": 1,
+        "tolerance": 0,
+        "required_fields": {
+          "MODE": "ACTIVE",
+          "OUTPUTS_INITIALIZED": "1"
+        }
+      }
+    },
+    {
+      "id": "platform-idle",
+      "command": "PLATFORM_STATUS",
+      "expect_prefix": "DATA PLATFORM",
+      "safety_gate": true,
+      "assert": {
+        "record": "PLATFORM",
+        "field": "MOTION_ACTIVE",
+        "expected_value": 0,
+        "tolerance": 0,
+        "required_fields": {
+          "STATE": "SAFE_IDLE",
+          "FAULTED": "0",
+          "TRACE": "0",
+          "STREAM": "0"
+        }
+      }
+    },
+    {
+      "id": "safety-running",
+      "command": "SAFETY_STATUS",
+      "expect_prefix": "DATA SAFETY",
+      "safety_gate": true,
+      "assert": {
+        "record": "SAFETY",
+        "field": "MOTOR_FAULT",
+        "expected_value": 0,
+        "tolerance": 0,
+        "required_fields": {
+          "TASK": "RUNNING",
+          "RC_LOSS": "0"
+        }
+      }
+    },
+    {
+      "id": "observe-before",
+      "command": "GET_ENDPOINT_OBSERVATION {endpoint_id}",
+      "expect_prefix": "DATA ENDPOINT_OBSERVATION",
+      "safety_gate": true,
+      "assert": {
+        "record": "ENDPOINT_OBSERVATION",
+        "field": "RPM",
+        "expected_value": 0,
+        "tolerance": 0.5,
+        "required_fields": {
+          "TYPE": "VELOCITY_RPM",
+          "VALID": "1",
+          "SOURCE": "DEVICE_FEEDBACK",
+          "ONLINE": "1",
+          "STALE": "0",
+          "HEALTH": "HEALTHY"
+        }
+      }
+    },
+    {
+      "id": "command-velocity",
+      "command": "SET_ENDPOINT_SPEED {endpoint_id} {test_rpm}",
+      "expect_prefix": "OK SET_ENDPOINT_SPEED ID:{endpoint_id} RPM_TARGET:{test_rpm}",
+      "motion": true
+    },
+    {
+      "id": "settle",
+      "sleep_seconds": 0.5
+    },
+    {
+      "id": "observe-after",
+      "command": "GET_ENDPOINT_OBSERVATION {endpoint_id}",
+      "expect_prefix": "DATA ENDPOINT_OBSERVATION",
+      "assert": {
+        "record": "ENDPOINT_OBSERVATION",
+        "field": "RPM",
+        "expected_variable": "test_rpm",
+        "tolerance": 0.5,
+        "required_fields": {
+          "TYPE": "VELOCITY_RPM",
+          "VALID": "1",
+          "SOURCE": "DEVICE_FEEDBACK",
+          "ONLINE": "1",
+          "STALE": "0",
+          "HEALTH": "HEALTHY"
+        }
+      }
+    },
+    {
+      "id": "stop-endpoint",
+      "command": "STOP_ENDPOINT {endpoint_id}",
+      "expect_prefix": "OK STOP_ENDPOINT ID:{endpoint_id}"
+    },
+    {
+      "id": "stop-settle",
+      "sleep_seconds": 0.5
+    },
+    {
+      "id": "verify-stopped",
+      "command": "GET_ENDPOINT_OBSERVATION {endpoint_id}",
+      "expect_prefix": "DATA ENDPOINT_OBSERVATION",
+      "cleanup_verification": true,
+      "assert": {
+        "record": "ENDPOINT_OBSERVATION",
+        "field": "RPM",
+        "expected_value": 0,
+        "tolerance": 0.5,
+        "required_fields": {
+          "TYPE": "VELOCITY_RPM",
+          "VALID": "1",
+          "SOURCE": "DEVICE_FEEDBACK",
+          "ONLINE": "1",
+          "STALE": "0",
+          "HEALTH": "HEALTHY"
+        }
+      }
+    }
+  ]
+}

@@ -232,6 +232,17 @@ static bool parse_u16_any_arg(const char *text, uint16_t *value)
     return true;
 }
 
+static bool parse_endpoint_id_arg(const char *text,
+                                  robot_endpoint_id_t *value)
+{
+    uint16_t parsed = 0U;
+    if (!value || !parse_u16_any_arg(text, &parsed) || parsed == 0U) {
+        return false;
+    }
+    *value = (robot_endpoint_id_t)parsed;
+    return true;
+}
+
 static bool parse_u32_any_arg(const char *text, uint32_t *value)
 {
     if (!text || !value) {
@@ -428,6 +439,67 @@ static const char *safe_text(const char *value, const char *fallback)
     return (value && value[0] != '\0') ? value : fallback;
 }
 
+static const char *endpoint_health_name(robot_endpoint_health_t health)
+{
+    switch (health) {
+    case ROBOT_ENDPOINT_HEALTH_HEALTHY:
+        return "HEALTHY";
+    case ROBOT_ENDPOINT_HEALTH_DEGRADED:
+        return "DEGRADED";
+    case ROBOT_ENDPOINT_HEALTH_OFFLINE:
+        return "OFFLINE";
+    case ROBOT_ENDPOINT_HEALTH_FAULT:
+        return "FAULT";
+    case ROBOT_ENDPOINT_HEALTH_STALE:
+        return "STALE";
+    case ROBOT_ENDPOINT_HEALTH_UNKNOWN:
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *velocity_observation_source_name(
+    robot_velocity_observation_source_t source)
+{
+    return source == ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK
+               ? "DEVICE_FEEDBACK"
+               : "UNKNOWN";
+}
+
+static const char *endpoint_criticality_name(
+    robot_endpoint_criticality_t criticality)
+{
+    switch (criticality) {
+    case ROBOT_ENDPOINT_REQUIRED:
+        return "REQUIRED";
+    case ROBOT_ENDPOINT_OPTIONAL:
+        return "OPTIONAL";
+    case ROBOT_ENDPOINT_DEVELOPMENT:
+        return "DEVELOPMENT";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *application_result_name(
+    actuation_application_result_t result)
+{
+    switch (result) {
+    case ACTUATION_APPLICATION_FAILED:
+        return "FAILED";
+    case ACTUATION_APPLICATION_PARTIAL:
+        return "PARTIAL";
+    case ACTUATION_APPLICATION_TIMEOUT:
+        return "TIMEOUT";
+    case ACTUATION_APPLICATION_INVALID_ARGUMENT:
+        return "INVALID_ARGUMENT";
+    case ACTUATION_APPLICATION_OK:
+        return "OK";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 static uint32_t gateway_monotonic_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -531,7 +603,7 @@ static void handle_version(serial_gateway_handle_t handle)
                                 : "UNKNOWN";
 
     print_locked(handle,
-                 "DATA VERSION PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu IDF:%s PARTITION:%s OTA_STATE:%s PENDING_VERIFY:%u ROLLBACK_POSSIBLE:%u\n",
+                 "DATA VERSION PROJECT:%s TARGET:%s VERSION:%s BUILD_NUMBER:%lu IDF:%s PARTITION:%s OTA_STATE:%s PENDING_VERIFY:%u ROLLBACK_POSSIBLE:%u GIT_SHA:%s GIT_DIRTY:%u\n",
                  safe_text(handle->config.fw_project, "UNKNOWN"),
                  safe_text(handle->config.fw_target, "UNKNOWN"),
                  safe_text(handle->config.fw_version, "UNKNOWN"),
@@ -540,7 +612,9 @@ static void handle_version(serial_gateway_handle_t handle)
                  safe_text(partition_label, "UNKNOWN"),
                  ota_state,
                  state_err == ESP_OK && boot_state.pending_verify ? 1 : 0,
-                 state_err == ESP_OK && boot_state.rollback_possible ? 1 : 0);
+                 state_err == ESP_OK && boot_state.rollback_possible ? 1 : 0,
+                 safe_text(handle->config.fw_git_sha, "UNKNOWN"),
+                 handle->config.fw_git_dirty ? 1U : 0U);
 }
 
 static esp_err_t get_config_snapshot(serial_gateway_handle_t handle, config_manager_snapshot_t *snapshot)
@@ -2008,7 +2082,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_diagnostic_help(serial_gateway_handle_t handle)
@@ -2021,10 +2095,184 @@ static void print_diagnostic_help(serial_gateway_handle_t handle)
 static void handle_profile_status(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA PROFILE NAME:%s SCHEMA_VALID:%u COMPOSITION_SUPPORTED:%u\n",
+                 "DATA PROFILE NAME:%s SCHEMA_VALID:%u COMPOSITION_SUPPORTED:%u BOARD:%s\n",
                  safe_text(handle->config.profile_name, "UNKNOWN"),
                  handle->config.profile_schema_valid ? 1U : 0U,
-                 handle->config.composition_supported ? 1U : 0U);
+                 handle->config.composition_supported ? 1U : 0U,
+                 safe_text(handle->config.board_name, "UNKNOWN"));
+}
+
+static void handle_endpoints(serial_gateway_handle_t handle,
+                             int argc,
+                             char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE ENDPOINTS\n");
+        return;
+    }
+    size_t count = actuation_application_endpoint_count(
+        handle->config.actuation);
+    print_locked(handle, "DATA ENDPOINTS COUNT:%u\n", (unsigned)count);
+    for (size_t index = 0; index < count; ++index) {
+        actuation_application_endpoint_info_t endpoint;
+        if (!actuation_application_endpoint_at(handle->config.actuation,
+                                               index,
+                                               &endpoint)) {
+            print_locked(handle,
+                         "ERR ENDPOINT_ENUMERATION_FAILED INDEX:%u\n",
+                         (unsigned)index);
+            return;
+        }
+        print_locked(
+            handle,
+            "DATA ENDPOINT ID:%u NAME:%s CRITICALITY:%s AVAILABLE:%u CAPABILITIES:0x%08lx VELOCITY_RPM:%u VELOCITY_OBSERVATION:%u STOPPABLE:%u MIN_RPM:%d MAX_RPM:%d\n",
+            (unsigned)endpoint.id,
+            safe_text(endpoint.name, "UNKNOWN"),
+            endpoint_criticality_name(endpoint.criticality),
+            endpoint.available ? 1U : 0U,
+            (unsigned long)endpoint.capabilities,
+            (endpoint.capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) != 0U
+                ? 1U
+                : 0U,
+            endpoint.velocity_observation_supported ? 1U : 0U,
+            (endpoint.capabilities & ROBOT_CAPABILITY_STOPPABLE) != 0U ? 1U
+                                                                        : 0U,
+            endpoint.min_rpm,
+            endpoint.max_rpm);
+    }
+}
+
+static void handle_set_endpoint_speed(serial_gateway_handle_t handle,
+                                      int argc,
+                                      char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    int16_t rpm = 0;
+    if (argc != 3 || !parse_endpoint_id_arg(argv[1], &endpoint_id) ||
+        !parse_i16_arg(argv[2], &rpm)) {
+        print_locked(handle, "ERR USAGE SET_ENDPOINT_SPEED id rpm\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    if (!endpoint.available) {
+        print_locked(handle,
+                     "ERR ENDPOINT_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    if ((endpoint.capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) == 0U) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:VELOCITY_RPM\n",
+            (unsigned)endpoint_id);
+        return;
+    }
+    if (rpm < endpoint.min_rpm || rpm > endpoint.max_rpm) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_SPEED_OUT_OF_RANGE ID:%u REQUESTED:%d MIN_RPM:%d MAX_RPM:%d\n",
+            (unsigned)endpoint_id,
+            rpm,
+            endpoint.min_rpm,
+            endpoint.max_rpm);
+        return;
+    }
+    actuation_application_result_t result =
+        actuation_application_set_endpoint_speed_rpm(
+            handle->config.actuation, endpoint_id, rpm);
+    if (result == ACTUATION_APPLICATION_OK) {
+        print_locked(handle,
+                     "OK SET_ENDPOINT_SPEED ID:%u RPM_TARGET:%d\n",
+                     (unsigned)endpoint_id,
+                     rpm);
+        return;
+    }
+    print_locked(handle,
+                 "ERR SET_ENDPOINT_SPEED_FAILED ID:%u RESULT:%s\n",
+                 (unsigned)endpoint_id,
+                 application_result_name(result));
+}
+
+static void handle_stop_endpoint(serial_gateway_handle_t handle,
+                                 int argc,
+                                 char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    if (argc != 2 || !parse_endpoint_id_arg(argv[1], &endpoint_id)) {
+        print_locked(handle, "ERR USAGE STOP_ENDPOINT id\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    if ((endpoint.capabilities & ROBOT_CAPABILITY_STOPPABLE) == 0U) {
+        print_locked(
+            handle,
+            "ERR ENDPOINT_CAPABILITY_UNSUPPORTED ID:%u CAPABILITY:STOPPABLE\n",
+            (unsigned)endpoint_id);
+        return;
+    }
+    actuation_application_result_t result = actuation_application_stop_endpoint(
+        handle->config.actuation, endpoint_id);
+    if (result == ACTUATION_APPLICATION_OK) {
+        print_locked(handle,
+                     "OK STOP_ENDPOINT ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    print_locked(handle,
+                 "ERR STOP_ENDPOINT_FAILED ID:%u RESULT:%s\n",
+                 (unsigned)endpoint_id,
+                 application_result_name(result));
+}
+
+static void handle_get_endpoint_observation(serial_gateway_handle_t handle,
+                                            int argc,
+                                            char *argv[])
+{
+    robot_endpoint_id_t endpoint_id = 0U;
+    if (argc != 2 || !parse_endpoint_id_arg(argv[1], &endpoint_id)) {
+        print_locked(handle, "ERR USAGE GET_ENDPOINT_OBSERVATION id\n");
+        return;
+    }
+    actuation_application_endpoint_info_t endpoint;
+    if (!actuation_application_find_endpoint(handle->config.actuation,
+                                             endpoint_id,
+                                             &endpoint)) {
+        print_locked(handle, "ERR BAD_ENDPOINT ID:%u\n", (unsigned)endpoint_id);
+        return;
+    }
+    robot_velocity_observation_t observation;
+    if (!actuation_application_get_endpoint_velocity_observation(
+            handle->config.actuation, endpoint_id, &observation)) {
+        print_locked(handle,
+                     "ERR ENDPOINT_OBSERVATION_UNAVAILABLE ID:%u\n",
+                     (unsigned)endpoint_id);
+        return;
+    }
+    print_locked(
+        handle,
+        "DATA ENDPOINT_OBSERVATION ID:%u TYPE:VELOCITY_RPM VALID:%u RPM:%d TIMESTAMP_MS:%lu SOURCE:%s ONLINE:%u STALE:%u HEALTH:%s HEALTH_AVAILABLE:%u\n",
+        (unsigned)endpoint_id,
+        observation.valid ? 1U : 0U,
+        observation.rpm,
+        (unsigned long)observation.timestamp_ms,
+        velocity_observation_source_name(observation.source),
+        observation.online ? 1U : 0U,
+        observation.stale ? 1U : 0U,
+        endpoint_health_name(observation.health),
+        observation.health != ROBOT_ENDPOINT_HEALTH_UNKNOWN ? 1U : 0U);
 }
 
 static void handle_composition_status(serial_gateway_handle_t handle)
@@ -2663,6 +2911,14 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_get_svd48_config(handle, argc, argv);
     } else if (strcasecmp(argv[0], "APPLY_PY6514_CONFIG") == 0) {
         handle_apply_py6514_config(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "ENDPOINTS") == 0) {
+        handle_endpoints(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SET_ENDPOINT_SPEED") == 0) {
+        handle_set_endpoint_speed(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "STOP_ENDPOINT") == 0) {
+        handle_stop_endpoint(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "GET_ENDPOINT_OBSERVATION") == 0) {
+        handle_get_endpoint_observation(handle, argc, argv);
     } else if (strcasecmp(argv[0], "GET_SPEED") == 0) {
         uint8_t motor = 0;
         if (argc != 2 || !parse_motor_arg(handle, argv[1], &motor)) {

@@ -10,6 +10,7 @@ typedef struct {
     fake_bus_transport_t bus;
     svd48_device_t device;
     uint32_t now_ms;
+    size_t state_lock_acquire_count;
 } adapter_fixture_t;
 
 static void append_crc(uint8_t *frame, size_t payload_length)
@@ -21,7 +22,12 @@ static void append_crc(uint8_t *frame, size_t payload_length)
 
 static bool state_lock_acquire(void *context)
 {
-    return context != NULL;
+    adapter_fixture_t *fixture = context;
+    if (!fixture) {
+        return false;
+    }
+    ++fixture->state_lock_acquire_count;
+    return true;
 }
 
 static void state_lock_release(void *context)
@@ -406,6 +412,16 @@ static bool test_diagnostics_map_identity_observation_and_health(void)
     HOST_TEST_CHECK(diagnostics.device_address == 3U);
     HOST_TEST_CHECK(diagnostics.channel == SVD48_CHANNEL_M2);
     HOST_TEST_CHECK(diagnostics.health == SVD48_CHANNEL_HEALTH_OFFLINE);
+    robot_velocity_observation_t observation;
+    HOST_TEST_CHECK(robot_endpoint_read_velocity_observation(&adapter.endpoint,
+                                                             &observation) ==
+                    ROBOT_CAP_OK);
+    HOST_TEST_CHECK(!observation.valid);
+    HOST_TEST_CHECK(observation.timestamp_ms == 0U);
+    HOST_TEST_CHECK(observation.source ==
+                    ROBOT_VELOCITY_OBSERVATION_SOURCE_UNKNOWN);
+    HOST_TEST_CHECK(!observation.online);
+    HOST_TEST_CHECK(observation.health == ROBOT_ENDPOINT_HEALTH_OFFLINE);
 
     fixture.now_ms = 100U;
     HOST_TEST_CHECK(expect_complete_poll(&fixture));
@@ -416,6 +432,19 @@ static bool test_diagnostics_map_identity_observation_and_health(void)
     HOST_TEST_CHECK(diagnostics.observation.valid_observations ==
                     SVD48_OBSERVATION_ALL);
     HOST_TEST_CHECK(diagnostics.health == SVD48_CHANNEL_HEALTH_HEALTHY);
+    size_t lock_count = fixture.state_lock_acquire_count;
+    HOST_TEST_CHECK(robot_endpoint_read_velocity_observation(&adapter.endpoint,
+                                                             &observation) ==
+                    ROBOT_CAP_OK);
+    HOST_TEST_CHECK(fixture.state_lock_acquire_count == lock_count + 1U);
+    HOST_TEST_CHECK(observation.valid);
+    HOST_TEST_CHECK(observation.rpm == -13);
+    HOST_TEST_CHECK(observation.timestamp_ms == 100U);
+    HOST_TEST_CHECK(observation.source ==
+                    ROBOT_VELOCITY_OBSERVATION_SOURCE_DEVICE_FEEDBACK);
+    HOST_TEST_CHECK(observation.online);
+    HOST_TEST_CHECK(!observation.stale);
+    HOST_TEST_CHECK(observation.health == ROBOT_ENDPOINT_HEALTH_HEALTHY);
     return true;
 }
 

@@ -1,4 +1,20 @@
-# Roadmap from the Iteration 4 bench baseline
+# Platform roadmap from the Iteration 4 bench baseline
+
+> **Roadmap version:** 1.0
+> **Status:** Current long-horizon architecture and product plan.
+
+## Scope and precedence
+
+This roadmap owns the broad platform progression: embedded safety architecture,
+profile/tooling evolution, Linux/ROS integration and eventual product qualification.
+The [Field-Ready Iteration Roadmap](FIELD_READY_ITERATION_ROADMAP.md) is the master
+sequence for hardware qualification and the path from `bench-baseline-v1` to the
+first supervised field test. If their ordering overlaps and conflicts before that
+milestone, the field-ready roadmap takes precedence.
+
+Both documents are plans. Source code, executable tests, current as-built contracts
+and [Safety](SAFETY.md) remain authoritative, and completed implementation does not
+constitute physical evidence.
 
 ## Goal
 
@@ -51,13 +67,19 @@ Not available now:
 - A versioned real-time transport or ROS binding.
 - Product-qualified timing, memory margin, security and fault handling.
 
-Verification status, CI results and profile build metrics are recorded only in
-[Iteration 4 closeout](ITERATION_4_CLOSEOUT.md); implementation does not imply a
-passing release gate.
+Detailed verification and profile build metrics are recorded in the
+[Iteration 4 closeout](ITERATION_4_CLOSEOUT.md). The final post-merge run is linked
+there and below; implementation alone does not imply a passing release gate.
 
 ## Ordered implementation slices
 
-### 1. Close and stabilize Iteration 4 contracts
+### 1. Close and stabilize Iteration 4 contracts — DONE
+
+Completed by `bench-baseline-v1` at
+`d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow
+[`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124)
+passed host, sanitizer and both profile builds. The following remain baseline
+invariants:
 
 - Keep fake-backed host tests for transport, device, polling, channel adapter,
   factory/preflight and both profiles.
@@ -67,8 +89,8 @@ passing release gate.
 - Correct any health, unit, bus-selection or concurrency defect revealed by those
   tests without broadening the architecture.
 
-Exit: every closeout criterion has executable evidence and the branch is safe for a
-reviewed merge. A build is not a hardware safety test.
+Exit satisfied for the reviewed Iteration 4 integration. A build is not a hardware
+safety test, and the baseline remains bench-only.
 
 ### 2. Profile-aware health and safe lifecycle
 

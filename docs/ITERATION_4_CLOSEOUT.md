@@ -39,6 +39,17 @@ commit remains in branch history.
 | `22c6965` | Re-emit the remote verification event after the GitHub Actions outage |
 | `c7312df` | Initialize the ESP-IDF environment explicitly inside GitHub Actions job containers |
 
+## Post-merge integration
+
+PR [#5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) was integrated on
+2026-08-07 as `d11306cecb93099d78cb7477cfaf259f9ddaef4c`, the commit referenced by the
+annotated `bench-baseline-v1` tag. Post-merge workflow
+[`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124)
+passed the host, ASan/UBSan, `current_robot` ESP-IDF and
+`bench_single_svd48_motor` ESP-IDF jobs, with both firmware profiles publishing their
+build artifacts. This closes the remote software/build integration gate; it supplies
+no physical hardware evidence and the baseline remains bench-only.
+
 ## Added files
 
 The complete iteration added the following groups relative to the base commit:
@@ -101,8 +112,8 @@ initialized rather than claiming a physical stop.
 | Protocol compatibility | PASS | Six Python tests plus C request/response tests | Covers reads, single/multiple writes, M1/M2 targets/stops, exception and bad CRC |
 | Application compatibility | PASS | Thirteen source-level characterization tests | Preserves syntax/results/routes for speed, stop, bench indexing, telemetry and maintenance commands; not a hardware runtime test |
 | Safe diagnostic startup | PASS | Policy tests, source characterization, independent code audit and both firmware builds | Pending OTA verification still follows rollback policy |
-| Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution remains the manual merge gate below |
-| GitHub-hosted PR checks | PASS | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) final-head rollup; first green executions: [push](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234214437) and [pull request](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234216400) | Host, ASan/UBSan and both ESP-IDF profiles must remain green on the commit containing this record before merge |
+| Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | This was the pre-merge local gate; the remote and post-merge rows below close external verification |
+| GitHub-hosted checks | PASS | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) final-head rollup; first green [push](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234214437) and [pull request](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234216400); final [post-merge run](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) | Host, ASan/UBSan and both ESP-IDF profiles remained green through integration; firmware jobs published profile artifacts |
 | As-built documentation and links | PASS | Documentation audit, Mermaid review and local link validation | No obsolete file required archival |
 | Hardware response, timing and physical RPM interpretation | NOT VERIFIED | Deliberately not exercised | Requires separately authorized off-ground evidence |
 
@@ -237,11 +248,11 @@ they keep the firmware bench-only:
   its inter-task stop flag remains the existing ESP-IDF-style `volatile bool`.
 - IRAM has one byte of link-time headroom.
 
-Recommended next work is a bounded safety/authority iteration: establish one
-priority-aware actuation owner, migrate the remaining physical writers, make approved
-per-observation health inhibit required capabilities, then perform separately
-authorized off-ground SVD48 timing/RPM/stop qualification. It must not be folded into
-this closeout.
+The current [field-ready roadmap](FIELD_READY_ITERATION_ROADMAP.md) supersedes the
+original closeout ordering: hardware-test guidance/runner integration and measured
+memory headroom come next. Physical qualification remains separately authorized, and
+the priority-aware owner, health gating and legacy-writer migration remain mandatory
+before complete-chassis floor motion. None of that work is part of this closeout.
 
 ## CI and merge gate
 
@@ -263,23 +274,20 @@ Both its [push run](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/
 and [pull-request run](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234216400)
 then passed host, ASan/UBSan, `current_robot` and
 `bench_single_svd48_motor`. The logs identify ESP-IDF v5.4.1 and both runs uploaded
-the configured profile artifacts. The final documentation-only head must retain the
-same green rollup before merge; neither the outage nor local builds waive that gate.
+the configured profile artifacts.
 
-Review and the manual merge gate are tracked in
-[PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5). Merge is
-prohibited by project policy until its workflow checks pass, the branch remains
-conflict-free and clean, and the final diff review has no blocking finding. `main`
-currently has no branch protection or required-status-check rule, so GitHub does not
-enforce this gate. The preferred integration is squash merge; rollback is a revert of
-that single `main` commit. The feature branch should be retained until post-merge CI
-and documentation visibility are confirmed.
+The manual gate tracked in [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5)
+required a conflict-free reviewed head and a green rollup before squash merge. That
+gate was satisfied, and the post-merge run recorded above confirmed the integrated
+commit. `main` did not rely on a configured required-status rule for this historical
+gate; rollback remains a revert of the single integration commit.
 
 ## Current closeout classification
 
 **CLOSED WITH EXPLICIT DEFERRED ITEMS.** The hardware-independent code, test,
 documentation, local build and GitHub-hosted CI criteria are satisfied. Hardware
 qualification and the listed legacy/safety migrations remain explicitly deferred;
-the firmware remains bench-only. The next work should establish the host-side
-hardware-test lifecycle and recover embedded memory headroom before adding
-substantial motion/safety firmware or claiming physical qualification.
+the firmware remains bench-only. Iteration A now supplies the host-side hardware-test
+lifecycle on its integration branch; after that gate, measured memory headroom is the
+next recommended milestone before substantial motion/safety firmware or any physical
+qualification claim.
