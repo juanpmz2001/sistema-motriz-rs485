@@ -2,19 +2,39 @@
 
 This file is the operating contract for coding agents working in this repository.
 
-## Required reading
+## Read and route
 
-Read these files in order before changing code:
+Start with `README.md`, then read only the routes the task actually touches. For any
+code change, also read `docs/ARCHITECTURE.md` and `docs/SAFETY.md` before editing.
 
-1. `README.md`
-2. `docs/ARCHITECTURE.md`
-3. `docs/SAFETY.md`
-4. The domain document relevant to the change: `docs/API.md`, `docs/OTA.md` or
-   `docs/SVD48.md`
-5. `docs/ROADMAP.md` for planned boundaries and sequencing
+| Task scope | Additional mandatory reading |
+| --- | --- |
+| Serial/LAN commands or public responses | `docs/API.md` |
+| SVD48, RS485, polling or drive units | `docs/SVD48.md` |
+| OTA, release or recovery | `docs/OTA.md` |
+| Physical tests, HIL or test architecture | `docs/TESTING_ARCHITECTURE_GUIDE.md`, `docs/testing/README.md`, `tests/hil/README.md` and `docs/SAFETY.md` |
+| PCB, actuator, sensor, closed-loop or mobility qualification | the preceding physical-test route plus `docs/FIELD_READY_ITERATION_ROADMAP.md` |
+| Evidence from a physical session | `docs/testing/EVIDENCE_TEMPLATE.md` |
+| Work sequencing toward the first field test | `docs/FIELD_READY_ITERATION_ROADMAP.md` |
+| Long-horizon platform, ROS or product qualification planning | `docs/ROADMAP.md`; also read the field-ready roadmap if the decision affects a pre-field milestone |
 
-Treat source code and executable tests as truth when prose disagrees. Correct the
-documentation in the same change whenever behavior or a public contract changes.
+Do not load every domain document when the task has no dependency on it. When a task
+spans routes, combine their reading lists.
+
+Precedence is explicit:
+
+1. source code and executable tests are the implementation truth;
+2. current as-built and safety contracts describe that implementation;
+3. `docs/TESTING_ARCHITECTURE_GUIDE.md` owns test levels, evidence classes and the
+   physical-test lifecycle;
+4. `docs/FIELD_READY_ITERATION_ROADMAP.md` owns sequencing from the bench baseline to
+   the first field-testable version; and
+5. `docs/ROADMAP.md` owns the broader, long-horizon platform sequence.
+
+If the two roadmaps overlap and disagree on pre-field ordering, the field-ready
+roadmap wins. No roadmap overrides `docs/SAFETY.md` or proves that planned behavior is
+implemented. Correct documentation in the same change whenever behavior or a public
+contract changes.
 
 ## Current constraints
 

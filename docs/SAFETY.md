@@ -2,9 +2,10 @@
 
 ## Classification
 
-Build 19 and the Iteration 4 architecture remain bench firmware. They are not approved
-for a robot on the floor, around people or with mechanically loaded actuators. Software
-stop commands are not a replacement for an independent emergency power path.
+The `bench-baseline-v1` Iteration 4 baseline and current Iteration A integration
+remain bench firmware. They are not approved for a robot on the floor, around people
+or with mechanically loaded actuators. Software stop commands are not a replacement
+for an independent emergency power path.
 
 ## Implemented startup and stop behavior
 
@@ -24,6 +25,8 @@ stop commands are not a replacement for an independent emergency power path.
 - Normal startup issues a best-effort global stop through the application port and
   coordinator before starting polling and external services. Failure is logged and
   startup currently continues.
+- Reported endpoint unavailability inhibits speed/observation but does not suppress
+  a stop attempt for an existing stoppable endpoint.
 - A priority-9 safety task runs every 20 ms. After a valid RC frame has been seen,
   invalid RC for at least 150 ms activates RC-loss handling.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates
@@ -47,6 +50,7 @@ all hazards are controlled.
 | --- | --- | --- |
 | `SET_SPEED` | application port → coordinator → direct SVD48 channel adapter | Migrated |
 | `STOP n`, `STOP ALL` | application port → coordinator → direct adapter | Migrated |
+| `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct adapter | Migrated; serial only |
 | Boot and safety stop | application port → coordinator → direct adapter | Migrated |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
 | `CLEAR_FAULT` | gateway → `robot_control` compatibility facade | Bypass |
@@ -101,6 +105,11 @@ without artificial scaling. The observed value already feeds the legacy 5-RPM
 OTA/maintenance readiness predicate and `PLATFORM_STATUS` motion indication despite
 lacking physical confirmation. Those checks are not qualified safety evidence; a
 future controlled physical test must confirm the interpretation and failure policy.
+
+The typed velocity-observation boundary preserves validity, sample timestamp,
+controller-feedback source, online, speed-specific stale and health fields. It lets
+an L4 host test avoid concrete driver knowledge, but it does not make the feedback
+independent physical evidence and it is not yet an active motion inhibit.
 
 ## Required invariants
 
@@ -173,6 +182,30 @@ Before any command that can move or alter persistent drive configuration:
 Agents must not initiate actuation merely to prove that a build succeeded. The future
 RPM interpretation check requires separate explicit authorization and a reviewed test
 setup; it is not part of software closeout.
+
+## Host HIL safety boundary
+
+The Iteration A runner validates the exact full Git SHA, dirty state, board, profile,
+logical endpoint, criticality, RPM bounds and declared capabilities before a motion
+manifest can run. It records the operator-supplied firmware artifact SHA-256/reference
+without claiming on-target image attestation. It also requires a named hardware/PCB
+identity and explicit operator confirmations for authorization, unloaded mechanics
+and a working physical cut-off. The included L4/E2 manifest applies only to the
+one-endpoint bench profile and bounded ±5 RPM requests.
+
+Before its steps the runner requests `STOP ALL` and checks application-level
+composition, safe-idle platform, no active RC-loss/motor-fault condition and a fresh
+stopped-observation gate. After every
+attempt that may have issued motion it requests `STOP ALL` again and requires a
+fresh, online, healthy stopped observation before `PASS` can remain possible. These
+are orchestration controls, not firmware authority, TTL/deadman, stop precedence or
+an emergency stop.
+
+Automatic cleanup is best effort on normal completion, exceptions, timeouts,
+`SIGINT`, `SIGTERM` and `SIGHUP`. `SIGKILL`, host power loss, cable loss, target
+failure or a blocked transport can defeat it. A person-operated physical power
+cut-off therefore remains mandatory. No physical gate is passed merely because the
+runner, its fake tests or the firmware build succeeds.
 
 ## Production release gates
 

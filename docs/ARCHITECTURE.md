@@ -2,10 +2,10 @@
 
 ## Scope and status
 
-This document is the primary source for the architecture implemented by build 19 on
-`refactor/svd48-device-composition` after Iteration 4. It is an as-built
-description, not the target design. The target and migration rationale live in
-[Architecture refactor](ARCHITECTURE_REFACTOR.md).
+This document is the primary source for the architecture implemented by the
+`bench-baseline-v1` Iteration 4 baseline plus the current Iteration A integration.
+It is an as-built description, not the target design. The target and migration
+rationale live in [Architecture refactor](ARCHITECTURE_REFACTOR.md).
 
 The firmware is bench-only. `app_main()` is the composition root; component-owned
 FreeRTOS tasks perform runtime work after startup, and the main task sleeps. The
@@ -37,6 +37,8 @@ flowchart TB
 
   SERIAL[serial_gateway]:::transition --> APP[actuation_application_port]:::active
   APP --> COORD
+  APP --> VOBS[typed velocity observation port]:::active
+  VOBS --> DIRECT
   SAFETY[robot_safety]:::transition --> APP
   MAINT[maintenance_lan]:::transition --> SERIAL
   RC[ibus_receiver / PPM]:::active --> SAFETY
@@ -58,7 +60,9 @@ The active speed/stop adapter is the direct SVD48 channel adapter. The
 `robot_control_endpoint_adapter` is retained only for host characterization and is
 not wired by `robot_composition`. `serial_gateway` depends on the application port
 and primitive diagnostic data; it does not depend on profile, composition or the
-coordinator implementation.
+coordinator implementation. It can enumerate endpoints, command velocity or stop by
+logical endpoint ID, and read a typed velocity observation without exposing the
+concrete controller to its client.
 
 ## `SET_SPEED` sequence
 
@@ -186,8 +190,8 @@ The supported profiles are:
 
 | Profile | RS485 topology | Endpoint topology | Geometry |
 | --- | --- | --- | --- |
-| `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four endpoints ordered drive 1 M1/M2, drive 2 M1/M2 | Differential |
-| `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | One endpoint at legacy index 0, channel M1 | None |
+| `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
+| `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 
 The bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0` and
 `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
@@ -225,6 +229,13 @@ without a factor-of-ten conversion. That raw observation already feeds the legac
 `PLATFORM_STATUS` when it is online and fresh. It is not independent evidence that
 the physical axis moved; controlled physical qualification and a reviewed fail-safe
 policy remain required.
+
+Iteration A exposes the same controller-derived speed through the typed
+`robot_velocity_observation_t` application boundary. The value includes validity,
+RPM, sample timestamp, source, online, speed-specific stale and channel-health
+semantics. `GET_ENDPOINT_OBSERVATION` uses that boundary and identifies its type as
+`VELOCITY_RPM`; it is E2 controller feedback, not an independent E3 sensor. Other
+observation types remain future work and actuation does not imply observation.
 
 ## Tasks and locks
 
@@ -291,6 +302,22 @@ commands return `ERR DIAGNOSTIC_MODE_COMMAND_BLOCKED`. It does not start the str
 RC, safety, Wi-Fi reconnect, OTA, announce or LAN tasks. A pending OTA image retains
 the existing rollback-on-self-test-failure policy instead of accepting diagnostic
 mode as a successful self-test.
+
+In normal serial mode, `VERSION` reports the full build Git SHA and dirty flag,
+`PROFILE_STATUS` reports the selected board, and `ENDPOINTS` reports logical IDs,
+names, criticality, capability discovery, availability and RPM bounds. The endpoint-scoped
+`SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` and `GET_ENDPOINT_OBSERVATION` commands use the
+application boundary; they are deliberately unavailable through the LAN-safe policy
+and in restricted diagnostic mode. Availability inhibits speed and observation, but
+does not suppress a stop attempt for an existing stoppable endpoint. Legacy
+numeric-index commands remain compatible.
+
+The host-only runner in `tools/hil_runner.py` consumes this normal application API
+from a versioned manifest. It adds orchestration, identity gates, bounded commands,
+assertions, evidence and best-effort cleanup outside the firmware; there is no
+firmware test mode or hardware-specific bypass. The runner is not an actuation
+authority, TTL/deadman implementation or emergency stop, so it does not close the
+minimum-safe-motion gate.
 
 ## Transitional and dormant boundaries
 
