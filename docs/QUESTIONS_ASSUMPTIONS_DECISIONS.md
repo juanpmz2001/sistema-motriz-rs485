@@ -97,9 +97,10 @@ define the current implementation. No item here authorizes hardware actuation.
 ### Q-008 — Allocation and timing budgets
 
 - **Date:** 2026-08-02
-- **Context:** Clean Iteration 4 builds remeasured one byte of IRAM headroom for both
-  profiles. Task stack high-water marks, bus timing and an acceptable resource budget
-  are still not qualified.
+- **Context:** Clean Iteration 4 builds report one byte free in the dedicated IRAM
+  category. Iteration B map analysis showed 232,272 B of effective shared D/IRAM
+  linker headroom and set a 192 KiB CI floor. Task stack high-water marks, runtime
+  heap, bus timing and their acceptable budgets are still not qualified.
 - **Question:** What static memory, stack, bus-blocking and scheduling budgets apply?
 - **Why it matters:** New indirection must not undermine determinism or memory safety.
 - **Impact if unanswered:** Firmware integration must remain bounded and incremental.
@@ -215,10 +216,11 @@ outside this iteration.
 Only individual `SET_SPEED` and global stops from boot, serial/LAN delegation and
 safety migrate. Q-001 through Q-005 remain OPEN and no authority/state/TTL policy is activated.
 
-The Iteration 4 closeout supersedes Q-008's earlier unverified inherited assertion:
-reproducible ESP-IDF 5.4.1 build/map comparisons now confirm one byte of IRAM margin
-for both profiles. Q-008 remains open because acceptable budgets and runtime timing
-evidence are still undefined.
+Iteration B supersedes Q-008's earlier interpretation of the Iteration 4 size row:
+the one-byte dedicated-bank remainder is not linker capacity. Reproducible ESP-IDF
+5.4.1 map analysis gives 232,272 B of effective shared D/IRAM headroom for both
+profiles, with a 192 KiB CI floor. Q-008 remains open because runtime heap/stack,
+bus-blocking and scheduling budgets and evidence are still undefined.
 
 ## Iteration 3 hardening decisions
 

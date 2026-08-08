@@ -168,9 +168,11 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
   OTA/maintenance readiness gate and `PLATFORM_STATUS`; it is not qualified safety
   evidence. A controlled future physical test must confirm the interpretation.
 - Servo output has no position feedback and cannot prove physical position.
-- Clean ESP-IDF 5.4.1 builds of both Iteration 4 profiles still leave only 1 byte of
-  reported IRAM headroom; the measurements are recorded in the
-  [closeout](docs/ITERATION_4_CLOSEOUT.md) and block unreviewed IRAM growth.
+- Clean ESP-IDF 5.4.1 builds report 1 byte free in the dedicated 16 KiB IRAM
+  category, but the ESP32-S3 linker continues into shared D/IRAM. The audited
+  linker-map margin is 232,272 bytes and CI enforces a 192 KiB floor for both
+  profiles; see the [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md).
+  Runtime heap, stack and timing qualification remain open.
 - `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are
   compiled foundations but are not wired into the active runtime.
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images
