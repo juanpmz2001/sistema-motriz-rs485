@@ -161,8 +161,8 @@ additional prerequisite gates explained in its evidence column.
 | --- | --- | --- |
 | Milestone 0 — stable Iteration 4 baseline | **DONE** | `bench-baseline-v1` points to `d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow [`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) passed host, sanitizer and both ESP-IDF profile builds. This is a bench baseline, not physical evidence. |
 | Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
-| Iteration B — memory headroom | **IN PROGRESS** | Local implementation and verification pass with 232,272 B effective headroom against a 196,608 B floor. Remote CI, integration and post-merge evidence remain before closeout. |
-| Iteration C — traction qualification | **BLOCKED BY HARDWARE** | It also waits for Iteration B integration; no L2–L5 physical result exists. |
+| Iteration B — memory headroom | **DONE** | PR [#8](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/8) merged as `cf726482a1aed453b749b0338c1fad789f0fdc52`; post-merge workflow [`31239836099`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31239836099) passed host, sanitizer and both profile builds. Both maps passed with 232,272 B effective headroom against the 196,608 B floor, and both artifacts retain placement evidence. |
+| Iteration C — traction qualification | **BLOCKED BY HARDWARE** | This is the first incomplete iteration. No L2–L5 physical result exists. |
 | Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Real actuator/encoder/profile evidence is absent. |
 | Iteration E — generic observations | **NOT STARTED** | Iteration A supplies only the minimum typed velocity slice; the broader typed boundary remains. |
 | Iteration F — motion service + geometry | **NOT STARTED** | Existing legacy motion path must first be audited against the real geometry. |
@@ -182,9 +182,11 @@ Main physical gates are currently:
 | Chassis H1/H2/H3 | **BLOCKED BY HARDWARE** | All component, motion-service and minimum-safe-authority gates. |
 | Supervised field test | **BLOCKED BY HARDWARE** | Controlled chassis and pre-field hardening evidence. |
 
-No physical gate is marked `PASS`. The first incomplete software iteration is B;
-it remains `IN PROGRESS` pending remote CI, integration and post-merge evidence and
-does not require hardware actuation.
+No physical gate is marked `PASS`. The first incomplete iteration is C, and its next
+exit evidence requires the named bench hardware, an operator-confirmed safe setup
+and an explicitly authorized physical session. The repository has the runbook and
+read-only interfaces needed to begin that gate, but compilation or simulated
+feedback cannot close it.
 
 ---
 
@@ -427,7 +429,7 @@ At minimum:
 - both profiles build and the gate passes in CI;
 - no regression in interrupt/cache-disabled/control requirements.
 
-## Local implementation evidence — pending integration
+## Closeout evidence — 2026-08-07
 
 - **Before/after:** effective headroom is 232,272 B before and after; no code or
   configuration was moved. The change corrects the capacity model and prevents
@@ -435,10 +437,18 @@ At minimum:
 - **Evidence retained:** each profile artifact includes the linker map and its
   SHA-256, `size`, `size-components`, `size-files`, generated configuration and
   human/machine-readable gate results.
-- **Verified locally:** 14 focused parser/CLI tests, the normal and sanitizer host
-  suites, both ESP-IDF 5.4.1 profile builds and the gate against both maps.
+- **Verified:** 14 focused parser/CLI tests, the normal and sanitizer host suites,
+  both ESP-IDF 5.4.1 profile builds and the gate against both maps. PR #8 merged as
+  `cf726482a1aed453b749b0338c1fad789f0fdc52`; post-merge workflow
+  [`31239836099`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31239836099)
+  passed all four jobs and uploaded complete evidence for both profiles.
 - **Not verified:** no hardware, runtime heap, stack high-water, watchdog, timing or
-  endurance claim was tested. Remote CI and integration are still pending.
+  endurance claim was tested.
+- **Current hardware gate:** Iteration C remains `BLOCKED BY HARDWARE`; no L2–L5
+  result is marked `PASS`.
+- **Next recommended milestone:** execute the Iteration C read-only L2 communication
+  gate on the named single-controller bench setup, then proceed only from real
+  evidence and operator authorization.
 
 The placement classification below is based on clean ESP-IDF 5.4.1 maps and
 temporary builds outside the repository. Sizes are internal executable bytes from
