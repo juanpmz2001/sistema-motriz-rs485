@@ -2,7 +2,7 @@
 
 ## Record scope
 
-This record covers `refactor/svd48-device-composition` on 2026-08-06. It closes the
+This record covers `refactor/svd48-device-composition` through 2026-08-07. It closes the
 hardware-independent verification of Iteration 4 and records the remaining bench and
 legacy limits. It does not authorize motor actuation, flashing, OTA, network tests or
 register writes.
@@ -36,6 +36,8 @@ commit remains in branch history.
 | `16e42c7` | Make sanitizers fail-fast and close factory, bench, health and concurrency coverage gaps |
 | `db0df13` | Reconcile the manual merge gate, final local metrics and lifecycle documentation |
 | `e0dd148` | Index the final Iteration 4 lifecycle hardening in this closeout record |
+| `22c6965` | Re-emit the remote verification event after the GitHub Actions outage |
+| `c7312df` | Initialize the ESP-IDF environment explicitly inside GitHub Actions job containers |
 
 ## Added files
 
@@ -100,7 +102,7 @@ initialized rather than claiming a physical stop.
 | Application compatibility | PASS | Thirteen source-level characterization tests | Preserves syntax/results/routes for speed, stop, bench indexing, telemetry and maintenance commands; not a hardware runtime test |
 | Safe diagnostic startup | PASS | Policy tests, source characterization, independent code audit and both firmware builds | Pending OTA verification still follows rollback policy |
 | Local CI-equivalent matrix | PASS | Host, sanitizer, Python and both isolated profile builds executed with the workflow commands | External GitHub runner execution remains the manual merge gate below |
-| GitHub-hosted PR checks | NOT VERIFIED | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) reported zero GitHub Actions runs on the final head during the [active Actions incident](https://www.githubstatus.com/incidents/qcvjkzcs7j74) on 2026-08-06 | Must become PASS on the final head before merge; the platform outage is not a waiver |
+| GitHub-hosted PR checks | PASS | [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5) final-head rollup; first green executions: [push](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234214437) and [pull request](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234216400) | Host, ASan/UBSan and both ESP-IDF profiles must remain green on the commit containing this record before merge |
 | As-built documentation and links | PASS | Documentation audit, Mermaid review and local link validation | No obsolete file required archival |
 | Hardware response, timing and physical RPM interpretation | NOT VERIFIED | Deliberately not exercised | Requires separately authorized off-ground evidence |
 
@@ -249,18 +251,20 @@ ESP-IDF 5.4.1 matrix for both profiles. Each firmware job stores build logs, gen
 configuration and size evidence as a 14-day artifact and writes metrics to the job
 summary. No secrets or hardware are used.
 
-At the remote state audited on 2026-08-06, Actions was enabled with all actions
-allowed. GitHub received the branch push event, the workflow existed at the pushed
-SHA and `refactor/svd48-device-composition` matched its `refactor/**` filter, but no
-GitHub Actions run was created. GitHub simultaneously reported a major Actions outage
-and stated that webhook triggers were throttled to approximately 15%, so many pushes
-and pull requests were not triggering runs. This is an external gate failure, not
-evidence that the workflow passed.
+On 2026-08-06 GitHub received the branch push but did not create a run during a major
+Actions incident that throttled webhook triggers. After service recovery, commit
+`22c6965` produced real push and pull-request runs. Host and sanitizer jobs passed,
+but both firmware jobs exposed a workflow defect before compilation: GitHub job
+containers do not apply the ESP-IDF image entrypoint environment, so `idf.py` was not
+on `PATH`.
 
-The `workflow_dispatch` declaration cannot be invoked while the workflow exists only
-on the feature branch because GitHub requires it on the default branch. A later
-substantive push may retry the natural `push` trigger, but neither a fabricated check
-nor a merge during the outage is acceptable.
+Commit `c7312df` explicitly sources `$IDF_PATH/export.sh` in the firmware build step.
+Both its [push run](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234214437)
+and [pull-request run](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234216400)
+then passed host, ASan/UBSan, `current_robot` and
+`bench_single_svd48_motor`. The logs identify ESP-IDF v5.4.1 and both runs uploaded
+the configured profile artifacts. The final documentation-only head must retain the
+same green rollup before merge; neither the outage nor local builds waive that gate.
 
 Review and the manual merge gate are tracked in
 [PR #5](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/5). Merge is
@@ -273,10 +277,9 @@ and documentation visibility are confirmed.
 
 ## Current closeout classification
 
-**NOT READY TO MERGE.** The local hardware-independent code, test, documentation and
-build criteria are satisfied, but the required GitHub-hosted checks have not run due
-to the active GitHub Actions outage. The outage does not relax the merge gate. The
-iteration may be reclassified as `CLOSED WITH EXPLICIT DEFERRED ITEMS` only after the
-checks pass on the final PR head and final review has no blocker. Hardware
+**CLOSED WITH EXPLICIT DEFERRED ITEMS.** The hardware-independent code, test,
+documentation, local build and GitHub-hosted CI criteria are satisfied. Hardware
 qualification and the listed legacy/safety migrations remain explicitly deferred;
-the firmware remains bench-only.
+the firmware remains bench-only. The next work should establish the host-side
+hardware-test lifecycle and recover embedded memory headroom before adding
+substantial motion/safety firmware or claiming physical qualification.

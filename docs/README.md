@@ -43,8 +43,7 @@ were implemented contracts.
 - [Questions, assumptions and decisions](QUESTIONS_ASSUMPTIONS_DECISIONS.md) — dated
   open safety questions and architectural decisions across the migration.
 - [Iteration 4 closeout](ITERATION_4_CLOSEOUT.md) — verification evidence, build
-  results, accepted limitations and the current manual merge-gate status for this
-  iteration.
+  results, accepted limitations and final integration evidence for this iteration.
 
 ## Historical material
 
