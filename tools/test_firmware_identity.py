@@ -116,6 +116,38 @@ class FirmwareIdentityTests(unittest.TestCase):
                 {"FW_GIT_SHA": expected_sha, "FW_GIT_DIRTY": "0"},
             )
 
+    def test_git_queries_scope_safe_directory_to_source_tree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
+            root = Path(raw)
+            fake_git = root / "fake-git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                "[ \"$1\" = '-c' ] || exit 10\n"
+                "case \"$2\" in safe.directory=*) ;; *) exit 11 ;; esac\n"
+                "[ \"$3\" = '-C' ] || exit 12\n"
+                "[ \"$4\" = \"${2#safe.directory=}\" ] || exit 13\n"
+                "case \"$5\" in\n"
+                "  rev-parse) printf '%s\\n' "
+                f"{'b' * 40}; exit 0 ;;\n"
+                "  status) exit 0 ;;\n"
+                "esac\n"
+                "exit 14\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            output = root / "identity.h"
+
+            result = self.generate_process(
+                root,
+                output,
+                git_executable=str(fake_git),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                read_defines(output),
+                {"FW_GIT_SHA": "b" * 40, "FW_GIT_DIRTY": "0"},
+            )
+
     def test_explicit_reproducible_overrides_win(self) -> None:
         with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
             output = Path(raw) / "identity.h"

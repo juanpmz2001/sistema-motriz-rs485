@@ -37,7 +37,12 @@ if(BOTFARMS_CAN_QUERY_GIT AND
    ((NOT DEFINED BOTFARMS_SHA_OVERRIDE OR BOTFARMS_SHA_OVERRIDE STREQUAL "") OR
     (NOT DEFINED BOTFARMS_DIRTY_OVERRIDE OR BOTFARMS_DIRTY_OVERRIDE STREQUAL "")))
     execute_process(
-        COMMAND "${BOTFARMS_GIT_EXECUTABLE}" -C "${BOTFARMS_SOURCE_DIR}"
+        # Containerized CI can lose actions/checkout's temporary-HOME
+        # safe.directory entry between steps. Trust only the source tree that
+        # this CMake invocation is already consuming.
+        COMMAND "${BOTFARMS_GIT_EXECUTABLE}"
+                -c "safe.directory=${BOTFARMS_SOURCE_DIR}"
+                -C "${BOTFARMS_SOURCE_DIR}"
                 rev-parse --verify HEAD
         RESULT_VARIABLE BOTFARMS_SHA_RESULT
         OUTPUT_VARIABLE BOTFARMS_SHA_DETECTED
@@ -80,7 +85,9 @@ if(NOT DEFINED BOTFARMS_DIRTY_OVERRIDE OR BOTFARMS_DIRTY_OVERRIDE STREQUAL "")
                 "Unable to determine firmware worktree dirty state; provide BOTFARMS_DIRTY_OVERRIDE")
     endif()
     execute_process(
-        COMMAND "${BOTFARMS_GIT_EXECUTABLE}" -C "${BOTFARMS_SOURCE_DIR}"
+        COMMAND "${BOTFARMS_GIT_EXECUTABLE}"
+                -c "safe.directory=${BOTFARMS_SOURCE_DIR}"
+                -C "${BOTFARMS_SOURCE_DIR}"
                 status --porcelain --untracked-files=normal
         RESULT_VARIABLE BOTFARMS_STATUS_RESULT
         OUTPUT_VARIABLE BOTFARMS_STATUS
