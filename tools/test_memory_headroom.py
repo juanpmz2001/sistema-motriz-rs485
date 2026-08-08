@@ -282,6 +282,9 @@ class MemoryHeadroomCliTests(unittest.TestCase):
             map_path = root / "firmware.map"
             json_path = root / "memory-headroom.json"
             map_path.write_text("not a linker map\n", encoding="utf-8")
+            json_path.write_text(
+                '{"status": "PASS", "stale": true}\n', encoding="utf-8"
+            )
             stderr = io.StringIO()
             with redirect_stderr(stderr):
                 result = main(("--json-output", str(json_path), str(map_path)))

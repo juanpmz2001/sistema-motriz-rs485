@@ -269,6 +269,8 @@ def _argument_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _argument_parser().parse_args(argv)
     try:
+        if args.json_output is not None:
+            args.json_output.unlink(missing_ok=True)
         map_bytes = args.map_file.read_bytes()
         map_sha256 = hashlib.sha256(map_bytes).hexdigest()
         text = map_bytes.decode(encoding="utf-8", errors="replace")
