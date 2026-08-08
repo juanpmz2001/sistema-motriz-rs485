@@ -144,12 +144,15 @@ The following block a production baseline:
 | Servo feedback | PWM command only | Report command only or add independent feedback |
 | Watchdog evidence | Configured, not timing-qualified | Worst-case timing and fault injection |
 | OTA authenticity | SHA-256 integrity only | Signed firmware and protected verification key |
-| Memory headroom | Last clean build reported one byte of IRAM margin | Restore and remeasure engineering margin |
+| Memory/resource qualification | Static linker-map gate passes at 232,272 B effective shared D/IRAM margin; runtime margins are unqualified | Preserve the 192 KiB CI floor; qualify runtime heap/stacks before field use |
 | Speed interpretation | Unconfirmed raw RPM already feeds legacy 5-RPM readiness/status checks | Controlled off-ground unit validation and reviewed fail-safe policy |
 
-Clean ESP-IDF 5.4.1 builds remeasured the one-byte IRAM margin for both Iteration 4
-profiles. Exact figures are recorded in the [closeout](ITERATION_4_CLOSEOUT.md); the
-measurement is current evidence of a critical release risk, not acceptable margin.
+The one-byte `IRAM` remainder reported by `idf.py size` is an alignment gap within
+the ESP32-S3's dedicated 16 KiB IRAM category, not the remaining linker capacity.
+The audited map has 232,272 bytes of effective shared D/IRAM headroom in
+both profiles, and CI fails below 192 KiB. This closes the static link-capacity
+interpretation gap; it does not qualify runtime heap, task stack high-water marks,
+watchdog timing or long-running polling stability.
 
 ## Profile-aware peripheral policy
 

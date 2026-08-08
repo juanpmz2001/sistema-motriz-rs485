@@ -84,8 +84,10 @@ invariants:
 - Keep fake-backed host tests for transport, device, polling, channel adapter,
   factory/preflight and both profiles.
 - Preserve serial compatibility tests and SVD48 golden protocol vectors.
-- Build both profiles with the pinned ESP-IDF version and record flash/DRAM/IRAM,
-  stacks, warnings and headroom in CI artifacts.
+- Build both profiles with the pinned ESP-IDF version and retain flash/DRAM/IRAM,
+  component/file placement and the linker map in CI artifacts. Enforce effective
+  shared D/IRAM headroom from linker regions and end symbols rather than treating
+  the dedicated-bank `IRAM` row as total capacity.
 - Correct any health, unit, bus-selection or concurrency defect revealed by those
   tests without broadening the architecture.
 

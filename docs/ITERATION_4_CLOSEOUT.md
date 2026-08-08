@@ -159,12 +159,16 @@ ignored repository `sdkconfig` unchanged. ESP-IDF was exactly `v5.4.1`, target
 | DIRAM used / free | 109,135 / 232,625 B | 109,135 / 232,625 B |
 | DIRAM BSS | 21,336 B | 21,336 B |
 | DIRAM data / text | 19,444 / 68,355 B | 19,444 / 68,355 B |
-| IRAM used / free | 16,383 / **1 B** | 16,383 / **1 B** |
+| `idf.py size` dedicated-IRAM category used / free | 16,383 / **1 B** | 16,383 / **1 B** |
 | Application partition free | 5,216,752 B (83%) | 5,216,816 B (83%) |
 | Warning lines | 0 | 0 |
 
-The one-byte IRAM margin is a release risk even though both builds link. No further
-IRAM growth should be accepted without an explicit configuration/linker review.
+This table preserves the historical `idf.py size` categories. Later Iteration B
+map analysis established that the one-byte `IRAM` remainder is an alignment gap
+within the dedicated 16 KiB category, not the remaining linker capacity: `.iram0.text`
+continues in shared D/IRAM. At the current baseline the conservative effective
+linker margin is 232,272 B. Further static growth is governed by the 192 KiB
+map-derived CI floor rather than this row.
 
 ### Resource deltas
 
@@ -246,13 +250,16 @@ they keep the firmware bench-only:
 - The poll-task timeout/recollection path is covered by source contracts, independent
   review and both firmware builds, but was not fault-injected in a FreeRTOS runtime;
   its inter-task stop flag remains the existing ESP-IDF-style `volatile bool`.
-- IRAM has one byte of link-time headroom.
+- `idf.py size` shows one byte free in its dedicated-bank `IRAM` category. Iteration B
+  subsequently proved that this is not link-time headroom; the effective shared
+  D/IRAM linker margin is 232,272 B.
 
-The current [field-ready roadmap](FIELD_READY_ITERATION_ROADMAP.md) supersedes the
-original closeout ordering: hardware-test guidance/runner integration and measured
-memory headroom come next. Physical qualification remains separately authorized, and
-the priority-aware owner, health gating and legacy-writer migration remain mandatory
-before complete-chassis floor motion. None of that work is part of this closeout.
+The current [field-ready roadmap](FIELD_READY_ITERATION_ROADMAP.md) supersedes this
+historical closeout ordering. Iterations A and B subsequently established the HIL
+lifecycle and the static memory gate. Physical qualification remains separately
+authorized, and the priority-aware owner, health gating and legacy-writer migration
+remain mandatory before complete-chassis floor motion. None of that later work is
+part of this Iteration 4 closeout.
 
 ## CI and merge gate
 
@@ -287,7 +294,6 @@ gate; rollback remains a revert of the single integration commit.
 **CLOSED WITH EXPLICIT DEFERRED ITEMS.** The hardware-independent code, test,
 documentation, local build and GitHub-hosted CI criteria are satisfied. Hardware
 qualification and the listed legacy/safety migrations remain explicitly deferred;
-the firmware remains bench-only. Iteration A now supplies the host-side hardware-test
-lifecycle on its integration branch; after that gate, measured memory headroom is the
-next recommended milestone before substantial motion/safety firmware or any physical
-qualification claim.
+the firmware remains bench-only. Iteration A subsequently supplied the host-side
+hardware-test lifecycle, and Iteration B established the map-derived static memory
+floor. The field-ready roadmap owns the current next milestone and physical gates.

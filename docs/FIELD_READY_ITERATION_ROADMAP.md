@@ -146,7 +146,8 @@ The following areas are still transitional or incomplete and should be re-verifi
 - the coordinator is mutex-backed rather than a priority-aware owner;
 - command TTL/deadman is not globally enforced;
 - non-SVD48 factories are not yet broadly available;
-- memory margin, especially IRAM, is extremely tight in the known Iteration 4 build.
+- static link capacity has a map-derived 192 KiB shared D/IRAM floor; runtime heap,
+  stack and timing margins remain unqualified.
 
 If the code has evolved, update this document rather than following obsolete assumptions.
 
@@ -160,8 +161,8 @@ additional prerequisite gates explained in its evidence column.
 | --- | --- | --- |
 | Milestone 0 — stable Iteration 4 baseline | **DONE** | `bench-baseline-v1` points to `d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow [`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) passed host, sanitizer and both ESP-IDF profile builds. This is a bench baseline, not physical evidence. |
 | Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
-| Iteration B — memory headroom | **IN PROGRESS** | Linker-map analysis shows that the reported one-byte IRAM row is the 16 KiB dedicated-bank boundary, not the link limit. The shared D/IRAM gate is being made explicit and reproducible before this iteration closes. |
-| Iteration C — traction qualification | **BLOCKED BY HARDWARE** | It also cannot start until Iteration B establishes its memory-headroom gate; no L2–L5 physical result exists. |
+| Iteration B — memory headroom | **IN PROGRESS** | Local implementation and verification pass with 232,272 B effective headroom against a 196,608 B floor. Remote CI, integration and post-merge evidence remain before closeout. |
+| Iteration C — traction qualification | **BLOCKED BY HARDWARE** | It also waits for Iteration B integration; no L2–L5 physical result exists. |
 | Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Real actuator/encoder/profile evidence is absent. |
 | Iteration E — generic observations | **NOT STARTED** | Iteration A supplies only the minimum typed velocity slice; the broader typed boundary remains. |
 | Iteration F — motion service + geometry | **NOT STARTED** | Existing legacy motion path must first be audited against the real geometry. |
@@ -182,7 +183,8 @@ Main physical gates are currently:
 | Supervised field test | **BLOCKED BY HARDWARE** | Controlled chassis and pre-field hardening evidence. |
 
 No physical gate is marked `PASS`. The first incomplete software iteration is B;
-it is ready to start and does not require hardware actuation.
+it remains `IN PROGRESS` pending remote CI, integration and post-merge evidence and
+does not require hardware actuation.
 
 ---
 
@@ -331,17 +333,20 @@ Do not implement the entire future telemetry architecture.
 
 ---
 
-# 5. Iteration B — Recover embedded memory headroom
+# 5. Iteration B — Establish and protect embedded memory headroom
 
 ## Objective
 
-Recover enough IRAM and general resource margin to safely continue firmware development.
+Establish and preserve enough effective internal-memory link capacity to continue
+firmware development safely.
 
 ## Why this is necessary now
 
-The known Iteration 4 build linked with essentially no IRAM headroom.
+The known Iteration 4 `idf.py size` report appeared to show essentially no IRAM
+headroom. The linker map demonstrates that this was the dedicated-bank category
+boundary, while executable code continues in shared D/IRAM.
 
-A binary that barely links can be tested, but it is a poor base for:
+An unexplained report that appears nearly full is a poor basis for adding:
 
 - new capabilities;
 - motion ownership;
@@ -357,7 +362,8 @@ It is capacity required for the next safety-critical firmware changes.
 
 Do not randomly remove features.
 
-First identify why symbols are in IRAM.
+First identify why symbols are in internal executable memory and which physical
+memory region they consume.
 
 Use:
 
@@ -369,16 +375,18 @@ Use:
 - cache-disabled requirements;
 - compiler attributes.
 
-Classify IRAM content:
+Classify internal-memory content:
 
 ```text
-must remain IRAM
+must remain internal/cache-safe
 can move to flash
 configuration overhead
 unexpected placement
 ```
 
-Prefer moving non-critical code out of IRAM over deleting behavior.
+If the measured target is not met, prefer moving reviewed non-critical code to
+Flash over deleting behavior. Do not move anything merely to alter a misleading
+report category.
 
 ## Execution decision — 2026-08-07
 
@@ -386,10 +394,10 @@ Prefer moving non-critical code out of IRAM over deleting behavior.
   dedicated `IRAM` category, but the ESP32-S3 linker map continues `.iram0.text`
   into dual-mapped D/IRAM. On `05cf1005c731bae6cbd60ae0f570614831213c7e`,
   the conservative shared linker margin is 232,272 bytes; the one-byte value is
-  an alignment gap at the category boundary, not the next-link failure point.
+  an alignment gap within that category, not the next-link failure point.
 - **Motivation and next physical milestone:** preserve measurable capacity for the
-  observation, motion and minimum-authority work that must precede single-motor and
-  chassis qualification.
+  minimum observation slice needed by single-motor qualification, then for motion
+  and minimum-authority work before complete-chassis qualification.
 - **Minimum required scope:** derive headroom from linker regions and end symbols,
   enforce the same threshold for both CI profiles, retain the size/component/file
   analysis as review evidence, and correct prose that treated the category row as
@@ -414,10 +422,40 @@ The exact number should be justified from the expected next iterations rather th
 
 At minimum:
 
-- no one-byte margin;
-- documented before/after map;
-- both profiles build;
-- no regression in interrupt/control requirements.
+- effective shared D/IRAM headroom meets the explicit floor;
+- before/after map and placement analysis are retained;
+- both profiles build and the gate passes in CI;
+- no regression in interrupt/cache-disabled/control requirements.
+
+## Local implementation evidence — pending integration
+
+- **Before/after:** effective headroom is 232,272 B before and after; no code or
+  configuration was moved. The change corrects the capacity model and prevents
+  future regressions with a 196,608 B gate.
+- **Evidence retained:** each profile artifact includes the linker map and its
+  SHA-256, `size`, `size-components`, `size-files`, generated configuration and
+  human/machine-readable gate results.
+- **Verified locally:** 14 focused parser/CLI tests, the normal and sanitizer host
+  suites, both ESP-IDF 5.4.1 profile builds and the gate against both maps.
+- **Not verified:** no hardware, runtime heap, stack high-water, watchdog, timing or
+  endurance claim was tested. Remote CI and integration are still pending.
+
+The placement classification below is based on clean ESP-IDF 5.4.1 maps and
+temporary builds outside the repository. Sizes are internal executable bytes from
+the baseline component report unless the row states a map-derived delta.
+
+| Candidate/category | Baseline or measured delta | Classification and decision |
+| --- | ---: | --- |
+| BotFarms components | 0 B internal code | No `IRAM_ATTR`, `DRAM_ATTR`, custom linker fragment or `ESP_INTR_FLAG_IRAM`; nothing project-owned should be moved. |
+| Vectors, startup and cache/flash-disabled paths | Linker-required | Must remain internal; moving them would violate boot, interrupt or cache-disabled requirements. |
+| FreeRTOS | 16,147 B; placing its reviewed non-ISR subset in Flash recovered 10,240 B in a temporary map | Configurable, but deferred: control/safety latency and cache behavior need runtime evidence, and the floor already passes. |
+| Wi-Fi/PHY | `libpp` 6,032 B and PHY 5,053 B; disabling the current Wi-Fi IRAM optimization recovered 7,424 B | Configurable throughput trade-off; defer until network/control-path measurements justify it. |
+| Ring buffer | 4,600 B; non-ISR subset can be configured for Flash | Configurable but second-order; no change is needed to meet the target. Keep ISR dependencies internal. |
+| SPI flash, HAL, hardware support and heap | 11,505 B, 9,172 B, 7,537 B and 7,327 B | Keep current placement. These paths cross flash/cache, ISR, allocator or timing concerns and are not justified optimization targets. |
+
+Increasing the instruction-cache size would merely reclassify memory while consuming
+more physical SRAM. It is not a headroom fix. No cache, FreeRTOS, Wi-Fi, ring-buffer,
+heap or ISR setting changed in this iteration.
 
 ## Explicitly defer
 
@@ -1333,7 +1371,7 @@ Eliminating unsafe or architecturally ambiguous behavior is the actual requireme
 
 ## Do now
 
-- measure and recover memory headroom before substantial embedded growth;
+- measure and enforce memory headroom before substantial embedded growth;
 - PCB bring-up;
 - single-motor traction qualification;
 - steering capability + encoder qualification;
