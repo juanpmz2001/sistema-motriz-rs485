@@ -160,7 +160,7 @@ additional prerequisite gates explained in its evidence column.
 | --- | --- | --- |
 | Milestone 0 — stable Iteration 4 baseline | **DONE** | `bench-baseline-v1` points to `d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow [`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) passed host, sanitizer and both ESP-IDF profile builds. This is a bench baseline, not physical evidence. |
 | Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
-| Iteration B — memory headroom | **READY TO START** | Both post-merge builds still use 16,383 of 16,384 bytes of IRAM. Measure component/file/map placement and define a target before changing code or configuration. |
+| Iteration B — memory headroom | **IN PROGRESS** | Linker-map analysis shows that the reported one-byte IRAM row is the 16 KiB dedicated-bank boundary, not the link limit. The shared D/IRAM gate is being made explicit and reproducible before this iteration closes. |
 | Iteration C — traction qualification | **BLOCKED BY HARDWARE** | It also cannot start until Iteration B establishes its memory-headroom gate; no L2–L5 physical result exists. |
 | Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Real actuator/encoder/profile evidence is absent. |
 | Iteration E — generic observations | **NOT STARTED** | Iteration A supplies only the minimum typed velocity slice; the broader typed boundary remains. |
@@ -379,6 +379,32 @@ unexpected placement
 ```
 
 Prefer moving non-critical code out of IRAM over deleting behavior.
+
+## Execution decision — 2026-08-07
+
+- **Current problem:** `idf.py size` reports 16,383 of 16,384 bytes in its
+  dedicated `IRAM` category, but the ESP32-S3 linker map continues `.iram0.text`
+  into dual-mapped D/IRAM. On `05cf1005c731bae6cbd60ae0f570614831213c7e`,
+  the conservative shared linker margin is 232,272 bytes; the one-byte value is
+  an alignment gap at the category boundary, not the next-link failure point.
+- **Motivation and next physical milestone:** preserve measurable capacity for the
+  observation, motion and minimum-authority work that must precede single-motor and
+  chassis qualification.
+- **Minimum required scope:** derive headroom from linker regions and end symbols,
+  enforce the same threshold for both CI profiles, retain the size/component/file
+  analysis as review evidence, and correct prose that treated the category row as
+  total link headroom.
+- **Target before implementation:** at least 192 KiB (196,608 bytes) of shared
+  D/IRAM linker headroom in both profiles. The measured baseline exceeds this by
+  35,664 bytes, leaving a reviewed static-growth budget for Iterations E–G, whose
+  new behavior should otherwise remain primarily in flash and small fixed state.
+- **Explicit non-goals:** no feature deletion, cache-size change, ISR weakening,
+  scheduler/heap relocation, Wi-Fi throughput trade-off or runtime heap/stack claim.
+  Runtime resource qualification remains part of Iteration I.
+
+Because the measured baseline already exceeds the target, no placement or
+configuration change is justified merely to make the dedicated `IRAM` row look less
+full. The implementation scope is a correct automated gate plus aligned evidence.
 
 ## Exit criteria
 
