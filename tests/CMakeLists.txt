@@ -244,6 +244,36 @@ botfarms_add_host_test(
     LINK_LIBRARIES m
 )
 
+botfarms_add_host_test(
+    NAME robot_profile_rafa_test
+    SOURCES
+        host/robot_profile_shape_test.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_profile/include
+    COMPILE_DEFINITIONS
+        CONFIG_BOTFARMS_PROFILE_RAFA=1
+        BOTFARMS_EXPECT_RAFA_PROFILE=1
+    LINK_LIBRARIES m
+)
+
+botfarms_add_host_test(
+    NAME robot_composition_rafa_preflight_test
+    SOURCES
+        host/robot_driver_factory_test.c
+        ../components/robot_driver_factory/robot_driver_factory.c
+        ../components/robot_profile/robot_profile.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+        ../components/robot_driver_factory/include
+        ../components/robot_profile/include
+    COMPILE_DEFINITIONS
+        CONFIG_BOTFARMS_PROFILE_RAFA=1
+        BOTFARMS_VERIFY_RAFA_COMPOSITION=1
+    LINK_LIBRARIES m
+)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
     NAME svd48_protocol_reference_test

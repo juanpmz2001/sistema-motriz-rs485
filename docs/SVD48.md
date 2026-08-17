@@ -7,7 +7,7 @@ address. M1 and M2 are explicit channel views of that device, not independent UA
 controllers. Profiles bind stable endpoints to `device_id + channel` and the
 application compatibility edge assigns logical motor indices in endpoint order.
 
-The SVD48 bus used by both build profiles is:
+The SVD48 bus used by the traction build profiles is:
 
 | Setting | Value |
 | --- | --- |
@@ -32,6 +32,14 @@ The SVD48 bus used by both build profiles is:
 no application geometry, so `SET_SPEED 0`, `STOP 0` and `STOP ALL` are routable while
 `MOVE_VEL` is unsupported. The absent second controller and M2 endpoint are not
 reported as failed hardware.
+
+`rafa` configures one device at address 1 and exposes both channels as
+`rafa_traction_m1` and `rafa_traction_m2`. It preserves the same conservative
+`-15..15 RPM` application limits and has no motion geometry. M1/M2 are not called
+left/right until an installed, unloaded physical qualification establishes side,
+sign and scale. The profile declares the controller as required, so an unplugged
+bootstrap board truthfully reports offline/stale observations; that is not evidence
+that the future installed SVD48 failed qualification.
 
 Profiles are immutable C selected by Kconfig. There is no supported runtime JSON/YAML
 loader or mutable topology override in NVS.

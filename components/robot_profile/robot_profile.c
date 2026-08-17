@@ -73,6 +73,34 @@ static const robot_profile_t SINGLE_MOTOR __attribute__((unused)) = {
     .application = {ROBOT_PROFILE_NO_GEOMETRY, 0, 0, 0},
 };
 
+/* Rafa's channel-to-side mapping is intentionally unresolved until the first
+ * installed hardware qualification.  M1/M2 are therefore the stable endpoint
+ * names and no body-motion geometry is enabled. */
+static const robot_profile_t RAFA __attribute__((unused)) = {
+    .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
+    .name = "rafa",
+    .board = &BOARD,
+    .bus_count = 2U,
+    .buses = {
+        {1U, ROBOT_BUS_UART_RS485, 2U, {17, 16}, 115200U, 100U, 30U, 1000U, 2U},
+        {2U, ROBOT_BUS_GPIO, 1U, {14, -1}, 0U, 0U, 0U, 0U, 0U},
+    },
+    .device_count = 1U,
+    .devices = {
+        {1U, ROBOT_DRIVER_SVD48, 1U, 1U, 2U, ROBOT_ENDPOINT_REQUIRED},
+    },
+    .endpoint_count = 2U,
+    .endpoints = {
+        {1U, "rafa_traction_m1", 1U, 0U,
+         ROBOT_CAPABILITY_VELOCITY_RPM | ROBOT_CAPABILITY_STOPPABLE,
+         ROBOT_ENDPOINT_REQUIRED, -15, 15},
+        {2U, "rafa_traction_m2", 1U, 1U,
+         ROBOT_CAPABILITY_VELOCITY_RPM | ROBOT_CAPABILITY_STOPPABLE,
+         ROBOT_ENDPOINT_REQUIRED, -15, 15},
+    },
+    .application = {ROBOT_PROFILE_NO_GEOMETRY, 0, 0, 0},
+};
+
 /* This table is a reviewed, static calibration candidate from the empirical
  * new-leg fixture.  It is intentionally scoped to the explicit bench profile
  * below; it must not be reused after an encoder, magnet, shaft, gap or geometry
@@ -489,7 +517,9 @@ const robot_board_profile_t *robot_board_esp32s3_current(void) { return &BOARD; 
 
 const robot_profile_t *robot_profile_selected(void)
 {
-#ifdef CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600
+#ifdef CONFIG_BOTFARMS_PROFILE_RAFA
+    return &RAFA;
+#elif defined(CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600)
     return &BENCH_STEERING_AS5600;
 #elif defined(CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR)
     return &SINGLE_MOTOR;

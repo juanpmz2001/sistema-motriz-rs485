@@ -66,6 +66,9 @@ jobs:
           - profile: bench_single_steering_as5600
             defaults: ci/sdkconfig.bench_single_steering_as5600.defaults
             expected: CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600=y
+          - profile: rafa
+            defaults: ci/sdkconfig.rafa.defaults
+            expected: CONFIG_BOTFARMS_PROFILE_RAFA=y
     steps:
       - uses: actions/checkout@v4
       - name: Build clean profile

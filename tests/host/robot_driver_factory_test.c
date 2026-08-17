@@ -802,6 +802,29 @@ static bool diagnostic_names_cover_public_values(void)
     return true;
 }
 
+#ifdef BOTFARMS_VERIFY_RAFA_COMPOSITION
+static bool selected_rafa_profile_passes_executable_preflight(void)
+{
+    reset_factory_behavior();
+    const robot_profile_t *profile = robot_profile_selected();
+    HOST_TEST_CHECK(profile != NULL);
+    HOST_TEST_CHECK(strcmp(profile->name, "rafa") == 0);
+    const robot_driver_factory_t factory = make_factory();
+    const robot_executable_factory_registry_t registry = make_registry(&factory);
+    robot_composition_diagnostics_t diagnostics;
+    HOST_TEST_CHECK(robot_composition_preflight(profile, &registry, &diagnostics));
+    HOST_TEST_CHECK(diagnostics.schema_valid);
+    HOST_TEST_CHECK(diagnostics.composition_supported);
+    HOST_TEST_CHECK(diagnostics.code == ROBOT_COMPOSITION_DIAGNOSTIC_OK);
+    HOST_TEST_CHECK(diagnostics.stage == ROBOT_COMPOSITION_STAGE_NONE);
+    HOST_TEST_CHECK(diagnostics.required_storage == 16U);
+    HOST_TEST_CHECK(validate_calls == 1U);
+    HOST_TEST_CHECK(storage_calls == 1U);
+    HOST_TEST_CHECK(runtime_calls == 0U);
+    return true;
+}
+#endif
+
 int main(void)
 {
     const host_test_case_t tests[] = {
@@ -820,6 +843,9 @@ int main(void)
         HOST_TEST_CASE(zero_runtime_storage_requirement_is_rejected),
         HOST_TEST_CASE(legacy_binding_limit_has_a_specific_diagnostic),
         HOST_TEST_CASE(diagnostic_names_cover_public_values),
+#ifdef BOTFARMS_VERIFY_RAFA_COMPOSITION
+        HOST_TEST_CASE(selected_rafa_profile_passes_executable_preflight),
+#endif
     };
     return host_test_exit_code(host_test_run_cases(tests,
                                                    HOST_TEST_ARRAY_COUNT(tests),

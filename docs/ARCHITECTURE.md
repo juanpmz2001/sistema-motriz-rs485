@@ -170,7 +170,7 @@ up to 500 ms to acquire it and then behind the current bus transaction.
 
 ```mermaid
 flowchart TD
-  SELECT[Kconfig selects current_robot, bench_single_svd48_motor or bench_single_steering_as5600]
+  SELECT[Kconfig selects current_robot, bench_single_svd48_motor, bench_single_steering_as5600 or rafa]
   SCHEMA[robot_profile_validate schema and board resources]
   LOOKUP[lookup executable factory by driver_id]
   CAPACITY[validate factory ops, capabilities, storage and legacy capacity]
@@ -210,11 +210,19 @@ The supported profiles are:
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 | `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
+| `rafa` | One RS485 bus, one SVD48 at address 1; separate PPM input on GPIO14 | ID 1 `rafa_traction_m1` on M1 and ID 2 `rafa_traction_m2` on M2 | None; side/sign mapping is unqualified |
 
 The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
 and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
 there is no application geometry. Both SVD48 profiles also declare a GPIO RC bus,
 which `main` consumes separately from SVD48 composition.
+
+`rafa` also uses the executable SVD48 factory, but deliberately exposes both
+physical channels with neutral names. It contains no second controller, servo,
+AS5600 or steering endpoint. `main` initializes its GPIO14 input through the
+existing `IBUS_RECEIVER_MODE_PPM` path. Since its application geometry is
+`ROBOT_PROFILE_NO_GEOMETRY`, individual endpoint capabilities are available but
+`MOVE_VEL` cannot claim robot mobility.
 
 `bench_single_steering_as5600` is deliberately isolated from the traction profiles:
 its PWM GPIO is a motor-mode output rather than an RC input, and it has no geometry

@@ -13,11 +13,15 @@ and typed actuator endpoints.
 
 - Target: `esp32s3`, ESP-IDF 5.4.1, 16 MB flash with dual OTA slots.
 - RS485: UART2, TX GPIO17, RX GPIO16, 115200 baud; `current_robot`
-  configures addresses 1 and 2, while the bench profile configures address 1 only.
+  configures addresses 1 and 2, while the SVD48 bench and `rafa` profiles use
+  address 1.
 - RC input: PPM on GPIO14; the signal must be limited to 3.3 V.
 - The `current_robot` profile maps four logical traction motors through two
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
   only logical index `0` to M1 of one controller and has no motion geometry.
+- The `rafa` profile maps one SVD48 at address 1 to the neutral endpoint names
+  `rafa_traction_m1` and `rafa_traction_m2`, configures PPM on GPIO14 and has no
+  motion geometry until channel side/sign are physically qualified.
 - A separate build-selected `bench_single_steering_as5600` development profile
   composes one motor-mode PWM output, one AS5600 position sensor and one local
   steering controller. It has no traction geometry and is not a qualified robot
@@ -102,7 +106,19 @@ python3 -m unittest tests.hil.test_hil_runner
 
 GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
 ESP-IDF 5.4.1 builds for every versioned profile fragment under `ci/`, including the
-isolated steering bench profile. The workflow never flashes or contacts robot hardware.
+isolated steering bench and Rafa profiles. The workflow never flashes or contacts
+robot hardware.
+
+Build Rafa reproducibly without changing a shared `sdkconfig`:
+
+```bash
+idf.py -D SDKCONFIG=/tmp/sdkconfig-rafa \
+  -D "SDKCONFIG_DEFAULTS=$PWD/sdkconfig.defaults;$PWD/ci/sdkconfig.rafa.defaults" \
+  -B /tmp/build-rafa set-target esp32s3
+idf.py -D SDKCONFIG=/tmp/sdkconfig-rafa \
+  -D "SDKCONFIG_DEFAULTS=$PWD/sdkconfig.defaults;$PWD/ci/sdkconfig.rafa.defaults" \
+  -B /tmp/build-rafa build
+```
 
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.
@@ -129,6 +145,9 @@ python3 tools/robotctl.py --port /dev/ttyACM0 raw SAFETY_STATUS
 Provision Wi-Fi and separate OTA/maintenance tokens only over a trusted serial
 connection. Commands and response formats are listed in [Command API](docs/API.md).
 Do not put Wi-Fi credentials in this repository.
+
+Rafa's one-time USB and OTA handoff is documented in the
+[Rafa bootstrap runbook](docs/RAFA_BOOTSTRAP.md).
 
 ## Maintenance over LAN
 

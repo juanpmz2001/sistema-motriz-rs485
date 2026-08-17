@@ -10,4 +10,7 @@ config BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR
 
 config BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600
     bool "Bench single steering axis with AS5600 feedback"
+
+config BOTFARMS_PROFILE_RAFA
+    bool "Rafa sprayer (one dual-channel SVD48 and PPM RC)"
 endchoice

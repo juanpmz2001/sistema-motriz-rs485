@@ -21,6 +21,8 @@ current [Safety](SAFETY.md) contract or counts as verification evidence.
   registers, polling, units and legacy compatibility for driver maintainers.
 - [OTA runbook](OTA.md) — current provisioning, release, update and recovery procedure
   for trusted development networks.
+- [Rafa USB bootstrap and OTA handoff](RAFA_BOOTSTRAP.md) — reproducible Rafa profile
+  build, one-time provisioning and the mandatory USB-to-OTA round-trip gate.
 
 ## Testing and physical qualification
 

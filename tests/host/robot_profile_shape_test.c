@@ -103,6 +103,48 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->application.kind == ROBOT_PROFILE_NO_GEOMETRY);
     return true;
 }
+#elif defined(BOTFARMS_EXPECT_RAFA_PROFILE)
+static bool selected_profile_shape(void)
+{
+    const robot_profile_t *profile = robot_profile_selected();
+    HOST_TEST_CHECK(strcmp(profile->name, "rafa") == 0);
+    HOST_TEST_CHECK(strcmp(profile->board->id, "botfarms_esp32s3_rev1") == 0);
+    HOST_TEST_CHECK(profile->bus_count == 2U);
+    HOST_TEST_CHECK(count_bus_type(profile, ROBOT_BUS_UART_RS485) == 1U);
+    HOST_TEST_CHECK(count_bus_type(profile, ROBOT_BUS_GPIO) == 1U);
+    HOST_TEST_CHECK(count_bus_type(profile, ROBOT_BUS_PWM) == 0U);
+    HOST_TEST_CHECK(count_bus_type(profile, ROBOT_BUS_I2C) == 0U);
+    HOST_TEST_CHECK(profile->buses[0].peripheral == 2U);
+    HOST_TEST_CHECK(profile->buses[0].pins[0] == 17);
+    HOST_TEST_CHECK(profile->buses[0].pins[1] == 16);
+    HOST_TEST_CHECK(profile->buses[0].rate == 115200U);
+    HOST_TEST_CHECK(profile->buses[1].type == ROBOT_BUS_GPIO);
+    HOST_TEST_CHECK(profile->buses[1].pins[0] == 14);
+    HOST_TEST_CHECK(profile->device_count == 1U);
+    HOST_TEST_CHECK(profile->devices[0].driver_id == ROBOT_DRIVER_SVD48);
+    HOST_TEST_CHECK(profile->devices[0].bus_id == 1U);
+    HOST_TEST_CHECK(profile->devices[0].address == 1U);
+    HOST_TEST_CHECK(profile->devices[0].channel_count == 2U);
+    HOST_TEST_CHECK(profile->devices[0].criticality == ROBOT_ENDPOINT_REQUIRED);
+    HOST_TEST_CHECK(profile->endpoint_count == 2U);
+    HOST_TEST_CHECK(strcmp(profile->endpoints[0].name, "rafa_traction_m1") == 0);
+    HOST_TEST_CHECK(strcmp(profile->endpoints[1].name, "rafa_traction_m2") == 0);
+    HOST_TEST_CHECK(profile->endpoints[0].device_id == 1U);
+    HOST_TEST_CHECK(profile->endpoints[1].device_id == 1U);
+    HOST_TEST_CHECK(profile->endpoints[0].channel == 0U);
+    HOST_TEST_CHECK(profile->endpoints[1].channel == 1U);
+    HOST_TEST_CHECK(profile->endpoints[0].criticality == ROBOT_ENDPOINT_REQUIRED);
+    HOST_TEST_CHECK(profile->endpoints[1].criticality == ROBOT_ENDPOINT_REQUIRED);
+    HOST_TEST_CHECK(profile->steering_axis_count == 0U);
+    HOST_TEST_CHECK(profile->application.kind == ROBOT_PROFILE_NO_GEOMETRY);
+    HOST_TEST_CHECK(robot_profile_validate(profile) == ROBOT_PROFILE_VALID);
+
+    robot_profile_t pin_conflict = *profile;
+    pin_conflict.buses[1].pins[0] = 17;
+    HOST_TEST_CHECK(robot_profile_validate(&pin_conflict) ==
+                    ROBOT_PROFILE_PIN_CONFLICT);
+    return true;
+}
 #elif defined(BOTFARMS_EXPECT_BENCH_PROFILE)
 static bool selected_profile_shape(void)
 {
