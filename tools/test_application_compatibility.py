@@ -165,6 +165,9 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             cls.handle_command, "MOVE_VEL"
         )
         cls.handle_stop = extract_c_function(cls.gateway, "handle_stop")
+        cls.handle_svd48_probe = extract_c_function(
+            cls.gateway, "handle_svd48_probe"
+        )
         cls.handle_endpoints = extract_c_function(cls.gateway, "handle_endpoints")
         cls.handle_set_endpoint_speed = extract_c_function(
             cls.gateway, "handle_set_endpoint_speed"
@@ -281,6 +284,7 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             "GET_MOTOR n",
             "SET_SPEED n rpm",
             "STOP n|ALL",
+            "SVD48_PROBE address",
             "READ_REG drive reg [count]",
             "WRITE_REG drive reg value CONFIRM",
             "WRITE_REGS drive start value [value...] CONFIRM",
@@ -293,6 +297,7 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             "GET_MOTOR",
             "SET_SPEED",
             "STOP",
+            "SVD48_PROBE",
             "READ_REG",
             "WRITE_REG",
             "WRITE_REGS",
@@ -300,6 +305,7 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(f'strcasecmp(argv[0], "{command}") == 0', dispatch)
         self.assertIn("handle_read_reg(handle, argc, argv)", dispatch)
+        self.assertIn("handle_svd48_probe(handle, argc, argv)", dispatch)
         self.assertIn("handle_write_reg(handle, argc, argv)", dispatch)
         self.assertIn("handle_write_regs(handle, argc, argv)", dispatch)
         self.assertIn("handle_stop(handle, argc, argv)", dispatch)
@@ -766,6 +772,23 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
         self.assertIn("quantity == 0 || quantity > 16", normalized)
         self.assert_has_calls(source, "robot_control_read_svd48_registers")
         self.assert_no_calls(source, "actuation_application_set_legacy_motor_speed_rpm")
+
+    def test_svd48_probe_is_a_bounded_read_only_address_diagnostic(self) -> None:
+        source = self.handle_svd48_probe
+        normalized = compact(source)
+        self.assert_has_strings(source, "ERR USAGE SVD48_PROBE address")
+        self.assertIn("address > 247U", normalized)
+        self.assertIn("0x540CU", source)
+        self.assertIn("2U", source)
+        self.assertIn("DATA SVD48_PROBE ADDRESS:%u READ_OK:1", source)
+        self.assertIn("DATA SVD48_PROBE ADDRESS:%u READ_OK:0", source)
+        self.assert_has_calls(source, "robot_control_probe_svd48_address")
+        self.assert_no_calls(
+            source,
+            "robot_control_write_svd48_register",
+            "robot_control_write_svd48_registers",
+            "robot_control_set_speed",
+        )
 
     def test_write_reg_requires_confirm_and_preserves_verified_outcomes(self) -> None:
         source = self.handle_write_reg

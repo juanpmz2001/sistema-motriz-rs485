@@ -200,6 +200,15 @@ svd48_device_result_t svd48_device_read_registers(svd48_device_t *device,
                                                   uint16_t reg,
                                                   uint16_t quantity,
                                                   uint16_t *out_regs);
+/* L2 read-only diagnostic for finding a controller whose configured address is
+ * unknown. It performs one transaction and never mutates this device's cached
+ * communication/health state. */
+svd48_device_result_t svd48_device_probe_address(
+    svd48_device_t *device,
+    uint8_t address,
+    uint16_t reg,
+    uint16_t quantity,
+    uint16_t *out_regs);
 svd48_device_result_t svd48_device_write_register(svd48_device_t *device,
                                                   uint16_t reg,
                                                   uint16_t value);

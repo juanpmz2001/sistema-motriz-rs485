@@ -57,6 +57,9 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
     if (arg_is(argv[0], "READ_REG") && (argc == 3 || argc == 4)) {
         return true;
     }
+    if (arg_is(argv[0], "SVD48_PROBE") && argc == 2) {
+        return true;
+    }
     if (arg_is(argv[0], "GET_SVD48_CONFIG") && (argc == 2 || argc == 3)) {
         return true;
     }

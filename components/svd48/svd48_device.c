@@ -833,6 +833,90 @@ svd48_device_result_t svd48_device_read_registers(svd48_device_t *device,
                                        device ? device->config.retries : 0U);
 }
 
+svd48_device_result_t svd48_device_probe_address(
+    svd48_device_t *device,
+    uint8_t address,
+    uint16_t reg,
+    uint16_t quantity,
+    uint16_t *out_regs)
+{
+    if (!device || !device->initialized || address == 0U || address > 247U ||
+        quantity == 0U || quantity > 16U || !out_regs ||
+        (uint32_t)reg + (uint32_t)quantity > 0x10000UL) {
+        return SVD48_DEVICE_INVALID_ARGUMENT;
+    }
+
+    uint8_t request[8] = {0};
+    uint8_t response[64] = {0};
+    size_t response_length = 0U;
+    size_t request_length = svd48_build_read_request(address,
+                                                     reg,
+                                                     quantity,
+                                                     request);
+    if (request_length == 0U) {
+        return SVD48_DEVICE_INVALID_ARGUMENT;
+    }
+
+    bus_transport_result_t transport_result = bus_transport_transact(
+        device->config.transport,
+        request,
+        request_length,
+        response,
+        sizeof(response),
+        &response_length,
+        device->config.response_timeout_ms);
+    svd48_device_result_t result = map_transport_result(transport_result);
+    bool valid_crc = response_length >= 5U &&
+                     svd48_frame_has_valid_crc(response, response_length);
+    if (!valid_crc && transport_result == BUS_TRANSPORT_OK) {
+        result = SVD48_DEVICE_CRC_ERROR;
+    } else if (response_length > 0U && !valid_crc &&
+               transport_result == BUS_TRANSPORT_INCOMPLETE) {
+        result = SVD48_DEVICE_CRC_ERROR;
+    }
+
+    svd48_exception_response_t exception = {0};
+    bool is_exception = result == SVD48_DEVICE_OK && valid_crc &&
+                        svd48_parse_exception_response(response,
+                                                       response_length,
+                                                       address,
+                                                       request[1],
+                                                       &exception);
+    const read_response_context_t response_context = {
+        .address = address,
+        .quantity = quantity,
+    };
+    if (is_exception) {
+        result = SVD48_DEVICE_EXCEPTION;
+    } else if (result == SVD48_DEVICE_OK && valid_crc &&
+               !validate_read_response(response,
+                                       response_length,
+                                       &response_context)) {
+        result = SVD48_DEVICE_BAD_RESPONSE;
+    }
+
+    if (device->trace_enabled && device->trace) {
+        device->trace(device->trace_context,
+                      device->config.device_id,
+                      address,
+                      1U,
+                      request,
+                      request_length,
+                      response,
+                      response_length,
+                      result);
+    }
+    if (result != SVD48_DEVICE_OK) {
+        return result;
+    }
+
+    for (uint16_t index = 0U; index < quantity; ++index) {
+        out_regs[index] = ((uint16_t)response[3U + index * 2U] << 8U) |
+                          response[4U + index * 2U];
+    }
+    return SVD48_DEVICE_OK;
+}
+
 svd48_device_result_t svd48_device_write_register(svd48_device_t *device,
                                                   uint16_t reg,
                                                   uint16_t value)

@@ -626,6 +626,22 @@ esp_err_t robot_control_read_svd48_registers(robot_control_handle_t handle, uint
     return svd48_read_registers_by_id(handle->config.svd48, drive_id, reg, quantity, out_regs);
 }
 
+esp_err_t robot_control_probe_svd48_address(robot_control_handle_t handle,
+                                            uint8_t address,
+                                            uint16_t reg,
+                                            uint16_t quantity,
+                                            uint16_t *out_regs)
+{
+    if (!handle || !out_regs) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return svd48_probe_address(handle->config.svd48,
+                               address,
+                               reg,
+                               quantity,
+                               out_regs);
+}
+
 esp_err_t robot_control_write_svd48_register(robot_control_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t value)
 {
     if (!handle) {

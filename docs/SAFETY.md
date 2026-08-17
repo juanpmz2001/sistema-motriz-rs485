@@ -230,6 +230,10 @@ Before any command that can move or alter persistent drive configuration:
 - Verify voltage levels, grounding, RS485 direction hardware and drive IDs.
 - Start with read-only diagnostics and capture original configuration outside the
   repository before writes.
+- If the SVD48 address is unknown, use the bounded `SVD48_PROBE` read-only command
+  across Modbus unicast addresses before declaring the connection dead. The probe
+  reads only bus-voltage registers, performs no writes and does not authorize motion
+  or configuration changes.
 - Set conservative current, velocity and travel limits in the physical drive.
 - Stop immediately on unexpected direction, sound, current, telemetry or latency.
 

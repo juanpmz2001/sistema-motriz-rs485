@@ -289,6 +289,8 @@ static bool test_gateway_lan_maintenance_policy(void)
 {
     const char *read_one[] = { "READ_REG", "1", "0x5018" };
     const char *read_many[] = { "read_reg", "1", "0x5200", "2" };
+    const char *probe_address[] = { "SVD48_PROBE", "247" };
+    const char *probe_bad_shape[] = { "SVD48_PROBE" };
     const char *typed_config[] = { "GET_SVD48_CONFIG", "1", "M1" };
     const char *write_one[] = { "WRITE_REG", "1", "0x5018", "10", "CONFIRM" };
     const char *write_many[] = { "WRITE_REGS", "1", "0x5200", "0x3f80", "0", "confirm" };
@@ -322,6 +324,8 @@ static bool test_gateway_lan_maintenance_policy(void)
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, probe_address));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(1, probe_bad_shape));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, typed_config));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(5, write_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(6, write_many));
@@ -364,6 +368,7 @@ static bool test_gateway_diagnostic_policy(void)
     const char *stop_one[] = {"STOP", "0"};
     const char *set_speed[] = {"SET_SPEED", "0", "1"};
     const char *write[] = {"WRITE_REG", "1", "0x5018", "1", "CONFIRM"};
+    const char *probe_address[] = {"SVD48_PROBE", "7"};
     const char *endpoints[] = {"ENDPOINTS"};
     const char *set_endpoint_speed[] = {"SET_ENDPOINT_SPEED", "1", "5"};
     const char *set_endpoint_position[] = {"SET_ENDPOINT_POSITION", "1", "5"};
@@ -384,6 +389,7 @@ static bool test_gateway_diagnostic_policy(void)
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, stop_one));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_speed));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(5, write));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, probe_address));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(1, endpoints));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_endpoint_speed));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(3, set_endpoint_position));

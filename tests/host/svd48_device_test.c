@@ -519,6 +519,81 @@ static bool test_overflowing_read_range_is_rejected_without_io(void)
     return true;
 }
 
+static bool test_address_probe_is_read_only_and_does_not_change_device_health(void)
+{
+    device_fixture_t fixture;
+    uint16_t output[2] = {0U, 0U};
+    const uint16_t bus_voltage[] = {480U, 481U};
+    svd48_device_communication_t before;
+    svd48_device_communication_t after;
+    svd48_channel_snapshot_t channel_before;
+    svd48_channel_snapshot_t channel_after;
+
+    HOST_TEST_CHECK(fixture_init(&fixture, 2U, 1000U));
+    HOST_TEST_CHECK(svd48_device_get_communication(&fixture.device, &before));
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(
+        svd48_device_channel(&fixture.device, SVD48_CHANNEL_M1),
+        &channel_before));
+
+    HOST_TEST_CHECK(queue_read_response(&fixture.bus,
+                                       7U,
+                                       0x540CU,
+                                       bus_voltage,
+                                       2U));
+    HOST_TEST_CHECK(svd48_device_probe_address(&fixture.device,
+                                              7U,
+                                              0x540CU,
+                                              2U,
+                                              output) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(output[0] == 480U);
+    HOST_TEST_CHECK(output[1] == 481U);
+    HOST_TEST_CHECK(fake_bus_transport_call_count(&fixture.bus) == 1U);
+
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus,
+                                     23U,
+                                     0x540CU,
+                                     2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(svd48_device_probe_address(&fixture.device,
+                                              23U,
+                                              0x540CU,
+                                              2U,
+                                              output) == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK(fake_bus_transport_call_count(&fixture.bus) == 2U);
+
+    HOST_TEST_CHECK(svd48_device_get_communication(&fixture.device, &after));
+    HOST_TEST_CHECK(memcmp(&before, &after, sizeof(before)) == 0);
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(
+        svd48_device_channel(&fixture.device, SVD48_CHANNEL_M1),
+        &channel_after));
+    HOST_TEST_CHECK(memcmp(&channel_before,
+                           &channel_after,
+                           sizeof(channel_before)) == 0);
+
+    HOST_TEST_CHECK(svd48_device_probe_address(&fixture.device,
+                                              0U,
+                                              0x540CU,
+                                              2U,
+                                              output) ==
+                    SVD48_DEVICE_INVALID_ARGUMENT);
+    HOST_TEST_CHECK(svd48_device_probe_address(&fixture.device,
+                                              248U,
+                                              0x540CU,
+                                              2U,
+                                              output) ==
+                    SVD48_DEVICE_INVALID_ARGUMENT);
+    HOST_TEST_CHECK(svd48_device_probe_address(&fixture.device,
+                                              7U,
+                                              UINT16_MAX,
+                                              2U,
+                                              output) ==
+                    SVD48_DEVICE_INVALID_ARGUMENT);
+    HOST_TEST_CHECK(fake_bus_transport_call_count(&fixture.bus) == 2U);
+    HOST_TEST_CHECK(fake_bus_transport_mismatch(&fixture.bus) ==
+                    FAKE_BUS_TRANSPORT_MISMATCH_NONE);
+    return true;
+}
+
 static bool test_direct_actuation_writes_are_denied(void)
 {
     device_fixture_t fixture;
@@ -929,6 +1004,7 @@ int main(void)
         HOST_TEST_CASE(test_timeout_retry_can_recover),
         HOST_TEST_CASE(test_generic_writes_are_not_retried),
         HOST_TEST_CASE(test_overflowing_read_range_is_rejected_without_io),
+        HOST_TEST_CASE(test_address_probe_is_read_only_and_does_not_change_device_health),
         HOST_TEST_CASE(test_direct_actuation_writes_are_denied),
         HOST_TEST_CASE(test_modbus_response_validation),
         HOST_TEST_CASE(test_successful_poll_has_rpm_and_fresh_observations),

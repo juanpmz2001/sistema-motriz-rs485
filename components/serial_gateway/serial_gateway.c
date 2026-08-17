@@ -1619,6 +1619,59 @@ static void handle_read_reg(serial_gateway_handle_t handle, int argc, char *argv
     print_locked(handle, "\n");
 }
 
+static const char *svd48_probe_result_name(esp_err_t err)
+{
+    switch (err) {
+    case ESP_OK:
+        return "OK";
+    case ESP_ERR_TIMEOUT:
+        return "TIMEOUT";
+    case ESP_ERR_INVALID_CRC:
+        return "CRC_ERROR";
+    case ESP_ERR_INVALID_RESPONSE:
+        return "BAD_RESPONSE";
+    case ESP_ERR_INVALID_STATE:
+        return "UNAVAILABLE";
+    case ESP_ERR_INVALID_ARG:
+        return "INVALID_ARGUMENT";
+    default:
+        return "IO_ERROR";
+    }
+}
+
+static void handle_svd48_probe(serial_gateway_handle_t handle,
+                               int argc,
+                               char *argv[])
+{
+    uint8_t address = 0U;
+    if (argc != 2 || !parse_drive_id_arg(argv[1], &address) ||
+        address > 247U) {
+        print_locked(handle, "ERR USAGE SVD48_PROBE address\n");
+        return;
+    }
+
+    uint16_t bus_voltage[2] = {0U, 0U};
+    esp_err_t err = robot_control_probe_svd48_address(handle->config.robot,
+                                                      address,
+                                                      0x540CU,
+                                                      2U,
+                                                      bus_voltage);
+    if (err == ESP_OK) {
+        print_locked(handle,
+                     "DATA SVD48_PROBE ADDRESS:%u READ_OK:1 RESULT:OK REG:0x540c M1_BUS_DV:%u M2_BUS_DV:%u\n",
+                     address,
+                     bus_voltage[0],
+                     bus_voltage[1]);
+        return;
+    }
+
+    print_locked(handle,
+                 "DATA SVD48_PROBE ADDRESS:%u READ_OK:0 RESULT:%s REG:0x540c ERROR:0x%x\n",
+                 address,
+                 svd48_probe_result_name(err),
+                 err);
+}
+
 static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     uint8_t drive_id = 0;
@@ -2205,7 +2258,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_diagnostic_help(serial_gateway_handle_t handle)
@@ -3324,6 +3377,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         }
     } else if (strcasecmp(argv[0], "READ_REG") == 0) {
         handle_read_reg(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SVD48_PROBE") == 0) {
+        handle_svd48_probe(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WRITE_REG") == 0) {
         handle_write_reg(handle, argc, argv);
     } else if (strcasecmp(argv[0], "WRITE_REGS") == 0) {

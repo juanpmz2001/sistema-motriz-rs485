@@ -200,6 +200,17 @@ controller does not prevent other entries from being scheduled. A whole-poll gua
 rejects a concurrent legacy `POLL_ONCE` with busy, so its transactions cannot
 interleave a service-owned cycle or race `poll_count`.
 
+When the physical controller address is unknown, `SVD48_PROBE <address>` provides
+a narrow read-only discovery primitive over the already configured transport. Each
+invocation sends one holding-register read for `0x540C..0x540D` to one Modbus
+unicast address in `1..247`, uses the normal response timeout, performs no retry and
+does not update configured-device health or communication counters. It never writes
+an address or any other register. Host orchestration owns range scanning and evidence.
+Do not diagnose a dead RS485 connection from the configured address alone: first
+scan the relevant address range, repeat or review any contention/CRC/bad-response
+anomaly, then inspect power, polarity, ground and termination if no valid response
+is found.
+
 Tracing is a bench diagnostic. It exposes frame bytes but must never include Wi-Fi,
 maintenance or OTA credentials. High-volume trace output is not real-time safe.
 

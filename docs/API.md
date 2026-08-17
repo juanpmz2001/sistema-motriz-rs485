@@ -33,7 +33,7 @@ its `raw` subcommand.
 | OTA actions | `OTA_CHECK`, `OTA_DOWNLOAD_TEST`, `OTA_UPDATE` |
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
-| Bus diagnostics | `TRACE`, `POLL_ONCE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
+| Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -65,6 +65,7 @@ OTA_CONFIG
 OTA_AUTO_STATUS
 IBUS_STATUS
 GET_MOTOR 0
+SVD48_PROBE 7
 READ_REG 1 0x5018 1
 ```
 
@@ -79,6 +80,22 @@ already feeds the legacy 5-RPM `RUNNING`/`MOTION_ACTIVE` indication and
 `robot_control_is_safe_for_ota()` gate used by OTA and several maintenance commands.
 Those checks are not qualified safety assurance. A future controlled physical test
 must confirm the interpretation before that dependency is accepted or expanded.
+
+`SVD48_PROBE <address>` is a bounded, read-only L2 diagnostic for an unknown
+Modbus address. It accepts unicast addresses `1..247` and performs exactly one
+function-`0x03` read of the two bus-voltage registers beginning at `0x540C`, with
+no write and no driver-level retry. It reports both presence and absence as data:
+
+```text
+DATA SVD48_PROBE ADDRESS:<1..247> READ_OK:1 RESULT:OK REG:0x540c M1_BUS_DV:<n> M2_BUS_DV:<n>
+DATA SVD48_PROBE ADDRESS:<1..247> READ_OK:0 RESULT:<TIMEOUT|CRC_ERROR|BAD_RESPONSE|UNAVAILABLE|INVALID_ARGUMENT|IO_ERROR> REG:0x540c ERROR:0x<hex>
+```
+
+The probe borrows the configured RS485 transport but does not change the cached
+health, polling counters or configured address of any `svd48_device`. A timeout at
+one address is not evidence that wiring is dead. An address investigation must scan
+the required range, record non-timeout anomalies and account for possible bus
+contention before reaching a wiring/power conclusion.
 
 `MOVE_VEL` requires application geometry and four traction endpoints. It is supported
 by `current_robot` only; the single-motor profile returns the existing unsupported/
@@ -318,7 +335,8 @@ The exact LAN allowlist is code-owned in
 `components/serial_gateway/serial_gateway_policy.c`. The current build permits:
 
 - No-argument status/diagnostic commands listed in that file.
-- `GET_SPEED`, `GET_MOTOR`, `READ_REG`, `GET_SVD48_CONFIG` and `POLL_ONCE`.
+- `GET_SPEED`, `GET_MOTOR`, `SVD48_PROBE`, `READ_REG`, `GET_SVD48_CONFIG` and
+  `POLL_ONCE`.
 - `STOP <motor|ALL>` and `SET_SPEED <motor> <rpm>`.
 - Confirmed register writes, save, gear-ratio and identify operations.
 

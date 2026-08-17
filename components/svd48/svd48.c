@@ -1395,6 +1395,20 @@ esp_err_t svd48_read_registers_by_id(svd48_handle_t handle, uint8_t drive_id, ui
     return read_registers(handle, drive_index, reg, quantity, out_regs, handle->config.retries);
 }
 
+esp_err_t svd48_probe_address(svd48_handle_t handle,
+                              uint8_t address,
+                              uint16_t reg,
+                              uint16_t quantity,
+                              uint16_t *out_regs)
+{
+    if (!handle || !handle->attached_devices ||
+        handle->attached_device_count == 0U) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return device_result_to_esp(svd48_device_probe_address(
+        handle->attached_device_items[0], address, reg, quantity, out_regs));
+}
+
 esp_err_t svd48_write_register_by_id(svd48_handle_t handle, uint8_t drive_id, uint16_t reg, uint16_t value)
 {
     if (handle && handle->attached_devices) {
