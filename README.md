@@ -13,8 +13,8 @@ and typed actuator endpoints.
 
 - Target: `esp32s3`, ESP-IDF 5.4.1, 16 MB flash with dual OTA slots.
 - RS485: UART2, TX GPIO17, RX GPIO16, 115200 baud; `current_robot`
-  configures addresses 1 and 2, while the SVD48 bench and `rafa` profiles use
-  address 1.
+  configures addresses 1 and 2, while `bench_single_svd48_motor` uses address 1
+  and `rafa` uses its physically discovered address 2.
 - RC input: PPM on GPIO14; the signal must be limited to 3.3 V.
 - The `current_robot` profile maps four logical traction motors through two
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
@@ -152,6 +152,8 @@ Do not put Wi-Fi credentials in this repository.
 
 Rafa's one-time USB and OTA handoff is documented in the
 [Rafa bootstrap runbook](docs/RAFA_BOOTSTRAP.md).
+Its installed-hardware evidence and remaining bench gates are tracked separately in
+[Rafa bench state](docs/RAFA_BENCH_STATE.md); it is not floor-motion authorization.
 
 ## Maintenance over LAN
 

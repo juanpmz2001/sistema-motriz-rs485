@@ -162,7 +162,7 @@ additional prerequisite gates explained in its evidence column.
 | Milestone 0 — stable Iteration 4 baseline | **DONE** | `bench-baseline-v1` points to `d11306cecb93099d78cb7477cfaf259f9ddaef4c`; post-merge workflow [`31234517124`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31234517124) passed host, sanitizer and both ESP-IDF profile builds. This is a bench baseline, not physical evidence. |
 | Iteration A — hardware testability | **DONE** | PR [#6](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/6) merged as `7fef8981f78f61c802df63128766a26e9511aaed`; post-merge workflow [`31237789863`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31237789863) passed host, sanitizer and both ESP-IDF profile builds with artifacts. No physical test was executed. |
 | Iteration B — memory headroom | **DONE** | PR [#8](https://github.com/juanpmz2001/sistema-motriz-rs485/pull/8) merged as `cf726482a1aed453b749b0338c1fad789f0fdc52`; post-merge workflow [`31239836099`](https://github.com/juanpmz2001/sistema-motriz-rs485/actions/runs/31239836099) passed host, sanitizer and both profile builds. Both maps passed with 232,272 B effective headroom against the 196,608 B floor, and both artifacts retain placement evidence. |
-| Iteration C — traction qualification | **BLOCKED BY HARDWARE** | This is the first incomplete iteration. No L2–L5 physical result exists. |
+| Iteration C — traction qualification | **IN PROGRESS** | Rafa now provides repeatable read-only RS485/SVD48/PPM evidence and a preliminary bounded M1 controller response. M1/M2 physical side/sign correlation, coherent individual low-speed evidence and all generic L4/L5 gates remain open; see [Rafa bench state](RAFA_BENCH_STATE.md). |
 | Iteration D — steering + feedback | **BLOCKED BY HARDWARE** | Software preparation now composes the isolated `bench_single_steering_as5600` development profile, separate motor-mode PWM/AS5600/controller devices, position endpoints, TTL/neutral policy, explicit logical reference and a provisional scoped LUT. No L2–L5 steering session or physical profile evidence exists. |
 | Iteration E — generic observations | **IN PROGRESS** | Typed velocity and position observations now preserve source, validity/freshness/health and position calibration/reference provenance. This is software preparation only; position HIL/L5 reuse, remaining observation types and every physical result remain **BLOCKED BY HARDWARE**. |
 | Iteration F — motion service + geometry | **NOT STARTED** | Existing legacy motion path must first be audited against the real geometry. |
@@ -174,8 +174,8 @@ Main physical gates are currently:
 
 | Physical gate | Status | Required evidence to unblock |
 | --- | --- | --- |
-| PCB/controller communication L2 | **BLOCKED BY HARDWARE** | Named board/PCB, safe powered setup and repeatable read-only communication evidence. |
-| SVD48/device qualification L3 | **BLOCKED BY HARDWARE** | Real controller/channel/sign/scaling/error evidence. |
+| PCB/controller communication L2 | **IN PROGRESS** | Rafa RS485 address scan `1..247` repeated three times found only address 2, and repeated read-only controller/configuration reads succeeded. Preserve durable session evidence and continue diagnosis before declaring the gate passed. |
+| SVD48/device qualification L3 | **IN PROGRESS** | Both channels provide controller-derived telemetry; M1 has a preliminary bounded response, while M2 feedback requires physical correlation. Sign/scaling/error evidence remains open. |
 | Generic single-motor velocity L4 | **BLOCKED BY HARDWARE** | Operator-authorized bounded run through the application endpoint API. |
 | Traction closed loop L5 | **BLOCKED BY HARDWARE** | Fresh E2 feedback, then independent E3 sensing for the stronger physical claim. |
 | Steering/AS5600 read-only L2–L3 | **BLOCKED BY HARDWARE** | Named development fixture, safe power-up, fresh sensor/magnet/calibration evidence and bounded output evidence. |
@@ -190,12 +190,14 @@ profile `rafa`. This prepares the controller for installation but does **not** q
 the absent SVD48, PPM receiver, motors, channel side/sign mapping or any motion gate;
 the detailed record is in [Rafa USB bootstrap and OTA handoff](RAFA_BOOTSTRAP.md).
 
-No physical gate is marked `PASS`. The first incomplete iteration is still C, and its
-next exit evidence requires the named traction bench hardware, an operator-confirmed
-safe setup and an explicitly authorized physical session. The steering/AS5600 work is
-preparation for D/E and may improve their software readiness, but it does not reorder
-the next physical milestone. Branch-derived parameters, host tests, compilation or
-simulated feedback cannot close C, D or E physical gates.
+No physical gate is marked `PASS`. The first incomplete iteration is still C and is
+now in progress on Rafa. Its next exit evidence requires operator-correlated M1/M2
+wheel/sign observations, coherent bounded controller feedback, STOP evidence and the
+application-boundary L4 path; the current legacy bench command evidence alone cannot
+close it. The steering/AS5600 work is preparation for D/E and may improve their
+software readiness, but it does not reorder the next physical milestone.
+Branch-derived parameters, host tests, compilation or simulated feedback cannot close
+C, D or E physical gates.
 
 ---
 

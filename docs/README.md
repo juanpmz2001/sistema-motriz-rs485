@@ -23,6 +23,9 @@ current [Safety](SAFETY.md) contract or counts as verification evidence.
   for trusted development networks.
 - [Rafa USB bootstrap and OTA handoff](RAFA_BOOTSTRAP.md) — reproducible Rafa profile
   build, one-time provisioning and the mandatory USB-to-OTA round-trip gate.
+- [Rafa bench state and physical learnings](RAFA_BENCH_STATE.md) — installed-hardware
+  observations, RS485 address evidence, known anomalies and the remaining controlled
+  traction gates; it does not authorize floor motion.
 
 ## Testing and physical qualification
 
