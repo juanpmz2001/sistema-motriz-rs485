@@ -153,7 +153,7 @@ Do not put Wi-Fi credentials in this repository.
 Rafa's one-time USB and OTA handoff is documented in the
 [Rafa bootstrap runbook](docs/RAFA_BOOTSTRAP.md).
 Its installed-hardware evidence and remaining bench gates are tracked separately in
-[Rafa bench state](docs/RAFA_BENCH_STATE.md); it is not floor-motion authorization.
+[Rafa bench state](docs/robots/RAFA_BENCH_STATE.md); it is not floor-motion authorization.
 
 ## Maintenance over LAN
 
