@@ -69,6 +69,12 @@ SVD48_PROBE 7
 READ_REG 1 0x5018 1
 ```
 
+`IBUS_STATUS` is a read-only cached receiver snapshot. In PPM mode it includes
+`PULSE_MIN_US` and `PULSE_MAX_US`, the active decoder acceptance window, alongside
+mode, GPIO, freshness, frame counters and channel values. It does not sample the pin
+or wait for a new frame. Use it for bounded host monitoring; do not place the
+blocking `PPM_CAPTURE` diagnostic in a live monitoring path.
+
 Logical motor numbers depend on the selected build profile. `current_robot` exposes
 `0..3`; `bench_single_svd48_motor` exposes only `0`, and rejects `1`. The mapping is
 documented in [SVD48](SVD48.md).

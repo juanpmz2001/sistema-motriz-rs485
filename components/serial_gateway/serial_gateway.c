@@ -2829,13 +2829,15 @@ static void print_ibus_status(serial_gateway_handle_t handle, bool include_chann
     }
 
     print_locked(handle,
-                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu LAST_AGE_MS:%lu BYTES_OR_EDGES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu FRAME_CHANNELS:%u INVALID_PULSES:%lu INCOMPLETE:%lu OVERFLOW:%lu",
+                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu PULSE_MIN_US:%u PULSE_MAX_US:%u LAST_AGE_MS:%lu BYTES_OR_EDGES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu FRAME_CHANNELS:%u INVALID_PULSES:%lu INCOMPLETE:%lu OVERFLOW:%lu",
                  status.signal_valid ? "OK" : "NO_SIGNAL",
                  ibus_receiver_mode_to_string(status.mode),
                  status.uart_port,
                  status.rx_pin,
                  (unsigned long)status.baud_rate,
                  (unsigned long)status.stale_timeout_ms,
+                 status.ppm_min_pulse_us,
+                 status.ppm_max_pulse_us,
                  (unsigned long)status.last_frame_age_ms,
                  (unsigned long)status.bytes_received,
                  (unsigned long)status.frames_seen,

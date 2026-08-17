@@ -48,6 +48,9 @@ typedef struct {
     int rx_pin;
     uint32_t baud_rate;
     uint32_t stale_timeout_ms;
+    /* Active PPM decoder acceptance window; zero when PPM is not selected. */
+    uint16_t ppm_min_pulse_us;
+    uint16_t ppm_max_pulse_us;
     uint32_t last_frame_age_ms;
     uint32_t bytes_received;
     uint32_t frames_seen;

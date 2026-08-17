@@ -466,6 +466,8 @@ esp_err_t ibus_receiver_get_status(ibus_receiver_handle_t handle, ibus_receiver_
     status->stale_timeout_ms = handle->config.stale_timeout_ms;
 
     if (handle->config.mode == IBUS_RECEIVER_MODE_PPM) {
+        status->ppm_min_pulse_us = handle->config.ppm_min_pulse_us;
+        status->ppm_max_pulse_us = handle->config.ppm_max_pulse_us;
         ppm_decoder_status_t ppm_status;
         if (!ppm_decoder_get_status(handle->ppm_decoder, &ppm_status)) {
             xSemaphoreGive(handle->lock);
