@@ -19,7 +19,7 @@ and typed actuator endpoints.
 - The `current_robot` profile maps four logical traction motors through two
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
   only logical index `0` to M1 of one controller and has no motion geometry.
-- The `rafa` profile maps one SVD48 at address 1 to the neutral endpoint names
+- The `rafa` profile maps one SVD48 at address 2 to the neutral endpoint names
   `rafa_traction_m1` and `rafa_traction_m2`, configures PPM on GPIO14 and has no
   motion geometry until channel side/sign are physically qualified.
 - A separate build-selected `bench_single_steering_as5600` development profile

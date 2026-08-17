@@ -210,7 +210,7 @@ The supported profiles are:
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 | `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
-| `rafa` | One RS485 bus, one SVD48 at address 1; separate PPM input on GPIO14 | ID 1 `rafa_traction_m1` on M1 and ID 2 `rafa_traction_m2` on M2 | None; side/sign mapping is unqualified |
+| `rafa` | One RS485 bus, one SVD48 at address 2; separate PPM input on GPIO14 | ID 1 `rafa_traction_m1` on M1 and ID 2 `rafa_traction_m2` on M2 | None; side/sign mapping is unqualified |
 
 The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
 and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because

@@ -87,7 +87,7 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
     },
     .device_count = 1U,
     .devices = {
-        {1U, ROBOT_DRIVER_SVD48, 1U, 1U, 2U, ROBOT_ENDPOINT_REQUIRED},
+        {1U, ROBOT_DRIVER_SVD48, 1U, 2U, 2U, ROBOT_ENDPOINT_REQUIRED},
     },
     .endpoint_count = 2U,
     .endpoints = {

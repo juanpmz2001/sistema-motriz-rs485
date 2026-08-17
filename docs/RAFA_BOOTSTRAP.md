@@ -12,7 +12,7 @@ Rafa is a sprayer with this immutable build profile:
 
 - board `botfarms_esp32s3_rev1` / target `esp32s3`;
 - one RS485 bus on UART2, TX GPIO17, RX GPIO16, 115200 baud;
-- one required SVD48 at address 1, with `rafa_traction_m1` and
+- one required SVD48 at address 2, with `rafa_traction_m1` and
   `rafa_traction_m2` endpoints limited to `-15..15 RPM`;
 - one PPM RC input on GPIO14 through `IBUS_RECEIVER_MODE_PPM`;
 - no second SVD48, servo, AS5600, steering endpoint or application geometry.

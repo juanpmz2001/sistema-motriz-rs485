@@ -33,7 +33,7 @@ no application geometry, so `SET_SPEED 0`, `STOP 0` and `STOP ALL` are routable 
 `MOVE_VEL` is unsupported. The absent second controller and M2 endpoint are not
 reported as failed hardware.
 
-`rafa` configures one device at address 1 and exposes both channels as
+`rafa` configures one device at address 2 and exposes both channels as
 `rafa_traction_m1` and `rafa_traction_m2`. It preserves the same conservative
 `-15..15 RPM` application limits and has no motion geometry. M1/M2 are not called
 left/right until an installed, unloaded physical qualification establishes side,

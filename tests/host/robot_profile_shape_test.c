@@ -123,7 +123,7 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->device_count == 1U);
     HOST_TEST_CHECK(profile->devices[0].driver_id == ROBOT_DRIVER_SVD48);
     HOST_TEST_CHECK(profile->devices[0].bus_id == 1U);
-    HOST_TEST_CHECK(profile->devices[0].address == 1U);
+    HOST_TEST_CHECK(profile->devices[0].address == 2U);
     HOST_TEST_CHECK(profile->devices[0].channel_count == 2U);
     HOST_TEST_CHECK(profile->devices[0].criticality == ROBOT_ENDPOINT_REQUIRED);
     HOST_TEST_CHECK(profile->endpoint_count == 2U);
