@@ -16,6 +16,8 @@ Rafa is a sprayer with this immutable build profile:
   `rafa_traction_m2` endpoints limited to `-15..15 RPM`;
 - one PPM RC input on GPIO14 through `IBUS_RECEIVER_MODE_PPM`;
 - no second SVD48, servo, AS5600, steering endpoint or application geometry.
+- native USB Serial/JTAG as the primary stdin/stdout console for this final
+  provisioning session; post-bootstrap operation uses Maintenance LAN.
 
 The endpoint names intentionally do not infer left/right. An unplugged SVD48 and
 PPM receiver are expected during bootstrap and must remain visible as unavailable;

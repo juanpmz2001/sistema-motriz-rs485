@@ -2,3 +2,11 @@
 # CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR is not set
 # CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600 is not set
 CONFIG_BOTFARMS_PROFILE_RAFA=y
+
+# Rafa's one-time bootstrap uses the ESP32-S3 native USB port.  Make it the
+# primary console so the existing stdin/stdout serial gateway can receive the
+# provisioning commands; the generic project default configures it as
+# output-only secondary console.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is not set

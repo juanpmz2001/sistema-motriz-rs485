@@ -120,6 +120,10 @@ idf.py -D SDKCONFIG=/tmp/sdkconfig-rafa \
   -B /tmp/build-rafa build
 ```
 
+The Rafa fragment also selects the ESP32-S3 native USB Serial/JTAG console as
+primary input/output so the existing full serial gateway can provision a bare
+controller. Other profiles retain the project default UART-primary console.
+
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.
 
