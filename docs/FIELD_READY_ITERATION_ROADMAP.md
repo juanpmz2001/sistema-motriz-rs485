@@ -183,6 +183,13 @@ Main physical gates are currently:
 | Chassis H1/H2/H3 | **BLOCKED BY HARDWARE** | All component, motion-service and minimum-safe-authority gates. |
 | Supervised field test | **BLOCKED BY HARDWARE** | Controlled chassis and pre-field hardening evidence. |
 
+On 2026-08-16 the standalone ESP32-S3 assigned to Rafa passed its one-time USB
+bootstrap, persistent Wi-Fi/Maintenance LAN provisioning and a clean build 21 → 22
+dual-slot OTA round trip. The post-update app self-validated and returned over LAN as
+profile `rafa`. This prepares the controller for installation but does **not** qualify
+the absent SVD48, PPM receiver, motors, channel side/sign mapping or any motion gate;
+the detailed record is in [Rafa USB bootstrap and OTA handoff](RAFA_BOOTSTRAP.md).
+
 No physical gate is marked `PASS`. The first incomplete iteration is still C, and its
 next exit evidence requires the named traction bench hardware, an operator-confirmed
 safe setup and an explicitly authorized physical session. The steering/AS5600 work is

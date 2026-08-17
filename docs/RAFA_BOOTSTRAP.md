@@ -102,3 +102,51 @@ not proof that the new image booted successfully.
 Do not install the controller in Rafa until all non-physical bootstrap gates above
 are recorded as passed. Stop after handoff; installed hardware bring-up belongs to
 a later, separately authorized iteration.
+
+## Commissioning record — 2026-08-16
+
+**Result: PASS for standalone ESP32 bootstrap and OTA handoff.** This record contains
+no SVD48, PPM or motion evidence.
+
+- Controller: ESP32-S3 QFN56 rev 0.2, native USB Serial/JTAG, MAC
+  `14:c1:9f:2b:8e:cc`, detected 16 MB flash. Secure boot and flash encryption were
+  disabled; those remain future production-security decisions rather than hidden
+  claims of this trusted-LAN bootstrap.
+- USB image: build 21 from clean source
+  `5c3136791d3f895440635f4a00494cbdd10cd159`, application SHA-256
+  `9e0c959818f9ca818a9e515edcb9ce596b7dcaa4a27fa48e1683ac522224844b`,
+  1,100,608 bytes. Full flash wrote bootloader, partition table, initial OTA data
+  and `ota_0`; every esptool write verified its hash.
+- Partition layout: NVS, OTA metadata, PHY, coredump, two 6 MB application slots
+  and FAT storage. The initial app reported `OTA_STATE:VALID`,
+  `PENDING_VERIFY:0` and `GIT_DIRTY:0`.
+- Build resource gate: ESP-IDF v5.4.1; 227,296 bytes effective shared D/IRAM
+  headroom against the 196,608-byte floor. The map SHA-256 was
+  `5eeffdb0bb63147ae60852616d0d5a6bc9824e85c6f7340f3c8bd42773bea7ef`.
+- Provisioning: Wi-Fi, Maintenance LAN token and independent OTA announce token
+  were persisted in NVS. Secrets were neither printed nor committed. A reset caused
+  a measured LAN outage and automatic reconnect; all acceptance queries after that
+  reset used LAN only. The observed DHCP address was `192.168.1.194` and is not a
+  static identity.
+- Initial LAN state: profile `rafa`, board `botfarms_esp32s3_rev1`, schema valid,
+  composition supported and runtime ready. Platform was `SAFE_IDLE`, motion inactive
+  and safe for OTA. Both configured traction observations were offline/stale because
+  no SVD48 was connected.
+- Engineering Console: authenticated discovery and direct-IP connection both found
+  the controller; overview reported build 21/profile `rafa`, and cached telemetry
+  contained 20 rows with `OFFLINE` health rather than invented controller data.
+- OTA check: build 22 was reported `UPDATE_AVAILABLE` from build 21.
+- OTA download test: 1,100,608 bytes were downloaded and SHA-256 verified against
+  the manifest in inactive `ota_1` without selecting it.
+- OTA update: installed build 22 from clean source
+  `ef55ddae457a345f0c53662f419f87c56ac6d4e3`, application SHA-256
+  `ba2729e00ab6200efbf7ef446bc535e030b8242fbc386eb32449a56a033a4788`.
+  The controller returned over LAN on `ota_1` with `OTA_STATE:VALID`,
+  `PENDING_VERIFY:0`, rollback test mode `NONE`, profile `rafa`, runtime-ready
+  composition and automatic installation still disabled.
+- Post-OTA Console: connected to build 22/SHA `ef55dda...`, profile `rafa`, runtime
+  ready, with the same honest `OFFLINE` telemetry health.
+
+Physical SVD48 qualification, physical PPM qualification, motor motion and M1/M2
+left/right mapping remain **NOT TESTED**. Those gates require the controller to be
+installed and a new, explicitly authorized iteration.
