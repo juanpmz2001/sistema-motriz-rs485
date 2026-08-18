@@ -5,6 +5,8 @@ Physical observations are evidence only for the conditions and artifact they nam
 
 ## Read by task
 
+- **Any task:** [Master engineering guide](BOTFARMS_ENGINEERING_MASTER_GUIDE.md)
+  for the shared layering and ownership philosophy.
 - **Any firmware change:** [Architecture](ARCHITECTURE.md) and
   [Safety](SAFETY.md).
 - **Serial, LAN, or a public response:** [Command API](API.md).
@@ -28,6 +30,15 @@ Physical observations are evidence only for the conditions and artifact they nam
   its operational companion.
 - [Next steps](NEXT_STEPS.md) records the compact handoff state. It is not a
   substitute for a requested scope, source inspection, or physical evidence.
+
+## Future work plans
+
+- [SVD48 Workspace v2 plan](SVD48_WORKSPACE_V2_PLAN.md) scopes the next generic
+  controller/channel workspace and bench-control contract. It is relevant only to
+  that future vertical and does not describe current Console behavior.
+- [Safe Control Plane v1 plan](SAFE_CONTROL_PLANE_V1_PLAN.md) scopes future
+  continuous `/control` work. It does not activate `control_lan`, authorize motion or
+  weaken the maintenance-LAN boundary.
 
 ## Physical state
 

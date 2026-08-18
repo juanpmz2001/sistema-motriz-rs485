@@ -2,40 +2,90 @@
 
 This file is the operating contract for coding agents working in this repository.
 
-## Read and route
+## Mandatory shared philosophy
 
-When this BotFarms workspace includes the sibling Engineering Console checkout, read
-`../botfarms-engineering-console/docs/BOTFARMS_ENGINEERING_MASTER_GUIDE.md` first for
-shared system-boundary work. Then follow the repository routes below.
+Read [the BotFarms Engineering Master Guide](docs/BOTFARMS_ENGINEERING_MASTER_GUIDE.md)
+before planning or implementing **every** task. It is the shared design philosophy for
+this firmware and the Engineering Console: choose the smallest correct architecture,
+preserve clear ownership, keep dependencies layered, and distinguish maintenance from
+continuous control. It is not an as-built source of truth.
 
-Start with `README.md`, then read only the routes the task actually touches. For any
-code change, also read `docs/ARCHITECTURE.md` and `docs/SAFETY.md` before editing.
+Apply it in practice:
 
-| Task scope | Additional mandatory reading |
+1. Inspect current source, tests and runtime evidence before trusting a prompt or a
+   plan.
+2. Identify the owner and public boundary of the behavior before editing. Keep the
+   dependency direction `UI → service/adapter → firmware capability → device →
+   driver → transport`.
+3. Put robot intent in an application/service layer, device protocol in the driver
+   vertical, and transport framing in transport. Do not make a shortcut around the
+   correct owner merely to finish a task faster.
+4. Generalize contracts and identity when a real use needs them; do not introduce
+   unused framework capacity, profile-specific UI assumptions, or broad refactors.
+5. Test at the layer being changed, update the current contract, and label software,
+   controller and physical evidence honestly.
+
+The firmware remains the final safety authority. Maintenance LAN is bounded bench
+tooling, not continuous motion control; any continuous source needs the dedicated
+authority, session, sequence, TTL/deadman and STOP-priority path described in the
+Master Guide.
+
+## Documentation selection
+
+Start with `README.md` and [the documentation index](docs/README.md). Then use this
+catalog to decide which focused document is worth reading. Read every matching row;
+do not load unrelated domain material.
+
+| Document | Read it when… | It tells you… |
+| --- | --- | --- |
+| `docs/BOTFARMS_ENGINEERING_MASTER_GUIDE.md` | always, before design or implementation | Shared layering, ownership, evidence, control-plane and cross-repository philosophy. |
+| `README.md` | always | Current product boundary, supported profiles, setup and known blockers. |
+| `docs/README.md` | always | The active documentation map and where historical material lives. |
+| `docs/ARCHITECTURE.md` | changing code, startup, lifecycle, composition, tasks or ownership | As-built component graph, active/transitional/dormant boundaries and data/actuation paths. |
+| `docs/SAFETY.md` | changing any code; mandatory for hardware, commands, safety, endpoints or OTA | Current safeguards, bypasses, release gates and non-negotiable invariants. |
+| `docs/API.md` | changing serial/LAN commands, responses or a firmware client | Public grammar, compatibility behavior, diagnostic mode and maintenance/control boundaries. |
+| `docs/SVD48.md` | changing SVD48, RS485, polling, units, registers or device/channel adapters | Driver/transport contract, register evidence and legacy compatibility limits. |
+| `docs/OTA.md` | release, recovery, update or OTA work | Trusted release, rollback and recovery procedure. |
+| `docs/RAFA_BOOTSTRAP.md` | Rafa provisioning or recovery | One-time USB-to-OTA handoff; normal Rafa changes are OTA-only. |
+| `docs/robots/RAFA_BENCH_STATE.md` | deciding Rafa behavior, evidence or a bench session | Actual installed-hardware observations, unresolved facts and allowed conclusions. |
+| `docs/TESTING_ARCHITECTURE_GUIDE.md` | adding tests, HIL or any physical qualification | L0–L7 levels, evidence classes and which layer a test may exercise. |
+| `docs/testing/README.md` | preparing a physical session | Concise entry/exit gates and the appropriate runbook. |
+| `docs/testing/STEERING_AS5600_BENCH_RUNBOOK.md` | AS5600 or steering bench work | The isolated steering fixture, explicit-reference procedure and evidence limits. |
+| `docs/testing/EVIDENCE_TEMPLATE.md` | recording physical evidence | Required identity, preconditions, observations, cleanup and result format. |
+| `tests/hil/README.md` | using or changing the host HIL runner | Executable manifest workflow, identity gates and explicit motion confirmations. |
+| `docs/NEXT_STEPS.md` | choosing a new firmware scope or evaluating open gates | Compact as-built handoff; it does not authorize a feature or physical operation. |
+| `docs/SVD48_WORKSPACE_V2_PLAN.md` | implementing generic controller/channel inventory, SVD48 UI contracts or bench controls | Future multi-controller workspace scope, typed catalog shape and acceptance criteria. |
+| `docs/SAFE_CONTROL_PLANE_V1_PLAN.md` | implementing `/control`, LAN motion or host controls | Future control-plane scope: authority, TTL/deadman, mixer and elevated-test criteria. |
+| `docs/archive/README.md` and `docs/archive/` | tracing a historical decision | Superseded plans and closeouts; never an active contract or evidence source. |
+
+Plans describe intent, not implementation. When a plan conflicts with code, tests,
+as-built documents or current physical evidence, the latter win.
+
+## Required routes
+
+For any code change, read `docs/ARCHITECTURE.md` and `docs/SAFETY.md` before editing,
+then add the matching rows below.
+
+| Task scope | Additional required reading |
 | --- | --- |
 | Serial/LAN commands or public responses | `docs/API.md` |
 | SVD48, RS485, polling or drive units | `docs/SVD48.md` |
 | OTA, release or recovery | `docs/OTA.md` |
 | Physical tests, HIL or test architecture | `docs/TESTING_ARCHITECTURE_GUIDE.md`, `docs/testing/README.md`, `tests/hil/README.md` and `docs/SAFETY.md` |
-| PCB, actuator, sensor, closed-loop or mobility qualification | the preceding physical-test route plus `docs/NEXT_STEPS.md` |
+| PCB, actuator, sensor, closed-loop or mobility qualification | the preceding physical-test route, `docs/NEXT_STEPS.md`, and the relevant robot/fixture evidence |
 | Evidence from a physical session | `docs/testing/EVIDENCE_TEMPLATE.md` |
-| Work sequencing, control activation, ROS or product qualification planning | `docs/NEXT_STEPS.md`, then the task-specific current contracts |
+| Future SVD48 workspace or bench-control work | `docs/SVD48_WORKSPACE_V2_PLAN.md`, plus API/SVD48/safety routes as applicable |
+| Future continuous `/control` work | `docs/SAFE_CONTROL_PLANE_V1_PLAN.md`, `docs/API.md`, `docs/NEXT_STEPS.md` and the Master Guide control-plane sections |
 
-Do not load every domain document when the task has no dependency on it. When a task
-spans routes, combine their reading lists.
+Before changing either repository, inspect its top-level path, status, branch and
+recent log. For firmware work, identify the running firmware over LAN when safely
+available; never infer it from a local checkout.
 
-Precedence is explicit:
-
-1. source code and executable tests are the implementation truth;
-2. current as-built and safety contracts describe that implementation;
-3. `docs/TESTING_ARCHITECTURE_GUIDE.md` owns test levels, evidence classes and the
-   physical-test lifecycle; and
-4. `docs/NEXT_STEPS.md` is a compact handoff, never a replacement for current source,
-   safety or task-specific evidence.
-
-No handoff or archived plan overrides `docs/SAFETY.md` or proves that planned behavior
-is implemented. Correct documentation in the same change whenever behavior or a public
-contract changes.
+Precedence is explicit: current source first, executable tests and runtime evidence
+second, as-built and API/safety contracts third, physical evidence fourth, plans
+fifth and historical prose last. No plan, handoff or archived document overrides
+`docs/SAFETY.md` or proves that planned behavior is implemented. Correct documentation
+in the same change whenever behavior or a public contract changes.
 
 ## Current constraints
 
