@@ -5,8 +5,8 @@
 This document is the primary source for the architecture implemented by the
 `bench-baseline-v1` Iteration 4 baseline, the current Iteration A integration and
 the unqualified single-axis steering development slice. It is an as-built
-description, not a target design or a physical qualification record. The target and
-migration rationale live in [Architecture refactor](ARCHITECTURE_REFACTOR.md).
+description, not a target design or a physical qualification record. Superseded
+target and migration rationale is retained only in the [documentation archive](archive/README.md).
 
 The firmware is bench-only. `app_main()` is the composition root; component-owned
 FreeRTOS tasks perform runtime work after startup, and the main task sleeps. The
@@ -455,4 +455,4 @@ health model is not yet the active safety policy.
 foundations, not active runtime behavior. Their presence must not be described as an
 authority, state machine or production control protocol. The next boundary is a
 priority-aware single actuation owner with stop precedence; see the
-[Roadmap](ROADMAP.md).
+[firmware handoff state](NEXT_STEPS.md).

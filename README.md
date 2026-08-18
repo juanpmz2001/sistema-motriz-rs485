@@ -5,7 +5,7 @@ RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
 an active build-time robot profile with profile-driven buses, devices, channels
 and typed actuator endpoints.
 
-> **Status: bench firmware, not a production motion controller.** Build 20 has
+> **Status: bench firmware, not a production motion controller.** Build 24 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
 > cut-off available whenever actuation is possible. See [Safety](docs/SAFETY.md).
 
@@ -75,8 +75,7 @@ the difference between active, transitional and dormant modules are documented i
 4. [Command API](docs/API.md)
 5. [SVD48 integration](docs/SVD48.md) when changing RS485 behavior
 6. [OTA](docs/OTA.md) when building or deploying releases
-7. [Field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md) for pre-field work
-8. [Platform roadmap](docs/ROADMAP.md) for longer-horizon architectural features
+7. [Handoff state](docs/NEXT_STEPS.md) for current open gates and deferred work
 
 Agent-specific rules are in [AGENTS.md](AGENTS.md).
 
@@ -127,7 +126,7 @@ controller. Other profiles retain the project default UART-primary console.
 `build/`, `sdkconfig`, release binaries, local tokens and editor state are
 generated or private and therefore ignored by Git.
 
-## First USB provisioning
+## One-time USB bootstrap or recovery
 
 Confirm the serial port before flashing. A new board needs the bootloader,
 partition table and application, so use `flash`, not only `app-flash`:
@@ -154,6 +153,7 @@ Rafa's one-time USB and OTA handoff is documented in the
 [Rafa bootstrap runbook](docs/RAFA_BOOTSTRAP.md).
 Its installed-hardware evidence and remaining bench gates are tracked separately in
 [Rafa bench state](docs/robots/RAFA_BENCH_STATE.md); it is not floor-motion authorization.
+For Rafa, normal firmware changes are OTA-only; USB is recovery-only.
 
 ## Maintenance over LAN
 
@@ -206,13 +206,12 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
 - Clean ESP-IDF 5.4.1 builds report 1 byte free in the dedicated 16 KiB IRAM
   category, but the ESP32-S3 linker continues into shared D/IRAM. CI enforces a
   192 KiB effective-headroom floor for every supported build profile; see the
-  [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md). Runtime heap, stack
+  [firmware handoff state](docs/NEXT_STEPS.md). Runtime heap, stack
   and timing qualification remain open.
 - `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are
   compiled foundations but are not wired into the active runtime.
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images
   with a protected trust root.
 
-These items are release gates, not documentation footnotes. Pre-field ordering is
-maintained in the [field-ready roadmap](docs/FIELD_READY_ITERATION_ROADMAP.md); the
-[platform roadmap](docs/ROADMAP.md) owns the longer-horizon sequence.
+These items are release gates, not documentation footnotes. The concise current
+handoff is in [Next steps](docs/NEXT_STEPS.md); older planning records are archived.

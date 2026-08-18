@@ -4,6 +4,10 @@ This file is the operating contract for coding agents working in this repository
 
 ## Read and route
 
+When this BotFarms workspace includes the sibling Engineering Console checkout, read
+`../botfarms-engineering-console/docs/BOTFARMS_ENGINEERING_MASTER_GUIDE.md` first for
+shared system-boundary work. Then follow the repository routes below.
+
 Start with `README.md`, then read only the routes the task actually touches. For any
 code change, also read `docs/ARCHITECTURE.md` and `docs/SAFETY.md` before editing.
 
@@ -13,10 +17,9 @@ code change, also read `docs/ARCHITECTURE.md` and `docs/SAFETY.md` before editin
 | SVD48, RS485, polling or drive units | `docs/SVD48.md` |
 | OTA, release or recovery | `docs/OTA.md` |
 | Physical tests, HIL or test architecture | `docs/TESTING_ARCHITECTURE_GUIDE.md`, `docs/testing/README.md`, `tests/hil/README.md` and `docs/SAFETY.md` |
-| PCB, actuator, sensor, closed-loop or mobility qualification | the preceding physical-test route plus `docs/FIELD_READY_ITERATION_ROADMAP.md` |
+| PCB, actuator, sensor, closed-loop or mobility qualification | the preceding physical-test route plus `docs/NEXT_STEPS.md` |
 | Evidence from a physical session | `docs/testing/EVIDENCE_TEMPLATE.md` |
-| Work sequencing toward the first field test | `docs/FIELD_READY_ITERATION_ROADMAP.md` |
-| Long-horizon platform, ROS or product qualification planning | `docs/ROADMAP.md`; also read the field-ready roadmap if the decision affects a pre-field milestone |
+| Work sequencing, control activation, ROS or product qualification planning | `docs/NEXT_STEPS.md`, then the task-specific current contracts |
 
 Do not load every domain document when the task has no dependency on it. When a task
 spans routes, combine their reading lists.
@@ -26,14 +29,12 @@ Precedence is explicit:
 1. source code and executable tests are the implementation truth;
 2. current as-built and safety contracts describe that implementation;
 3. `docs/TESTING_ARCHITECTURE_GUIDE.md` owns test levels, evidence classes and the
-   physical-test lifecycle;
-4. `docs/FIELD_READY_ITERATION_ROADMAP.md` owns sequencing from the bench baseline to
-   the first field-testable version; and
-5. `docs/ROADMAP.md` owns the broader, long-horizon platform sequence.
+   physical-test lifecycle; and
+4. `docs/NEXT_STEPS.md` is a compact handoff, never a replacement for current source,
+   safety or task-specific evidence.
 
-If the two roadmaps overlap and disagree on pre-field ordering, the field-ready
-roadmap wins. No roadmap overrides `docs/SAFETY.md` or proves that planned behavior is
-implemented. Correct documentation in the same change whenever behavior or a public
+No handoff or archived plan overrides `docs/SAFETY.md` or proves that planned behavior
+is implemented. Correct documentation in the same change whenever behavior or a public
 contract changes.
 
 ## Current constraints

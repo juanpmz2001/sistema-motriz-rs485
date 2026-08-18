@@ -7,8 +7,8 @@
 This file selects the next physical gate. It does not redefine test levels, evidence
 classes or lifecycle rules; those are owned by the
 [Testing Architecture Guide](../TESTING_ARCHITECTURE_GUIDE.md). The
-[Field-Ready Iteration Roadmap](../FIELD_READY_ITERATION_ROADMAP.md) owns milestone
-order, and [Safety](../SAFETY.md) remains the hard constraint.
+[Firmware handoff state](../NEXT_STEPS.md) records open gates, and
+[Safety](../SAFETY.md) remains the hard constraint.
 
 These runbooks do not authorize a hardware operation. Motion, enable, fault clear,
 identify and register/configuration writes require an explicit task request and
