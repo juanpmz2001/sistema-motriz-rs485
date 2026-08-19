@@ -101,9 +101,9 @@ static const robot_profile_t SINGLE_MOTOR __attribute__((unused)) = {
     .application = {ROBOT_PROFILE_NO_GEOMETRY, 0, 0, 0},
 };
 
-/* Rafa's channel-to-side mapping is intentionally unresolved until the first
- * installed hardware qualification.  M1/M2 are therefore the stable endpoint
- * names and no body-motion geometry is enabled. */
+/* Rafa's installed wheel mapping was qualified by the operator on the elevated
+ * robot.  Keep M1/M2 in the stable endpoint names while encoding the physical
+ * side and controller-RPM sign needed by the application kinematics. */
 static const robot_profile_t RAFA __attribute__((unused)) = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "rafa",
@@ -119,14 +119,42 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
     },
     .endpoint_count = 2U,
     .endpoints = {
-        {1U, "rafa_traction_m1", 1U, 0U,
-         ROBOT_CAPABILITY_VELOCITY_RPM | ROBOT_CAPABILITY_STOPPABLE,
-         ROBOT_ENDPOINT_REQUIRED, -15, 15},
-        {2U, "rafa_traction_m2", 1U, 1U,
-         ROBOT_CAPABILITY_VELOCITY_RPM | ROBOT_CAPABILITY_STOPPABLE,
-         ROBOT_ENDPOINT_REQUIRED, -15, 15},
+        {.id = 1U,
+         .name = "rafa_traction_m1",
+         .device_id = 1U,
+         .channel = 0U,
+         .capabilities = ROBOT_CAPABILITY_VELOCITY_RPM |
+                         ROBOT_CAPABILITY_STOPPABLE,
+         .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15,
+         .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_RIGHT,
+         .motion_direction_sign = 1,
+         .motor_to_wheel_ratio = 1.0f},
+        {.id = 2U,
+         .name = "rafa_traction_m2",
+         .device_id = 1U,
+         .channel = 1U,
+         .capabilities = ROBOT_CAPABILITY_VELOCITY_RPM |
+                         ROBOT_CAPABILITY_STOPPABLE,
+         .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15,
+         .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_LEFT,
+         .motion_direction_sign = -1,
+         .motor_to_wheel_ratio = 1.0f},
     },
-    .application = {ROBOT_PROFILE_NO_GEOMETRY, 0, 0, 0},
+    .application = {
+        .kind = ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY,
+        /* Differential v1 consumes track width and wheel radius only. */
+        .wheelbase_m = 0.0f,
+        .track_width_m = 0.10f,
+        .wheel_radius_m = 0.1778f,
+        .max_vx_mps = 0.02f,
+        .max_vy_mps = 0.0001f,
+        .max_wz_radps = 0.20f,
+        .control_ttl_ms = 300U,
+    },
 };
 
 /* This table is a reviewed, static calibration candidate from the empirical
@@ -531,7 +559,7 @@ robot_profile_error_t robot_profile_validate_with_registry(
     }
     if (profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY) {
         if (!isfinite(profile->application.wheelbase_m) ||
-            profile->application.wheelbase_m <= 0 ||
+            profile->application.wheelbase_m < 0 ||
             !isfinite(profile->application.track_width_m) ||
             profile->application.track_width_m <= 0 ||
             !isfinite(profile->application.wheel_radius_m) ||

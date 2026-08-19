@@ -71,8 +71,9 @@ power path.
   APPLY plans. This is semantic priority, not physical preemption: an already-running
   coordinator/driver transaction completes before the service can execute the next
   stop. The 300 ms value and physical stop latency remain workshop-qualification
-  gates. Rafa does not expose continuous control until its M1/M2 side and direction
-  mapping is independently established.
+  gates. Rafa now carries the operator-qualified M1/M2 side and direction mapping;
+  enabling the software path does not close its elevated expiry/stop or floor-motion
+  gates.
 - Establishing the logical steering reference is a separate, explicitly confirmed
   maintenance operation. It stops first and maps a freshly observed, physically
   verified pose into the configured coordinate system; it never drives, auto-homes or

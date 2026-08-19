@@ -490,5 +490,6 @@ DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> 
 ```
 
 Profiles without qualified differential geometry return `ERR CONTROL_UNAVAILABLE`.
-The current `rafa` profile intentionally does so until its M1/M2 side/sign mapping is
-physically qualified.
+The current `rafa` profile carries its operator-qualified M1/M2 side/sign mapping and
+therefore exposes this control plane. Availability does not by itself qualify physical
+direction, expiry latency or floor motion for a particular deployed artifact.

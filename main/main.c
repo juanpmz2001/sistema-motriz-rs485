@@ -416,13 +416,22 @@ void app_main(void)
         return;
     }
 
+    svd48_handle_t legacy_svd48 =
+        robot_composition_legacy_svd48(&composition);
+    /* The dedicated differential motion service supports the profile's typed
+     * endpoint set.  The transitional MOVE_VEL facade is a separate four-wheel
+     * implementation that also consumes wheelbase; do not enable it merely
+     * because a two-wheel profile has valid differential geometry. */
+    const bool legacy_motion_kinematics_enabled =
+        profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY &&
+        profile->application.wheelbase_m > 0.0f && legacy_svd48 != NULL &&
+        svd48_get_motor_count(legacy_svd48) == SVD48_MOTOR_COUNT;
     robot_control_config_t robot_config = {
-        .svd48 = robot_composition_legacy_svd48(&composition),
+        .svd48 = legacy_svd48,
         .wheelbase_m = profile->application.wheelbase_m, .track_width_m = profile->application.track_width_m,
         .wheel_radius_m = profile->application.wheel_radius_m,
         .max_wheel_rpm = profile_max_abs_rpm(profile),
-        .motion_kinematics_enabled =
-            profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY,
+        .motion_kinematics_enabled = legacy_motion_kinematics_enabled,
         .enable_steering_servos = false,
         .steering_servo_pins = { -1, -1, -1, -1 },
         .servo_min_us = 1000, .servo_center_us = 1500,

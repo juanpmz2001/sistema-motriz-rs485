@@ -134,6 +134,9 @@ typedef struct {
 
 typedef struct {
     uint8_t kind;
+    /* Differential v1 does not consume wheelbase. Zero means not applicable;
+     * a positive value remains available to the transitional four-wheel
+     * MOVE_VEL compatibility path. */
     float wheelbase_m;
     float track_width_m;
     float wheel_radius_m;

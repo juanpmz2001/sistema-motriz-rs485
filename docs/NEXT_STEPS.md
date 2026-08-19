@@ -5,7 +5,7 @@ feature. Recheck the current code, tests and task scope before acting.
 
 ## Current baseline
 
-- Firmware build identity is version `1.0.0`, build `27`; the runtime topology is a
+- Firmware source identity is version `1.0.0`, build `28`; the runtime topology is a
   build-selected immutable C profile.
 - Supported compositions are `current_robot`, `bench_single_svd48_motor`, `rafa`,
   and the unqualified `bench_single_steering_as5600` development slice.
@@ -14,8 +14,10 @@ feature. Recheck the current code, tests and task scope before acting.
   differential geometry, NEXT-3 now activates `control_lan → command_authority →
   motion_application/robot_kinematics → traction endpoints`. `robot_state` remains
   inactive.
-- Rafa has one SVD48 at RS485 address `2`; M1/M2 physical wheel identity and
-  direction remain unqualified. Deploy Rafa firmware changes by OTA only.
+- Rafa has one SVD48 at RS485 address `2`. Operator qualification maps M1 to the
+  right wheel with positive RPM forward and M2 to the left wheel with negative RPM
+  forward. The profile uses 0.1778 m radius, 0.10 m center-to-center track and direct
+  drive. Deploy Rafa firmware changes by OTA only.
 - The NEXT-1 maintenance contract now exposes typed N-controller SVD48 inventory,
   cached physical-channel telemetry and bounded bench commands. It bypasses neither
   the application coordinator nor the four-binding legacy limit, and it is not the
@@ -26,22 +28,22 @@ feature. Recheck the current code, tests and task scope before acting.
   was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
-  TTL expiry, retired streams and STOP semantics. The current `rafa` profile correctly
-  reports control unavailable because its physical side/sign mapping is still open.
-  Build 27 OTA and the unavailable/ARM gate passed; no Rafa loss-path motion test was
-  attempted or accepted.
+  TTL expiry, retired streams and STOP semantics. Build 28 source now activates Rafa's
+  qualified geometry with conservative 0.02 m/s and 0.20 rad/s limits and TTL 300 ms.
+  OTA/runtime and the first elevated bounded motion smoke remain to be recorded; no
+  Rafa browser/backend/LAN-loss motion test has yet been accepted.
 
 ## Gates that remain open
 
 1. Treat every Rafa motion or parameter-write investigation as a separately
    authorized elevated bench session under [Safety](SAFETY.md) and the testing
-   contract. Resolve physical channel identity/direction and the M2 feedback anomaly
-   with independent observation; controller feedback alone is insufficient.
-2. Keep Maintenance LAN out of continuous motion and do not add PPM authority. Before
-   enabling NEXT-3 on Rafa, qualify M1/M2 side and positive direction, encode that
-   mapping in its immutable profile, deploy by OTA, then measure key-release, browser
-   close, backend loss and LAN-loss expiry with wheels elevated and an independent
-   physical cut-off. A software/model pass is not that evidence.
+   contract. Resolve the historical M2 feedback anomaly during operator work;
+   controller feedback alone is insufficient for a new physical claim.
+2. Keep Maintenance LAN out of continuous motion and do not add PPM authority. Deploy
+   and perform the single bounded elevated Rafa smoke for the encoded mapping, then
+   separately measure key-release, browser close, backend loss and LAN-loss expiry
+   with wheels elevated and an independent physical cut-off. A software/model pass is
+   not that evidence.
 3. Keep the AS5600 steering slice development-only until its explicit reference,
    calibration, sensor and closed-loop physical gates have evidence.
 4. Generalize only a contract required by a real profile or console workflow. In

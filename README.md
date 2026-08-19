@@ -5,7 +5,7 @@ RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
 an active build-time robot profile with profile-driven buses, devices, channels
 and typed actuator endpoints.
 
-> **Status: bench firmware, not a production motion controller.** Build 27 has
+> **Status: bench firmware, not a production motion controller.** Build 28 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
 > cut-off available whenever actuation is possible. See [Safety](docs/SAFETY.md).
 
@@ -19,9 +19,9 @@ and typed actuator endpoints.
 - The `current_robot` profile maps four logical traction motors through two
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
   only logical index `0` to M1 of one controller and has no motion geometry.
-- The `rafa` profile maps one SVD48 at address 2 to the neutral endpoint names
-  `rafa_traction_m1` and `rafa_traction_m2`, configures PPM on GPIO14 and has no
-  motion geometry until channel side/sign are physically qualified.
+- The `rafa` profile maps one SVD48 at address 2 to the stable endpoint names
+  `rafa_traction_m1` and `rafa_traction_m2`, configures PPM observation on GPIO14,
+  and carries the operator-qualified two-wheel differential side/sign geometry.
 - A separate build-selected `bench_single_steering_as5600` development profile
   composes one motor-mode PWM output, one AS5600 position sensor and one local
   steering controller. It has no traction geometry and is not a qualified robot
@@ -41,8 +41,9 @@ and typed actuator endpoints.
   on port `32322`: `control_lan` publishes semantic robot intent through
   `command_authority`, `robot_kinematics` and `motion_application` before the typed
   traction endpoints. ARM, stream/sequence, deadman and a profile-owned short TTL are
-  firmware contracts. Maintenance LAN remains a separate bench path. Rafa deliberately
-  does not start this plane while its M1/M2 side/sign mapping is unqualified.
+  firmware contracts. Maintenance LAN remains a separate bench path. Rafa now starts
+  this plane from its qualified immutable geometry; that software availability is not
+  floor-motion or physical expiry/stop qualification.
 - `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
   port backed by the serialized `actuation_coordinator` and the direct SVD48
   channel endpoint adapter.

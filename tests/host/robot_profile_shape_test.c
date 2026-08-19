@@ -1,5 +1,6 @@
 #include "host_test.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "robot_profile.h"
@@ -135,8 +136,29 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->endpoints[1].channel == 1U);
     HOST_TEST_CHECK(profile->endpoints[0].criticality == ROBOT_ENDPOINT_REQUIRED);
     HOST_TEST_CHECK(profile->endpoints[1].criticality == ROBOT_ENDPOINT_REQUIRED);
+    HOST_TEST_CHECK(profile->endpoints[0].motion_side ==
+                    ROBOT_PROFILE_MOTION_SIDE_RIGHT);
+    HOST_TEST_CHECK(profile->endpoints[0].motion_direction_sign == 1);
+    HOST_TEST_CHECK(profile->endpoints[0].motor_to_wheel_ratio == 1.0f);
+    HOST_TEST_CHECK(profile->endpoints[1].motion_side ==
+                    ROBOT_PROFILE_MOTION_SIDE_LEFT);
+    HOST_TEST_CHECK(profile->endpoints[1].motion_direction_sign == -1);
+    HOST_TEST_CHECK(profile->endpoints[1].motor_to_wheel_ratio == 1.0f);
     HOST_TEST_CHECK(profile->steering_axis_count == 0U);
-    HOST_TEST_CHECK(profile->application.kind == ROBOT_PROFILE_NO_GEOMETRY);
+    HOST_TEST_CHECK(profile->application.kind ==
+                    ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY);
+    HOST_TEST_CHECK(profile->application.wheelbase_m == 0.0f);
+    HOST_TEST_CHECK(fabsf(profile->application.track_width_m - 0.10f) <
+                    0.000001f);
+    HOST_TEST_CHECK(fabsf(profile->application.wheel_radius_m - 0.1778f) <
+                    0.000001f);
+    HOST_TEST_CHECK(fabsf(profile->application.max_vx_mps - 0.02f) <
+                    0.000001f);
+    HOST_TEST_CHECK(fabsf(profile->application.max_vy_mps - 0.0001f) <
+                    0.000001f);
+    HOST_TEST_CHECK(fabsf(profile->application.max_wz_radps - 0.20f) <
+                    0.000001f);
+    HOST_TEST_CHECK(profile->application.control_ttl_ms == 300U);
     HOST_TEST_CHECK(robot_profile_validate(profile) == ROBOT_PROFILE_VALID);
 
     robot_profile_t pin_conflict = *profile;

@@ -94,8 +94,9 @@ callback only copies ARM/COMMAND/DISARM/STOP events into semantic mailboxes; it 
 calls a driver or constructs an SVD48 command. The service applies LAN intent to the
 existing authority model, computes all wheel targets once through `robot_kinematics`,
 then submits one multi-endpoint velocity request through `actuation_application`.
-Profiles without qualified geometry, including `rafa`, construct neither service and
-report `CONTROL_UNAVAILABLE` through the read-only status command.
+Profiles without qualified geometry construct neither service and report
+`CONTROL_UNAVAILABLE` through the read-only status command. Rafa now has an explicit
+two-wheel differential mapping and therefore constructs this path.
 
 ## `SET_SPEED` sequence
 
@@ -226,19 +227,25 @@ The supported profiles are:
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 | `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
-| `rafa` | One RS485 bus, one SVD48 at address 2; separate PPM input on GPIO14 | ID 1 `rafa_traction_m1` on M1 and ID 2 `rafa_traction_m2` on M2 | None; side/sign mapping is unqualified |
+| `rafa` | One RS485 bus, one SVD48 at address 2; separate PPM observation on GPIO14 | ID 1 `rafa_traction_m1`: right/+1; ID 2 `rafa_traction_m2`: left/−1; both direct-drive and ±15 RPM | Differential: radius 0.1778 m, track 0.10 m, TTL 300 ms |
 
 The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
 and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
 there is no application geometry. Both SVD48 profiles also declare a GPIO RC bus,
 which `main` consumes separately from SVD48 composition.
 
-`rafa` also uses the executable SVD48 factory, but deliberately exposes both
-physical channels with neutral names. It contains no second controller, servo,
-AS5600 or steering endpoint. `main` initializes its GPIO14 input through the
-existing `IBUS_RECEIVER_MODE_PPM` path. Since its application geometry is
-`ROBOT_PROFILE_NO_GEOMETRY`, individual endpoint capabilities are available but
-`MOVE_VEL` cannot claim robot mobility.
+`rafa` also uses the executable SVD48 factory and preserves the physical M1/M2 names.
+It contains no second controller, servo, AS5600 or steering endpoint. `main`
+initializes its GPIO14 input through the existing `IBUS_RECEIVER_MODE_PPM` observation
+path; PPM is not a motion authority. Its operator-qualified differential profile maps
+M1 to right/+1 and M2 to left/−1 with direct drive, 0.1778 m radius and 0.10 m track.
+Body limits are deliberately bench-conservative at 0.02 m/s and 0.20 rad/s with a
+300 ms TTL. Differential v1 consumes track width and radius, not wheelbase.
+
+The transitional legacy `MOVE_VEL` facade remains a distinct four-wheel implementation
+and is enabled only when four legacy SVD48 bindings and a positive wheelbase exist.
+Rafa's two-endpoint geometry activates only the dedicated `motion_application` path;
+it does not make legacy `MOVE_VEL` available.
 
 `bench_single_steering_as5600` is deliberately isolated from the traction profiles:
 its PWM GPIO is a motor-mode output rather than an RC input, and it has no geometry

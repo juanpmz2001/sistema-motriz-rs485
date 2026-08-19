@@ -14,12 +14,11 @@ required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
 intermittent HTTP 400 responses from read-only Console preflight endpoints before
 further HOLD requests were sent. No speed smoke was attempted.
 
-NEXT-3 continuous-control software now exists, but the Rafa profile intentionally
-keeps `NO_GEOMETRY` and returns `CONTROL_UNAVAILABLE`. Build 27 was deployed by OTA,
-and that unavailable gate plus rejected ARM were verified. Browser-close,
-backend-loss and LAN-loss motion evidence was intentionally not attempted. M1/M2 side
-and positive direction must be established first; software must not infer them from
-endpoint order or controller RPM.
+Build 27 remains the last verified installed artifact and correctly returned
+`CONTROL_UNAVAILABLE`. The operator has since qualified the physical differential
+mapping and dimensions below; build 28 source encodes them, but OTA/runtime and the
+first bounded elevated `/control` smoke still require separate evidence. Browser-close,
+backend-loss and LAN-loss motion evidence has not been attempted.
 
 ## Confirmed facts
 
@@ -42,6 +41,25 @@ endpoint order or controller RPM.
   again acknowledged global `STOP ALL` through the Console backend.
 - Bus voltage observed around 53.7–53.8 V.
 - No persistent SVD48 controller or communication error was observed.
+
+## Operator-qualified differential geometry
+
+Recorded for the build-28 profile change:
+
+- M1 is the right wheel; positive controller RPM produces robot-forward wheel
+  rotation, so `motion_direction_sign = +1`.
+- M2 is the left wheel; positive controller RPM does not produce robot-forward wheel
+  rotation, so `motion_direction_sign = -1`.
+- wheel radius: 7 in = 0.1778 m;
+- wheel-center track width: 0.10 m;
+- direct drive: `motor_to_wheel_ratio = 1.0`;
+- overall reported chassis dimensions: 1.5 m wide and 0.9 m long. Differential v1
+  does not consume wheelbase, so the profile does not substitute the 0.9 m length
+  into the kinematics.
+
+These inputs authorize encoding the profile and the specifically requested elevated
+smoke. They do not by themselves prove the deployed targets, wheel motion, TTL stop
+latency or floor behavior.
 
 ## RS485 discovery rule
 
@@ -298,8 +316,7 @@ USB is recovery-only.
 ## Explicitly not qualified
 
 - floor motion;
-- M1/M2 physical side;
-- physical positive/negative direction;
+- deployed build-28 `/control` target signs and physical elevated forward/turn smoke;
 - M2 individual command behavior;
 - typed M1 HOLD→DISABLE sequence, all typed M2 bench behavior and `+1 RPM` behavior;
 - negative-direction testing;

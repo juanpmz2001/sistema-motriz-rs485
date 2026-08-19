@@ -887,9 +887,16 @@ class ApplicationCompatibilityCharacterization(unittest.TestCase):
     def test_bench_move_vel_is_explicitly_unsupported(self) -> None:
         main = compact(self.main)
         self.assertIn(
-            ".motion_kinematics_enabled = profile->application.kind == "
-            "ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY",
+            "const bool legacy_motion_kinematics_enabled = "
+            "profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY",
             main,
+        )
+        self.assertIn("profile->application.wheelbase_m > 0.0f", main)
+        self.assertIn(
+            "svd48_get_motor_count(legacy_svd48) == SVD48_MOTOR_COUNT", main
+        )
+        self.assertIn(
+            ".motion_kinematics_enabled = legacy_motion_kinematics_enabled", main
         )
 
         move = compact(self.robot_control_move_vel)
