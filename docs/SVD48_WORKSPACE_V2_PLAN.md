@@ -2,9 +2,10 @@
 
 > **Implementation status (2026-08-18):** NEXT-1 generic inventory, cached channel
 > telemetry, controller/channel selection and typed Bench Control are implemented in
-> firmware build 25 and the Engineering Console. Host tests and a clean Rafa-profile
-> build pass; physical Rafa validation has not been run. Sections 4–6 remain NEXT-2
-> target design and must not be read as implemented parameter/float support.
+> firmware build 25 and the Engineering Console. NEXT-2 is implemented in the Console:
+> one semantic per-channel catalog, variant-local `UNAVAILABLE`, snapshot schema 2 and
+> qualified float support. The float codec was validated read-only on physical Rafa;
+> no physical parameter write/save or NEXT-1 motion validation was performed.
 
 ## 1. Why this iteration exists
 
@@ -207,7 +208,18 @@ Qualification sequence:
 7. expose typed read;
 8. only then permit typed write/readback.
 
-Before qualification, show:
+Qualification completed read-only on 2026-08-18. Rafa build 24 at SVD48 address 2
+returned two-word values matching a trusted SV-Config export across distinctive M1/M2
+Lq/Ld/Rs values and multiple loop values. The proven codec is IEEE-754 binary32 with
+the high 16-bit word in the lower Modbus register. Reversing word order did not match
+the trusted values. Golden host tests retain the observed word/value pairs.
+
+No physical PID/configuration write or `SAVE_SVD48_CONFIG` was issued. The Console may
+now use normal pre-read → two-word write → independent exact word readback for an
+explicitly authorized future session. A controller variant that rejects a reviewed
+float address remains `UNAVAILABLE` without invalidating other values.
+
+Before qualification, the required display was:
 
 ```text
 UNQUALIFIED_ENCODING
@@ -371,6 +383,9 @@ The iteration is successful when:
 - a two-SVD Toño fixture renders correctly;
 - controller/channel selection drives Live/Parameters/Bench tabs;
 - Parameter Lab shows one selected channel's semantic parameter set;
+- every reviewed parameter can be independently `AVAILABLE`, `UNAVAILABLE` or
+  `READ_ONLY`, and snapshot schema 2 preserves that status;
+- float words use the Rafa-qualified high-word-first IEEE-754 codec with golden tests;
 - direct bench controls are clearly separated from `/control`;
 - ENABLE/HOLD and DISABLE/FREEWHEEL semantics are explicit;
 - panic STOP remains global;

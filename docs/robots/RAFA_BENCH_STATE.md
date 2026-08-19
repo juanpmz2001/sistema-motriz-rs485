@@ -161,12 +161,28 @@ Confirmed:
 
 - `0x2201` available.
 - `0x2202` and `0x2203` unavailable on this controller variant.
-- 11 supported catalog registers read twice consistently.
-- Two read-only snapshots compared with no differences.
+- The original 11 supported catalog registers read twice consistently.
+- Two original read-only snapshots compared with no differences.
 - Wheel diameter: 100 mm.
 - Pole pairs M1/M2: 24 / 24.
 - Sensor type M1/M2: Hall / Hall.
 - No parameter write or persistence physically executed.
+
+NEXT-2 float qualification added read-only evidence on 2026-08-18:
+
+- build 24 / `f32c343...`, SVD48 address 2;
+- raw two-word reads for M1/M2 Lq, Ld, Rs and several PID/loop fields;
+- exact comparison with the trusted historical SV-Config export whose distinctive
+  motor values match the installed controller (artifact SHA-256
+  `3155dae5ec5c8644ff6c4e4c175f7cda70ddfa1c9f38ea2ed4150b720be6e536`);
+- IEEE-754 binary32 confirmed with high word first;
+- golden software tests added for the observed word/value pairs;
+- no parameter write, PID tuning, save, motion or OTA was issued.
+
+The expanded catalog is implemented in the Console and software-tested against Rafa
+and two-controller Toño fakes. Loading the new UI against Rafa still requires the
+already-built NEXT-1 inventory firmware to be deployed OTA in a separately authorized
+session; current physical firmware remains build 24.
 
 Preserve:
 

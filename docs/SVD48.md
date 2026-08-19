@@ -108,6 +108,14 @@ policy. Generic single- and multiple-register maintenance writes are not retried
 after an ambiguous transaction result because the first request may already have
 changed controller state.
 
+The Engineering Console NEXT-2 adapter uses the existing `READ_REG` (one or two
+words), `WRITE_REG`/`WRITE_REGS` and independent readback contracts; no new firmware
+parameter command was added. The reviewed V2.0 manual marks motor inductance,
+resistance and loop gains as two-register floats. Read-only Rafa comparison against a
+trusted SV-Config export qualified these as IEEE-754 binary32 with the high 16-bit word
+at the lower register. This is evidence for the typed Console codec, not permission to
+tune PID or proof of persistence. No physical write or save was used for qualification.
+
 The shared bus lock covers one complete request/response exchange, so polling,
 actuation and maintenance calls from different devices cannot interleave bytes.
 Per-device state uses a separate lock and must not be confused with bus serialization.
