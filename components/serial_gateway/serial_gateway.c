@@ -2258,7 +2258,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_INVENTORY,GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2,SVD48_BENCH_SET_SPEED device_id M1|M2 rpm,SVD48_BENCH_HOLD device_id M1|M2,SVD48_BENCH_DISABLE device_id M1|M2,SVD48_BENCH_STOP device_id M1|M2,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_diagnostic_help(serial_gateway_handle_t handle)
@@ -2276,6 +2276,278 @@ static void handle_profile_status(serial_gateway_handle_t handle)
                  handle->config.profile_schema_valid ? 1U : 0U,
                  handle->config.composition_supported ? 1U : 0U,
                  safe_text(handle->config.board_name, "UNKNOWN"));
+}
+
+static bool find_svd48_workspace_channel(
+    serial_gateway_handle_t handle,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel_id,
+    svd48_workspace_channel_info_t *channel)
+{
+    size_t count = svd48_workspace_controller_count(
+        handle ? handle->config.svd48_workspace : NULL);
+    for (size_t index = 0U; index < count; ++index) {
+        svd48_workspace_controller_info_t controller;
+        if (!svd48_workspace_controller_at(handle->config.svd48_workspace,
+                                           index,
+                                           &controller) ||
+            controller.device_id != device_id ||
+            channel_id >= controller.channel_count) {
+            continue;
+        }
+        if (channel) {
+            *channel = controller.channels[channel_id];
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool parse_svd48_workspace_target(int argc,
+                                         char *argv[],
+                                         int expected_argc,
+                                         uint16_t *device_id,
+                                         svd48_workspace_channel_id_t *channel)
+{
+    int8_t parsed_channel = SVD48_CHANNEL_ALL;
+    return argc == expected_argc &&
+           parse_u16_any_arg(argv[1], device_id) && *device_id != 0U &&
+           parse_channel_arg(argv[2], &parsed_channel) && parsed_channel >= 0 &&
+           parsed_channel < (int8_t)SVD48_WORKSPACE_CHANNEL_COUNT &&
+           ((*channel = (svd48_workspace_channel_id_t)parsed_channel), true);
+}
+
+static void handle_svd48_inventory(serial_gateway_handle_t handle,
+                                   int argc,
+                                   char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE SVD48_INVENTORY\n");
+        return;
+    }
+    size_t count = svd48_workspace_controller_count(
+        handle->config.svd48_workspace);
+    print_locked(handle,
+                 "DATA SVD48_INVENTORY CONTROLLERS:%u\n",
+                 (unsigned)count);
+    for (size_t index = 0U; index < count; ++index) {
+        svd48_workspace_controller_info_t controller;
+        if (!svd48_workspace_controller_at(handle->config.svd48_workspace,
+                                           index,
+                                           &controller)) {
+            print_locked(handle,
+                         "ERR SVD48_INVENTORY_ENUMERATION_FAILED INDEX:%u\n",
+                         (unsigned)index);
+            return;
+        }
+        print_locked(
+            handle,
+            "DATA SVD48_CONTROLLER DEVICE_ID:%u BUS_ID:%u ADDRESS:%u DRIVER:%s AVAILABLE:%u HEALTH:%s CHANNELS:%u\n",
+            (unsigned)controller.device_id,
+            (unsigned)controller.bus_id,
+            (unsigned)controller.address,
+            safe_text(controller.driver, "UNKNOWN"),
+            controller.available ? 1U : 0U,
+            endpoint_health_name(controller.health),
+            (unsigned)controller.channel_count);
+        for (size_t channel_index = 0U;
+             channel_index < controller.channel_count;
+             ++channel_index) {
+            const svd48_workspace_channel_info_t *channel =
+                &controller.channels[channel_index];
+            print_locked(
+                handle,
+                "DATA SVD48_CHANNEL DEVICE_ID:%u CHANNEL:%s ENDPOINT_BOUND:%u ENDPOINT_ID:%u ENDPOINT_NAME:%s AVAILABLE:%u HEALTH:%s CAPABILITIES:0x%08lx MIN_RPM:%d MAX_RPM:%d\n",
+                (unsigned)controller.device_id,
+                channel_name((uint8_t)channel->channel),
+                channel->endpoint_bound ? 1U : 0U,
+                (unsigned)channel->endpoint_id,
+                safe_text(channel->endpoint_name, "NONE"),
+                channel->available ? 1U : 0U,
+                endpoint_health_name(channel->health),
+                (unsigned long)channel->capabilities,
+                channel->min_rpm,
+                channel->max_rpm);
+        }
+    }
+}
+
+static void handle_get_svd48_channel_telemetry(serial_gateway_handle_t handle,
+                                               int argc,
+                                               char *argv[])
+{
+    uint16_t device_id = 0U;
+    svd48_workspace_channel_id_t channel = SVD48_WORKSPACE_CHANNEL_M1;
+    if (!parse_svd48_workspace_target(argc, argv, 3, &device_id, &channel)) {
+        print_locked(
+            handle,
+            "ERR USAGE GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2\n");
+        return;
+    }
+    svd48_workspace_channel_telemetry_t telemetry;
+    if (!svd48_workspace_get_channel_telemetry(handle->config.svd48_workspace,
+                                               device_id,
+                                               channel,
+                                               &telemetry)) {
+        print_locked(handle,
+                     "ERR SVD48_CHANNEL_UNAVAILABLE DEVICE_ID:%u CHANNEL:%s\n",
+                     (unsigned)device_id,
+                     channel_name((uint8_t)channel));
+        return;
+    }
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    uint32_t exception_age_ms = telemetry.last_exception_ms == 0U
+                                    ? 0U
+                                    : now_ms - telemetry.last_exception_ms;
+    print_locked(
+        handle,
+        "DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:%u CHANNEL:%s ENDPOINT_BOUND:%u ENDPOINT_ID:%u STATUS:%d RPM:%d CURRENT_DA:%d BUS_DV:%d MOTOR_TEMP_DC:%d MOS_TEMP_DC:%d POS:%ld ERROR:0x%08lx ONLINE:%u STALE:%u HEALTH:%s VALID_MASK:0x%08lx FAILED_MASK:0x%08lx STALE_MASK:0x%08lx COMM_ERR:%u EXC_FUNC:0x%02X EXC_CODE:0x%02X EXC_AGE_MS:%lu\n",
+        (unsigned)telemetry.device_id,
+        channel_name((uint8_t)telemetry.channel),
+        telemetry.endpoint_bound ? 1U : 0U,
+        (unsigned)telemetry.endpoint_id,
+        telemetry.status,
+        telemetry.observed_speed_rpm,
+        telemetry.current_deciamp,
+        telemetry.bus_voltage_deciv,
+        telemetry.motor_temp_decic,
+        telemetry.mos_temp_decic,
+        (long)telemetry.position_counts,
+        (unsigned long)telemetry.error_code,
+        telemetry.online ? 1U : 0U,
+        telemetry.stale ? 1U : 0U,
+        endpoint_health_name(telemetry.health),
+        (unsigned long)telemetry.valid_observations,
+        (unsigned long)telemetry.failed_observations,
+        (unsigned long)telemetry.stale_observations,
+        (unsigned)telemetry.communication_error,
+        telemetry.last_exception_function,
+        telemetry.last_exception_code,
+        (unsigned long)exception_age_ms);
+}
+
+typedef enum {
+    SVD48_BENCH_SET_SPEED,
+    SVD48_BENCH_HOLD,
+    SVD48_BENCH_DISABLE,
+    SVD48_BENCH_STOP,
+} svd48_bench_operation_t;
+
+static void handle_svd48_bench_operation(serial_gateway_handle_t handle,
+                                         int argc,
+                                         char *argv[],
+                                         svd48_bench_operation_t operation)
+{
+    const bool takes_rpm = operation == SVD48_BENCH_SET_SPEED;
+    uint16_t device_id = 0U;
+    svd48_workspace_channel_id_t channel_id = SVD48_WORKSPACE_CHANNEL_M1;
+    int16_t rpm = 0;
+    if (!parse_svd48_workspace_target(argc,
+                                     argv,
+                                     takes_rpm ? 4 : 3,
+                                     &device_id,
+                                     &channel_id) ||
+        (takes_rpm && !parse_i16_arg(argv[3], &rpm))) {
+        const char *usage = takes_rpm
+                                ? "SVD48_BENCH_SET_SPEED device_id M1|M2 rpm"
+                                : operation == SVD48_BENCH_HOLD
+                                      ? "SVD48_BENCH_HOLD device_id M1|M2"
+                                      : operation == SVD48_BENCH_DISABLE
+                                            ? "SVD48_BENCH_DISABLE device_id M1|M2"
+                                            : "SVD48_BENCH_STOP device_id M1|M2";
+        print_locked(handle, "ERR USAGE %s\n", usage);
+        return;
+    }
+
+    svd48_workspace_channel_info_t channel;
+    if (!find_svd48_workspace_channel(handle,
+                                      device_id,
+                                      channel_id,
+                                      &channel) ||
+        !channel.endpoint_bound) {
+        print_locked(handle,
+                     "ERR SVD48_CHANNEL_UNBOUND DEVICE_ID:%u CHANNEL:%s\n",
+                     (unsigned)device_id,
+                     channel_name((uint8_t)channel_id));
+        return;
+    }
+    if (!channel.available &&
+        (operation == SVD48_BENCH_SET_SPEED ||
+         operation == SVD48_BENCH_HOLD)) {
+        print_locked(handle,
+                     "ERR SVD48_CHANNEL_UNAVAILABLE DEVICE_ID:%u CHANNEL:%s\n",
+                     (unsigned)device_id,
+                     channel_name((uint8_t)channel_id));
+        return;
+    }
+    if ((operation == SVD48_BENCH_SET_SPEED ||
+         operation == SVD48_BENCH_HOLD) &&
+        channel.health != ROBOT_ENDPOINT_HEALTH_HEALTHY) {
+        print_locked(
+            handle,
+            "ERR SVD48_CHANNEL_NOT_HEALTHY DEVICE_ID:%u CHANNEL:%s HEALTH:%s\n",
+            (unsigned)device_id,
+            channel_name((uint8_t)channel_id),
+            endpoint_health_name(channel.health));
+        return;
+    }
+    if ((channel.capabilities & ROBOT_CAPABILITY_STOPPABLE) == 0U ||
+        ((takes_rpm || operation == SVD48_BENCH_HOLD) &&
+         (channel.capabilities & ROBOT_CAPABILITY_VELOCITY_RPM) == 0U)) {
+        print_locked(handle,
+                     "ERR SVD48_CHANNEL_CAPABILITY_UNSUPPORTED DEVICE_ID:%u CHANNEL:%s\n",
+                     (unsigned)device_id,
+                     channel_name((uint8_t)channel_id));
+        return;
+    }
+    if ((takes_rpm || operation == SVD48_BENCH_HOLD) &&
+        (rpm < channel.min_rpm || rpm > channel.max_rpm)) {
+        print_locked(
+            handle,
+            "ERR SVD48_BENCH_SPEED_OUT_OF_RANGE DEVICE_ID:%u CHANNEL:%s REQUESTED:%d MIN_RPM:%d MAX_RPM:%d\n",
+            (unsigned)device_id,
+            channel_name((uint8_t)channel_id),
+            rpm,
+            channel.min_rpm,
+            channel.max_rpm);
+        return;
+    }
+
+    actuation_application_result_t result =
+        operation == SVD48_BENCH_SET_SPEED || operation == SVD48_BENCH_HOLD
+            ? actuation_application_set_endpoint_speed_rpm(
+                  handle->config.actuation, channel.endpoint_id, rpm)
+            : actuation_application_stop_endpoint(handle->config.actuation,
+                                                  channel.endpoint_id);
+    const char *operation_name = operation == SVD48_BENCH_SET_SPEED
+                                     ? "SET_SPEED"
+                                     : operation == SVD48_BENCH_HOLD
+                                           ? "HOLD"
+                                           : operation == SVD48_BENCH_DISABLE
+                                                 ? "DISABLE"
+                                                 : "STOP";
+    if (result == ACTUATION_APPLICATION_OK) {
+        print_locked(
+            handle,
+            "OK SVD48_BENCH_%s DEVICE_ID:%u CHANNEL:%s ENDPOINT_ID:%u RPM_TARGET:%d MODE:%s\n",
+            operation_name,
+            (unsigned)device_id,
+            channel_name((uint8_t)channel_id),
+            (unsigned)channel.endpoint_id,
+            rpm,
+            operation == SVD48_BENCH_SET_SPEED || operation == SVD48_BENCH_HOLD
+                ? "ACTIVE"
+                : "FREEWHEEL");
+        return;
+    }
+    print_locked(
+        handle,
+        "ERR SVD48_BENCH_%s_FAILED DEVICE_ID:%u CHANNEL:%s RESULT:%s\n",
+        operation_name,
+        (unsigned)device_id,
+        channel_name((uint8_t)channel_id),
+        application_result_name(result));
 }
 
 static void handle_endpoints(serial_gateway_handle_t handle,
@@ -3377,6 +3649,19 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         } else {
             print_locked(handle, "ERR POLL_ONCE_FAILED 0x%x\n", err);
         }
+    } else if (strcasecmp(argv[0], "SVD48_INVENTORY") == 0) {
+        handle_svd48_inventory(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "GET_SVD48_CHANNEL_TELEMETRY") == 0) {
+        handle_get_svd48_channel_telemetry(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SVD48_BENCH_SET_SPEED") == 0) {
+        handle_svd48_bench_operation(
+            handle, argc, argv, SVD48_BENCH_SET_SPEED);
+    } else if (strcasecmp(argv[0], "SVD48_BENCH_HOLD") == 0) {
+        handle_svd48_bench_operation(handle, argc, argv, SVD48_BENCH_HOLD);
+    } else if (strcasecmp(argv[0], "SVD48_BENCH_DISABLE") == 0) {
+        handle_svd48_bench_operation(handle, argc, argv, SVD48_BENCH_DISABLE);
+    } else if (strcasecmp(argv[0], "SVD48_BENCH_STOP") == 0) {
+        handle_svd48_bench_operation(handle, argc, argv, SVD48_BENCH_STOP);
     } else if (strcasecmp(argv[0], "READ_REG") == 0) {
         handle_read_reg(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SVD48_PROBE") == 0) {

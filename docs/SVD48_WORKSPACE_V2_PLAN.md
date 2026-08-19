@@ -1,5 +1,11 @@
 # SVD48 Workspace v2 — Design Plan
 
+> **Implementation status (2026-08-18):** NEXT-1 generic inventory, cached channel
+> telemetry, controller/channel selection and typed Bench Control are implemented in
+> firmware build 25 and the Engineering Console. Host tests and a clean Rafa-profile
+> build pass; physical Rafa validation has not been run. Sections 4–6 remain NEXT-2
+> target design and must not be read as implemented parameter/float support.
+
 ## 1. Why this iteration exists
 
 The current SVD48 workspace proved useful on Rafa, but it contains topology assumptions specific to that robot.

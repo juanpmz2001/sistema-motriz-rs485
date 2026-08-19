@@ -5,7 +5,7 @@ RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
 an active build-time robot profile with profile-driven buses, devices, channels
 and typed actuator endpoints.
 
-> **Status: bench firmware, not a production motion controller.** Build 24 has
+> **Status: bench firmware, not a production motion controller.** Build 25 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
 > cut-off available whenever actuation is possible. See [Safety](docs/SAFETY.md).
 
@@ -33,6 +33,10 @@ and typed actuator endpoints.
 - One shared `rs485_transport` owns and serializes the physical UART bus. Each
   configured controller is one `svd48_device` with explicit M1 and M2 channels;
   a shared polling service schedules all configured devices.
+- The typed SVD48 maintenance workspace enumerates every configured controller and
+  physical M1/M2 channel by profile device identity. It returns cached device
+  telemetry and routes bounded per-channel bench requests through the application
+  coordinator; clients do not need Rafa addresses or legacy motor indices.
 - `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
   port backed by the serialized `actuation_coordinator` and the direct SVD48
   channel endpoint adapter.

@@ -91,6 +91,7 @@ all hazards are controlled.
 | `SET_ENDPOINT_POSITION_REFERENCE` | application port → coordinator → stop endpoint → explicit steering reference | Maintenance-only full-serial path; confirmation required; never auto-homes or drives |
 | `STOP n`, `STOP ALL` | application port → coordinator → direct SVD48 or steering endpoint adapter | Migrated for constructed stoppable endpoints |
 | `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct SVD48 or steering adapter | Migrated; serial only |
+| `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` | device/channel inventory lookup → application port → coordinator → direct SVD48 adapter | Migrated bench-only maintenance path; no lease/deadman, not `/control` |
 | Boot and safety stop | application port → coordinator → constructed stoppable adapters | Migrated; physical effectiveness remains unqualified |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
 | `CLEAR_FAULT` | gateway → `robot_control` compatibility facade | Bypass |
@@ -103,6 +104,14 @@ The coordinator mutex prevents interleaving only for migrated calls. It has a 50
 acquire timeout and driver operations execute while it is held, so safety stop has no
 priority over an in-progress writer. The target remains one priority-aware actuation
 owner for every hardware-changing path.
+
+The Engineering Console requires the operator to type exactly `motor elevado` before
+its set-speed or hold requests and repeats current platform/safety/channel checks in
+the backend. This does not prove that a wheel is unloaded or that a physical cutoff is
+available. It does not add firmware TTL/deadman semantics. Direct use of the firmware
+bench commands remains subject to the same explicit hardware-test authorization and
+physical setup requirements as other motion commands. Disable, channel stop and
+global `STOP ALL` must remain available as best-effort software stop paths.
 
 ## Observation and health semantics
 

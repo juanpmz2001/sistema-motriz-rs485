@@ -34,6 +34,7 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
+| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -65,6 +66,8 @@ OTA_CONFIG
 OTA_AUTO_STATUS
 IBUS_STATUS
 GET_MOTOR 0
+SVD48_INVENTORY
+GET_SVD48_CHANNEL_TELEMETRY 1 M1
 SVD48_PROBE 7
 READ_REG 1 0x5018 1
 ```
@@ -86,6 +89,51 @@ already feeds the legacy 5-RPM `RUNNING`/`MOTION_ACTIVE` indication and
 `robot_control_is_safe_for_ota()` gate used by OTA and several maintenance commands.
 Those checks are not qualified safety assurance. A future controlled physical test
 must confirm the interpretation before that dependency is accepted or expanded.
+
+## SVD48 maintenance workspace
+
+`SVD48_INVENTORY` exposes configured physical controllers without the transitional
+legacy motor-index view. It returns one header, one record per SVD48 device and two
+physical channel records per controller:
+
+```text
+DATA SVD48_INVENTORY CONTROLLERS:<n>
+DATA SVD48_CONTROLLER DEVICE_ID:<id> BUS_ID:<id> ADDRESS:<1..247> DRIVER:SVD48 AVAILABLE:<0|1> HEALTH:<health> CHANNELS:2
+DATA SVD48_CHANNEL DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> ENDPOINT_NAME:<name|NONE> AVAILABLE:<0|1> HEALTH:<health> CAPABILITIES:0x<mask> MIN_RPM:<rpm> MAX_RPM:<rpm>
+```
+
+An unbound M1/M2 record is still valid physical inventory; it is not an actuation
+target. Consumers select controllers by `DEVICE_ID` and may display `ADDRESS`, but
+must not turn the bus address into logical robot identity.
+
+`GET_SVD48_CHANNEL_TELEMETRY <device_id> <M1|M2>` copies the selected channel's
+existing cached driver snapshot. It performs no immediate RS485 transaction:
+
+```text
+DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> STATUS:<n> RPM:<rpm> CURRENT_DA:<n> BUS_DV:<n> MOTOR_TEMP_DC:<n> MOS_TEMP_DC:<n> POS:<n> ERROR:0x<hex> ONLINE:<0|1> STALE:<0|1> HEALTH:<health> VALID_MASK:0x<hex> FAILED_MASK:0x<hex> STALE_MASK:0x<hex> COMM_ERR:<n> EXC_FUNC:0x<hex> EXC_CODE:0x<hex> EXC_AGE_MS:<n>
+```
+
+The four typed bench operations are:
+
+```text
+SVD48_BENCH_SET_SPEED <device_id> <M1|M2> <rpm>
+SVD48_BENCH_HOLD <device_id> <M1|M2>
+SVD48_BENCH_DISABLE <device_id> <M1|M2>
+SVD48_BENCH_STOP <device_id> <M1|M2>
+```
+
+Set-speed validates the endpoint's published RPM range and requests that target;
+hold requests zero RPM while leaving the channel actively enabled. Both require a
+bound, available and `HEALTHY` channel. Disable and stop both request freewheel stop
+and remain best-effort paths for a bound endpoint when availability/health is lost.
+All four route through `actuation_application` and the coordinator. The direct SVD48
+endpoint adapter owns the target-plus-START and target-zero-plus-STOP register
+sequences; the transport command handler does not construct register writes.
+
+These are persistent bench maintenance operations with no TTL, deadman, sequence or
+authority lease. The Engineering Console separately requires the exact phrase
+`motor elevado` before set-speed/hold; that phrase is a host operator guard and is not
+part of this wire protocol. Never reuse these commands as `/control`.
 
 `SVD48_PROBE <address>` is a bounded, read-only L2 diagnostic for an unknown
 Modbus address. It accepts unicast addresses `1..247` and performs exactly one
@@ -341,9 +389,10 @@ The exact LAN allowlist is code-owned in
 `components/serial_gateway/serial_gateway_policy.c`. The current build permits:
 
 - No-argument status/diagnostic commands listed in that file.
-- `GET_SPEED`, `GET_MOTOR`, `SVD48_PROBE`, `READ_REG`, `GET_SVD48_CONFIG` and
-  `POLL_ONCE`.
+- `GET_SPEED`, `GET_MOTOR`, `SVD48_INVENTORY`, typed SVD48 channel telemetry,
+  `SVD48_PROBE`, `READ_REG`, `GET_SVD48_CONFIG` and `POLL_ONCE`.
 - `STOP <motor|ALL>` and `SET_SPEED <motor> <rpm>`.
+- The exact-shape `SVD48_BENCH_*` commands documented above.
 - Confirmed register writes, save, gear-ratio and identify operations.
 
 Everything else returns `ERR LAN_COMMAND_BLOCKED <command>`. This allowlist is

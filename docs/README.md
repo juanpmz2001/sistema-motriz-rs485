@@ -33,9 +33,9 @@ Physical observations are evidence only for the conditions and artifact they nam
 
 ## Future work plans
 
-- [SVD48 Workspace v2 plan](SVD48_WORKSPACE_V2_PLAN.md) scopes the next generic
-  controller/channel workspace and bench-control contract. It is relevant only to
-  that future vertical and does not describe current Console behavior.
+- [SVD48 Workspace v2 plan](SVD48_WORKSPACE_V2_PLAN.md) records the implemented
+  NEXT-1 generic controller/channel and Bench Control contract plus the still-future
+  NEXT-2 parameter/float design. Its status note separates those scopes.
 - [Safe Control Plane v1 plan](SAFE_CONTROL_PLANE_V1_PLAN.md) scopes future
   continuous `/control` work. It does not activate `control_lan`, authorize motion or
   weaken the maintenance-LAN boundary.

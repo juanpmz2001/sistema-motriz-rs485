@@ -25,6 +25,7 @@
 #include "svd48_device.h"
 #include "svd48_poll_service.h"
 #include "svd48_poll_task.h"
+#include "svd48_workspace_port.h"
 #include "steering_position_endpoint_adapter.h"
 
 typedef struct {
@@ -129,6 +130,7 @@ typedef struct {
     robot_control_handle_t legacy_robot;
     const robot_profile_t *profile;
     actuation_application_port_t application_port;
+    svd48_workspace_port_t svd48_workspace_port;
     as5600_diagnostics_port_t as5600_diagnostics_port;
     robot_composition_diagnostics_t diagnostics;
     bool constructed;
@@ -143,6 +145,10 @@ void robot_composition_deinit(robot_composition_t *composition);
 void robot_composition_attach_legacy_robot(robot_composition_t *composition,
                                            robot_control_handle_t legacy_robot);
 svd48_handle_t robot_composition_legacy_svd48(robot_composition_t *composition);
+/* Device-qualified inventory and cached diagnostics for the SVD48 maintenance
+ * workspace. Actuation still flows through the application/coordinator port. */
+svd48_workspace_port_t *robot_composition_svd48_workspace_port(
+    robot_composition_t *composition);
 /* Read-only device-qualified diagnostics. This is intentionally separate from
  * the generic endpoint/application observation boundary. */
 as5600_diagnostics_port_t *robot_composition_as5600_diagnostics_port(

@@ -30,6 +30,7 @@ flowchart TB
   PREFLIGHT --> COMPOSE[robot_composition]:::transition
   COMPOSE --> RSBUS[one rs485_transport per referenced RS485 bus]:::infra
   COMPOSE --> DEV[one svd48_device per physical controller]:::active
+  COMPOSE --> WORKSPACE[svd48_workspace_port inventory + cached diagnostics]:::active
   COMPOSE --> PWM[bounded motor-mode PWM output]:::active
   COMPOSE --> AS5600[as5600_device]:::active
   COMPOSE --> STEER[steering position controller]:::active
@@ -48,6 +49,7 @@ flowchart TB
   DEV --> BUSPORT[bus_transport port]:::infra --> RSBUS
 
   SERIAL[serial_gateway]:::transition --> APP[actuation_application_port]:::active
+  SERIAL --> WORKSPACE
   APP --> COORD
   APP --> VOBS[typed velocity observation port]:::active
   APP --> POBS[typed position observation port]:::active
@@ -79,7 +81,10 @@ is retained only for host characterization and is not wired by `robot_compositio
 does not depend on profile, composition or the coordinator implementation. It can
 enumerate endpoints, command velocity or position, stop by logical endpoint ID, and
 read typed velocity or position observations without exposing the concrete controller
-or sensor to its client.
+or sensor to its client. The separate `svd48_workspace_port` is a concrete read-only
+maintenance projection: it enumerates configured SVD48 device IDs, bus/addresses,
+physical M1/M2 bindings and cached channel snapshots. It exposes no actuation method;
+workspace writes re-enter the application/coordinator boundary by endpoint ID.
 
 ## `SET_SPEED` sequence
 
@@ -425,6 +430,12 @@ mode as a successful self-test.
 In normal serial mode, `VERSION` reports the full build Git SHA and dirty flag,
 `PROFILE_STATUS` reports the selected board, and `ENDPOINTS` reports logical IDs,
 names, criticality, capability discovery, availability and velocity/position bounds.
+`SVD48_INVENTORY` and `GET_SVD48_CHANNEL_TELEMETRY` provide the concrete device/channel
+projection needed by the Engineering Console without using the four-binding legacy
+motor view. The bounded `SVD48_BENCH_*` commands resolve device plus M1/M2 through that
+inventory, then use the same application/coordinator speed or stop path as migrated
+endpoints. The direct channel adapter—not the gateway or UI—owns target-plus-START and
+target-zero-plus-STOP sequencing.
 The endpoint-scoped speed, position, stop and typed-observation commands use the
 application boundary; they are deliberately unavailable through the LAN-safe policy
 and in restricted diagnostic mode. An explicit position-reference operation is a

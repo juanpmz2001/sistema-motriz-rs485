@@ -1440,6 +1440,212 @@ static bool composition_read_as5600_diagnostics(
            as5600_device_get_diagnostics(&slot->as5600, diagnostics);
 }
 
+static robot_endpoint_health_t workspace_health_from_svd48(
+    svd48_channel_health_t health)
+{
+    switch (health) {
+    case SVD48_CHANNEL_HEALTH_HEALTHY:
+        return ROBOT_ENDPOINT_HEALTH_HEALTHY;
+    case SVD48_CHANNEL_HEALTH_DEGRADED:
+        return ROBOT_ENDPOINT_HEALTH_DEGRADED;
+    case SVD48_CHANNEL_HEALTH_OFFLINE:
+        return ROBOT_ENDPOINT_HEALTH_OFFLINE;
+    case SVD48_CHANNEL_HEALTH_FAULT:
+        return ROBOT_ENDPOINT_HEALTH_FAULT;
+    case SVD48_CHANNEL_HEALTH_STALE:
+        return ROBOT_ENDPOINT_HEALTH_STALE;
+    case SVD48_CHANNEL_HEALTH_UNKNOWN:
+    default:
+        return ROBOT_ENDPOINT_HEALTH_UNKNOWN;
+    }
+}
+
+static unsigned workspace_health_priority(robot_endpoint_health_t health)
+{
+    switch (health) {
+    case ROBOT_ENDPOINT_HEALTH_FAULT:
+        return 5U;
+    case ROBOT_ENDPOINT_HEALTH_OFFLINE:
+        return 4U;
+    case ROBOT_ENDPOINT_HEALTH_STALE:
+        return 3U;
+    case ROBOT_ENDPOINT_HEALTH_DEGRADED:
+        return 2U;
+    case ROBOT_ENDPOINT_HEALTH_HEALTHY:
+        return 1U;
+    case ROBOT_ENDPOINT_HEALTH_UNKNOWN:
+    default:
+        return 0U;
+    }
+}
+
+static const robot_endpoint_profile_t *find_svd48_endpoint_profile(
+    const robot_profile_t *profile,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel)
+{
+    if (!profile) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < profile->endpoint_count; ++index) {
+        const robot_endpoint_profile_t *endpoint = &profile->endpoints[index];
+        if (endpoint->device_id == device_id &&
+            endpoint->channel == (uint8_t)channel) {
+            return endpoint;
+        }
+    }
+    return NULL;
+}
+
+static size_t workspace_controller_count(const svd48_workspace_port_t *port)
+{
+    const robot_composition_t *composition = port ? port->context : NULL;
+    size_t count = 0U;
+    if (!composition || !composition->constructed || !composition->profile) {
+        return 0U;
+    }
+    for (size_t index = 0U; index < composition->profile->device_count; ++index) {
+        if (composition->profile->devices[index].driver_id == ROBOT_DRIVER_SVD48) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool workspace_controller_at(
+    svd48_workspace_port_t *port,
+    size_t requested_index,
+    svd48_workspace_controller_info_t *controller)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || !composition->profile ||
+        !controller) {
+        return false;
+    }
+
+    const robot_device_profile_t *device = NULL;
+    size_t svd48_index = 0U;
+    for (size_t index = 0U; index < composition->profile->device_count; ++index) {
+        const robot_device_profile_t *candidate =
+            &composition->profile->devices[index];
+        if (candidate->driver_id != ROBOT_DRIVER_SVD48) {
+            continue;
+        }
+        if (svd48_index++ == requested_index) {
+            device = candidate;
+            break;
+        }
+    }
+    robot_composition_device_slot_t *slot =
+        device ? find_device_slot(composition, device->id) : NULL;
+    if (!device || !slot) {
+        return false;
+    }
+
+    memset(controller, 0, sizeof(*controller));
+    controller->device_id = device->id;
+    controller->bus_id = device->bus_id;
+    controller->address = device->address;
+    controller->driver = "SVD48";
+    controller->available = composition->started && slot->started;
+    controller->channel_count = SVD48_WORKSPACE_CHANNEL_COUNT;
+    controller->health = ROBOT_ENDPOINT_HEALTH_UNKNOWN;
+
+    for (size_t index = 0U; index < SVD48_WORKSPACE_CHANNEL_COUNT; ++index) {
+        svd48_workspace_channel_info_t *channel = &controller->channels[index];
+        channel->channel = (svd48_workspace_channel_id_t)index;
+        const robot_endpoint_profile_t *endpoint = find_svd48_endpoint_profile(
+            composition->profile, device->id, channel->channel);
+        if (endpoint) {
+            actuation_application_endpoint_info_t application_endpoint;
+            channel->endpoint_bound = true;
+            channel->endpoint_id = endpoint->id;
+            channel->endpoint_name = endpoint->name;
+            channel->capabilities = endpoint->capabilities;
+            channel->criticality = endpoint->criticality;
+            channel->min_rpm = endpoint->min_rpm;
+            channel->max_rpm = endpoint->max_rpm;
+            channel->available =
+                actuation_application_find_endpoint(&composition->application_port,
+                                                    endpoint->id,
+                                                    &application_endpoint) &&
+                application_endpoint.available;
+        }
+        svd48_channel_t *physical_channel = svd48_device_channel(
+            &slot->svd48, (svd48_channel_id_t)index);
+        channel->health = workspace_health_from_svd48(
+            svd48_channel_get_health(physical_channel));
+        if (workspace_health_priority(channel->health) >
+            workspace_health_priority(controller->health)) {
+            controller->health = channel->health;
+        }
+    }
+    return true;
+}
+
+static bool workspace_channel_telemetry(
+    svd48_workspace_port_t *port,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel,
+    svd48_workspace_channel_telemetry_t *telemetry)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || !composition->profile ||
+        !telemetry || channel >= SVD48_WORKSPACE_CHANNEL_COUNT) {
+        return false;
+    }
+    const robot_device_profile_t *device = find_device_profile(
+        composition->profile, device_id);
+    robot_composition_device_slot_t *slot =
+        device && device->driver_id == ROBOT_DRIVER_SVD48
+            ? find_device_slot(composition, device_id)
+            : NULL;
+    svd48_channel_t *physical_channel = slot
+                                            ? svd48_device_channel(
+                                                  &slot->svd48,
+                                                  (svd48_channel_id_t)channel)
+                                            : NULL;
+    svd48_channel_snapshot_t snapshot;
+    if (!physical_channel ||
+        !svd48_channel_get_snapshot(physical_channel, &snapshot)) {
+        return false;
+    }
+
+    memset(telemetry, 0, sizeof(*telemetry));
+    telemetry->device_id = device_id;
+    telemetry->channel = channel;
+    const robot_endpoint_profile_t *endpoint = find_svd48_endpoint_profile(
+        composition->profile, device_id, channel);
+    telemetry->endpoint_bound = endpoint != NULL;
+    telemetry->endpoint_id = endpoint ? endpoint->id : 0U;
+    telemetry->online = snapshot.online;
+    telemetry->stale = snapshot.stale;
+    telemetry->health = workspace_health_from_svd48(
+        svd48_channel_health_from_snapshot(&snapshot));
+    telemetry->valid_observations = snapshot.valid_observations;
+    telemetry->failed_observations = snapshot.failed_observations;
+    telemetry->stale_observations = snapshot.stale_observations;
+    telemetry->status = snapshot.status;
+    telemetry->observed_speed_rpm = snapshot.observed_speed_rpm;
+    telemetry->current_deciamp = snapshot.current_deciamp;
+    telemetry->motor_temp_decic = snapshot.motor_temp_decic;
+    telemetry->bus_voltage_deciv = snapshot.bus_voltage_deciv;
+    telemetry->mos_temp_decic = snapshot.mos_temp_decic;
+    telemetry->position_counts = snapshot.position_counts;
+    telemetry->error_code = snapshot.error_code;
+    telemetry->communication_error = (uint16_t)snapshot.last_error;
+    telemetry->last_exception_function = snapshot.last_exception_function;
+    telemetry->last_exception_code = snapshot.last_exception_code;
+    telemetry->last_exception_ms = snapshot.last_exception_ms;
+    return true;
+}
+
+static const svd48_workspace_ops_t SVD48_WORKSPACE_OPS = {
+    .controller_count = workspace_controller_count,
+    .controller_at = workspace_controller_at,
+    .channel_telemetry = workspace_channel_telemetry,
+};
+
 static const actuation_application_ops_t APPLICATION_OPS = {
     .set_legacy_motor_speed_rpm = application_set_speed,
     .stop_legacy_motor = application_stop_motor,
@@ -1829,6 +2035,8 @@ static esp_err_t fail_after_cleanup(robot_composition_t *composition,
     composition->diagnostics = diagnostics;
     composition->application_port.ops = &APPLICATION_OPS;
     composition->application_port.context = composition;
+    composition->svd48_workspace_port.ops = &SVD48_WORKSPACE_OPS;
+    composition->svd48_workspace_port.context = composition;
     composition->as5600_diagnostics_port.ops = &AS5600_DIAGNOSTICS_PORT_OPS;
     composition->as5600_diagnostics_port.context = composition;
     return error;
@@ -1844,6 +2052,8 @@ esp_err_t robot_composition_init(robot_composition_t *composition,
     composition->profile = profile;
     composition->application_port.ops = &APPLICATION_OPS;
     composition->application_port.context = composition;
+    composition->svd48_workspace_port.ops = &SVD48_WORKSPACE_OPS;
+    composition->svd48_workspace_port.context = composition;
     composition->as5600_diagnostics_port.ops = &AS5600_DIAGNOSTICS_PORT_OPS;
     composition->as5600_diagnostics_port.context = composition;
     if (!robot_composition_preflight(profile,
@@ -2104,6 +2314,14 @@ svd48_handle_t robot_composition_legacy_svd48(robot_composition_t *composition)
 {
     return composition && composition->constructed
                ? composition->legacy_svd48
+               : NULL;
+}
+
+svd48_workspace_port_t *robot_composition_svd48_workspace_port(
+    robot_composition_t *composition)
+{
+    return composition && composition->constructed
+               ? &composition->svd48_workspace_port
                : NULL;
 }
 

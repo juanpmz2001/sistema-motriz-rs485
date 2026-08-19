@@ -5,7 +5,7 @@ feature. Recheck the current code, tests and task scope before acting.
 
 ## Current baseline
 
-- Firmware build identity is version `1.0.0`, build `24`; the runtime topology is a
+- Firmware build identity is version `1.0.0`, build `25`; the runtime topology is a
   build-selected immutable C profile.
 - Supported compositions are `current_robot`, `bench_single_svd48_motor`, `rafa`,
   and the unqualified `bench_single_steering_as5600` development slice.
@@ -15,6 +15,10 @@ feature. Recheck the current code, tests and task scope before acting.
   active at runtime.
 - Rafa has one SVD48 at RS485 address `2`; M1/M2 physical wheel identity and
   direction remain unqualified. Deploy Rafa firmware changes by OTA only.
+- The NEXT-1 maintenance contract now exposes typed N-controller SVD48 inventory,
+  cached physical-channel telemetry and bounded bench commands. It bypasses neither
+  the application coordinator nor the four-binding legacy limit, and it is not the
+  future continuous control plane. Physical Rafa validation remains pending.
 
 ## Gates that remain open
 

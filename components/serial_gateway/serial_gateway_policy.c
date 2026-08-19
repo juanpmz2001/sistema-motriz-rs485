@@ -27,6 +27,7 @@ static bool no_arg_command_allowed(const char *command)
         "IBUS_CHANNELS",
         "POLL_ONCE",
         "MAINT_LAN_STATUS",
+        "SVD48_INVENTORY",
     };
 
     for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
@@ -52,6 +53,18 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
         return true;
     }
     if (arg_is(argv[0], "SET_SPEED") && argc == 3) {
+        return true;
+    }
+    if (arg_is(argv[0], "GET_SVD48_CHANNEL_TELEMETRY") && argc == 3) {
+        return true;
+    }
+    if (arg_is(argv[0], "SVD48_BENCH_SET_SPEED") && argc == 4) {
+        return true;
+    }
+    if ((arg_is(argv[0], "SVD48_BENCH_HOLD") ||
+         arg_is(argv[0], "SVD48_BENCH_DISABLE") ||
+         arg_is(argv[0], "SVD48_BENCH_STOP")) &&
+        argc == 3) {
         return true;
     }
     if (arg_is(argv[0], "READ_REG") && (argc == 3 || argc == 4)) {

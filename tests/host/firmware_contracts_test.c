@@ -321,6 +321,17 @@ static bool test_gateway_lan_maintenance_policy(void)
         "GET_ENDPOINT_POSITION_OBSERVATION", "1"};
     const char *as5600_diagnostics[] = {
         "GET_AS5600_DIAGNOSTICS", "2"};
+    const char *svd48_inventory[] = {"SVD48_INVENTORY"};
+    const char *svd48_telemetry[] = {
+        "GET_SVD48_CHANNEL_TELEMETRY", "1", "M2"};
+    const char *svd48_bench_speed[] = {
+        "SVD48_BENCH_SET_SPEED", "1", "M1", "2"};
+    const char *svd48_bench_hold[] = {"SVD48_BENCH_HOLD", "1", "M1"};
+    const char *svd48_bench_disable[] = {
+        "SVD48_BENCH_DISABLE", "1", "M1"};
+    const char *svd48_bench_stop[] = {"SVD48_BENCH_STOP", "1", "M1"};
+    const char *svd48_bench_bad_shape[] = {
+        "SVD48_BENCH_SET_SPEED", "1", "M1"};
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
@@ -354,6 +365,14 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, endpoint_observation));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, position_observation));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, as5600_diagnostics));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, svd48_inventory));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_telemetry));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, svd48_bench_speed));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_hold));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_disable));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_stop));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        3, svd48_bench_bad_shape));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
     return true;
 }
@@ -380,6 +399,11 @@ static bool test_gateway_diagnostic_policy(void)
         "GET_ENDPOINT_POSITION_OBSERVATION", "1"};
     const char *as5600_diagnostics[] = {
         "GET_AS5600_DIAGNOSTICS", "2"};
+    const char *svd48_inventory[] = {"SVD48_INVENTORY"};
+    const char *svd48_telemetry[] = {
+        "GET_SVD48_CHANNEL_TELEMETRY", "1", "M1"};
+    const char *svd48_bench_speed[] = {
+        "SVD48_BENCH_SET_SPEED", "1", "M1", "1"};
 
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, ping));
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, version));
@@ -400,6 +424,12 @@ static bool test_gateway_diagnostic_policy(void)
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2, position_observation));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(2,
                                                                 as5600_diagnostics));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        1, svd48_inventory));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        3, svd48_telemetry));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        4, svd48_bench_speed));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(0, NULL));
     return true;
 }

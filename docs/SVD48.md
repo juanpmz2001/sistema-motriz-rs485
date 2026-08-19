@@ -58,12 +58,14 @@ flowchart LR
   ADAPTER[direct channel endpoint adapter]
   COORD[actuation coordinator]
   POLL[shared poll service]
+  WORKSPACE[typed workspace read port]
   LEGACY[svd48_handle compatibility view]
 
   PROFILE --> COMPOSE
   COMPOSE --> FACTORY
   COMPOSE --> RS485
   COMPOSE --> POLL
+  COMPOSE --> WORKSPACE
   COMPOSE --> LEGACY
   FACTORY --> DEVICE
   FACTORY --> ADAPTER
@@ -83,6 +85,9 @@ flowchart LR
   one priority-8 polling task drives the service.
 - `svd48_channel_endpoint_adapter` implements the direct velocity/stop endpoint used
   by the coordinator.
+- `svd48_workspace_port` projects configured device identity, physical M1/M2 endpoint
+  bindings and cached snapshots to maintenance clients. It contains no write method;
+  typed bench writes resolve the binding and use the application/coordinator port.
 - The executable factory registry contains SVD48/RS485 only. Other driver IDs in the
   profile schema are not runtime factories.
 - The attached legacy `svd48_handle_t` view preserves maintenance, OTA, safety
@@ -119,6 +124,12 @@ Setting a channel velocity writes its bounded signed RPM target and then enables
 channel. If target or enable fails, the direct endpoint adapter requests a best-effort
 channel stop. Stop first writes a zero target and then the stop control command; a
 failed zero write does not suppress the stop attempt.
+
+The workspace names these existing behaviors explicitly: `SVD48_BENCH_SET_SPEED`
+uses the requested RPM; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
+`SVD48_BENCH_DISABLE`/`SVD48_BENCH_STOP` use the stop/freewheel sequence. The gateway
+never selects target/control registers itself. These commands are bench maintenance,
+not a continuous control plane.
 
 The coordinator reaches this direct adapter for `SET_SPEED`, individual/global stop,
 boot stop and safety stop. `ENABLE`, `CLEAR_FAULT`, `MOVE_VEL`, OTA preparation,
