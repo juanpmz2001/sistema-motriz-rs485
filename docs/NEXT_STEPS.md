@@ -20,9 +20,10 @@ feature. Recheck the current code, tests and task scope before acting.
   cached physical-channel telemetry and bounded bench commands. It bypasses neither
   the application coordinator nor the four-binding legacy limit, and it is not the
   continuous control transport. Build 27 physical Rafa inventory, telemetry,
-  parameter reads and a restored volatile wheel-diameter write passed. Typed Bench
-  Control remains unaccepted after a pre-actuation HTTP 400 on the first M1 HOLD;
-  no speed command was attempted.
+  parameter reads and a restored volatile wheel-diameter write passed. One traced M1
+  HOLD later passed end to end, but M1 HOLD/DISABLE and M2 acceptance remain incomplete
+  after intermittent read-only Console preflight HTTP 400 responses. No speed command
+  was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
   TTL expiry, retired streams and STOP semantics. The current `rafa` profile correctly

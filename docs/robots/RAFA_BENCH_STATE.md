@@ -9,8 +9,10 @@
 
 Rafa is sufficiently observable for controlled read-only and parameter work, but the
 new typed Bench Control path is not yet accepted for the operator's longer manual
-campaign. Its first `HOLD 0 M1` attempt was rejected by the backend before a typed
-firmware actuation result was returned. No speed smoke was attempted afterward.
+campaign. A focused follow-up proved one traced `HOLD 0 M1` end to end, but the
+required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
+intermittent HTTP 400 responses from read-only Console preflight endpoints before
+further HOLD requests were sent. No speed smoke was attempted.
 
 NEXT-3 continuous-control software now exists, but the Rafa profile intentionally
 keeps `NO_GEOMETRY` and returns `CONTROL_UNAVAILABLE`. Build 27 was deployed by OTA,
@@ -234,15 +236,31 @@ Read-only evidence:
 - `CONTROL_STATUS` and ARM correctly returned unavailable because Rafa has no
   qualified geometry.
 
-Bench Control did not pass. The first harness attempt stopped before actuation when
-the freshly connected inventory was `STALE`. After one bounded cache-settle correction,
-the preconditions and both channel snapshots were healthy, but the first
-`ENABLE / HOLD 0 M1` API request returned HTTP 400 before a typed firmware command
-result was exposed. No M2 HOLD, DISABLE or `+1 RPM` test was attempted. Cleanup and a
-separate final check both acknowledged software `STOP ALL`; Rafa ended `SAFE_IDLE`
-with both channels `STOPPED`. Do not treat this as motor-path acceptance. Capture the
-exact backend rejection on one targeted future attempt before deciding whether the
-cause is a freshness race, another pre-actuation gate or a transport error.
+The initial short smoke did not pass Bench Control: one attempt stopped on a `STALE`
+inventory and the next M1 HOLD returned an opaque HTTP 400 because the temporary
+harness raised before preserving the response body.
+
+A focused follow-up then traced one exact request:
+
+```text
+POST /api/svd48/controllers/1/channels/M1/bench/hold
+{"confirmation":"motor elevado"}
+```
+
+All layers passed. The backend emitted `SVD48_BENCH_HOLD 1 M1`; firmware returned
+`OK SVD48_BENCH_HOLD DEVICE_ID:1 CHANNEL:M1 ENDPOINT_ID:1 RPM_TARGET:0 MODE:ACTIVE`;
+cached controller telemetry changed to `RUNNING`, 0 RPM, healthy, with zero controller
+and communication errors. Software `STOP ALL` then returned M1 to `STOPPED`/0 RPM.
+This also confirms that `CONTROL_UNAVAILABLE` is not treated as a bench conflict.
+
+No production change was justified by that successful reproduction. The requested
+acceptance sequence was then attempted, but two separate runs stopped before any new
+HOLD: first `/api/overview/refresh`, then `/api/svd48/inventory`, returned HTTP 400.
+The temporary acceptance harness again failed to retain those bodies. Both runs had
+already acknowledged initial `STOP ALL`; neither sent a new HOLD. Per the bounded-test
+stop rule, M1 DISABLE and all M2 operations remain untested. Do not infer an exact
+cause from the status code alone; capture the complete read-only error response before
+changing production or resuming motor acceptance.
 
 ## Recording
 
@@ -283,7 +301,7 @@ USB is recovery-only.
 - M1/M2 physical side;
 - physical positive/negative direction;
 - M2 individual command behavior;
-- typed Bench Control HOLD/DISABLE and `+1 RPM` behavior;
+- typed M1 HOLD→DISABLE sequence, all typed M2 bench behavior and `+1 RPM` behavior;
 - negative-direction testing;
 - ±5 RPM characterization;
 - dual-motor motion;

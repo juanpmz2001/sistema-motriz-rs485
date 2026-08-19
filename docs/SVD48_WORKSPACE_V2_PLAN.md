@@ -6,9 +6,10 @@
 > one semantic per-channel catalog, variant-local `UNAVAILABLE`, snapshot schema 2 and
 > qualified float support. Build 27 was deployed to Rafa by OTA; physical inventory,
 > channel telemetry, parameter reads and one restored volatile wheel-diameter write
-> passed. No save was requested. Typed Bench Control remains unaccepted because the
-> first HOLD request was rejected before a firmware actuation result; no speed command
-> was attempted. See `docs/robots/RAFA_BENCH_STATE.md` for exact evidence.
+> passed. No save was requested. One focused M1 HOLD subsequently passed end to end,
+> but the HOLD/DISABLE acceptance sequence remains incomplete after intermittent
+> read-only Console preflight HTTP 400 responses; no M2 or speed command was attempted.
+> See `docs/robots/RAFA_BENCH_STATE.md` for exact evidence.
 
 ## 1. Why this iteration exists
 
