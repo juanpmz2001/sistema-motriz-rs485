@@ -139,6 +139,11 @@ uses the requested RPM; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
 never selects target/control registers itself. These commands are bench maintenance,
 not a continuous control plane.
 
+The gateway rejects bench set-speed/hold while continuous control is `ARMED` or
+`ACTIVE`. Stop/disable remain callable. The same firmware interlock blocks SVD48
+configuration writes and save operations during those two states; profiles without
+continuous control and disarmed sessions retain the existing maintenance workflow.
+
 The coordinator reaches this direct adapter for `SET_SPEED`, individual/global stop,
 boot stop and safety stop. `ENABLE`, `CLEAR_FAULT`, `MOVE_VEL`, OTA preparation,
 motor identification and maintenance configuration still use the compatibility

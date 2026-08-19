@@ -5,7 +5,7 @@ feature. Recheck the current code, tests and task scope before acting.
 
 ## Current baseline
 
-- Firmware build identity is version `1.0.0`, build `26`; the runtime topology is a
+- Firmware build identity is version `1.0.0`, build `27`; the runtime topology is a
   build-selected immutable C profile.
 - Supported compositions are `current_robot`, `bench_single_svd48_motor`, `rafa`,
   and the unqualified `bench_single_steering_as5600` development slice.

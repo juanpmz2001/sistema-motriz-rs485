@@ -114,6 +114,12 @@ all hazards are controlled.
 | `SVD48_IDENTIFY ... START|STOP` | gateway → `robot_control`/legacy SVD48 view | Bypass; can cause physical identification motion |
 | Maintenance register/config writes | gateway → `robot_control`/legacy SVD48 view | Bypass |
 
+The gateway now enforces a narrow cross-path interlock: continuous-control `ARMED` or
+`ACTIVE` rejects SVD48 bench set-speed/hold and SVD48 register/configuration writes or
+save. Channel disable/stop and global `STOP ALL` stay available. This closes concurrent
+session preparation/use through those Maintenance-LAN operations; it does not turn
+Maintenance LAN into a leased control path or migrate the remaining bypasses.
+
 The coordinator mutex prevents interleaving only for migrated calls. It has a 500 ms
 acquire timeout and driver operations execute while it is held, so safety stop has no
 priority over an in-progress writer. The target remains one priority-aware actuation

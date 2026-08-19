@@ -449,6 +449,10 @@ motor view. The bounded `SVD48_BENCH_*` commands resolve device plus M1/M2 throu
 inventory, then use the same application/coordinator speed or stop path as migrated
 endpoints. The direct channel adapter—not the gateway or UI—owns target-plus-START and
 target-zero-plus-STOP sequencing.
+Before an allowed Maintenance-LAN operation executes, the gateway consults the
+optional motion-status port. `ARMED`/`ACTIVE` blocks bench set-speed/hold and SVD48
+configuration write/save operations, while unavailable/disarmed control permits the
+existing maintenance gates and stop/disable remain callable.
 The endpoint-scoped speed, position, stop and typed-observation commands use the
 application boundary; they are deliberately unavailable through the LAN-safe policy
 and in restricted diagnostic mode. An explicit position-reference operation is a

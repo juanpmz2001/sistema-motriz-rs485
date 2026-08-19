@@ -72,6 +72,15 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME motion_status_port_test
+    SOURCES
+        host/motion_status_port_test.c
+        ../components/robot_capabilities/motion_status_port.c
+    INCLUDE_DIRS
+        ../components/robot_capabilities/include
+)
+
+botfarms_add_host_test(
     NAME steering_position_controller_test
     SOURCES
         host/steering_position_controller_test.c

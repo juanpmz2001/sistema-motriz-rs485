@@ -1,5 +1,23 @@
 #include "motion_status_port.h"
 
+bool motion_status_blocks_maintenance_changes(motion_status_port_t *port,
+                                              motion_control_state_t *state)
+{
+    if (state) {
+        *state = MOTION_CONTROL_UNAVAILABLE;
+    }
+
+    motion_status_snapshot_t snapshot = { 0 };
+    if (!motion_status_snapshot(port, &snapshot) || !snapshot.available) {
+        return false;
+    }
+    if (state) {
+        *state = snapshot.state;
+    }
+    return snapshot.state == MOTION_CONTROL_ARMED ||
+           snapshot.state == MOTION_CONTROL_ACTIVE;
+}
+
 const char *motion_control_state_name(motion_control_state_t state)
 {
     switch (state) {

@@ -134,7 +134,7 @@ Loss of browser, backend or Wi-Fi must not leave the last moving command alive i
 
 For SVD48 bench work:
 
-### STOP / panic
+### SOFTWARE STOP / STOP ALL
 Safety cleanup.
 
 Intent:
@@ -168,7 +168,10 @@ The wheel becomes mechanically much freer.
 Suggested UI labels:
 - `ENABLE / HOLD 0`
 - `DISABLE / FREEWHEEL`
-- `PANIC STOP`
+- `SOFTWARE STOP ALL`
+
+A software STOP is not an emergency stop and never replaces the independent physical
+power cut-off.
 
 The SVD48 adapter owns how START/STOP registers implement those semantics. The frontend must not write controller registers directly.
 
@@ -352,7 +355,7 @@ Then expose:
 - ENABLE / HOLD 0;
 - DISABLE / FREEWHEEL;
 - STOP channel;
-- PANIC STOP ALL;
+- SOFTWARE STOP ALL;
 - live RPM/current/position/errors.
 
 This is bench engineering, not robot operation.
@@ -548,13 +551,10 @@ Prefer designs that:
 - keep continuous motion fail-safe;
 - create the least new abstraction.
 
-## 20. Current priority
+## 20. Choosing current work
 
-1. complete SVD48 configuration/bench vertical;
-2. generic multi-SVD controller/channel selection;
-3. full reviewed parameter catalog including limits and PID;
-4. direct channel bench controls with ENABLE/HOLD, DISABLE/FREEWHEEL and panic STOP;
-5. activate safe `/control` using control LAN + command authority + TTL/deadman;
-6. communications diagnostics;
-7. recording browser;
-8. PPM authority only after receiver failsafe strategy is resolved.
+This guide intentionally does not contain a product backlog. Choose the next bounded
+scope from the repository's current `docs/NEXT_STEPS.md`, the relevant robot evidence
+and the active vertical plan. Revalidate those sources against code and runtime state
+before implementation; none of them overrides the safety contract or the layering
+principles in this guide.

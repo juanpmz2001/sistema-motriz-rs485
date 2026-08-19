@@ -272,7 +272,7 @@ Target RPM
 
 [ STOP M1 ]
 
-[ PANIC STOP ALL ]
+[ SOFTWARE STOP ALL ]
 ```
 
 ## Semantics
@@ -303,11 +303,12 @@ target = 0
 → STOP channel
 ```
 
-### Panic
+### Software stop all
 
 Global `STOP ALL`.
 
 Must remain available even if the selected controller/channel changes.
+It is not an emergency stop and does not replace the physical power cut-off.
 
 ---
 
@@ -388,5 +389,5 @@ The iteration is successful when:
 - float words use the Rafa-qualified high-word-first IEEE-754 codec with golden tests;
 - direct bench controls are clearly separated from `/control`;
 - ENABLE/HOLD and DISABLE/FREEWHEEL semantics are explicit;
-- panic STOP remains global;
+- software `STOP ALL` remains global;
 - no continuous operational joystick path is built through Maintenance LAN.

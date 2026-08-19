@@ -860,6 +860,21 @@ static void handle_control_status(serial_gateway_handle_t handle,
     }
 }
 
+static bool reject_continuous_control_conflict(serial_gateway_handle_t handle,
+                                               const char *operation)
+{
+    motion_control_state_t state = MOTION_CONTROL_UNAVAILABLE;
+    if (!motion_status_blocks_maintenance_changes(handle->config.motion_status,
+                                                   &state)) {
+        return false;
+    }
+    print_locked(handle,
+                 "ERR CONTINUOUS_CONTROL_CONFLICT OPERATION:%s STATE:%s\n",
+                 operation,
+                 motion_control_state_name(state));
+    return true;
+}
+
 static void handle_config_status(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     (void)argv;
@@ -1745,6 +1760,9 @@ static void handle_write_reg(serial_gateway_handle_t handle, int argc, char *arg
                      reg);
         return;
     }
+    if (reject_continuous_control_conflict(handle, "WRITE_REG")) {
+        return;
+    }
 
     char reason[48] = { 0 };
     if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
@@ -1854,6 +1872,9 @@ static void handle_write_regs(serial_gateway_handle_t handle, int argc, char *ar
                      quantity);
         return;
     }
+    if (reject_continuous_control_conflict(handle, "WRITE_REGS")) {
+        return;
+    }
 
     char reason[48] = { 0 };
     if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
@@ -1947,6 +1968,9 @@ static void handle_save_svd48_config(serial_gateway_handle_t handle, int argc, c
         print_locked(handle, "ERR USAGE SAVE_SVD48_CONFIG drive_id CONFIRM\n");
         return;
     }
+    if (reject_continuous_control_conflict(handle, "SAVE_SVD48_CONFIG")) {
+        return;
+    }
 
     char reason[48] = { 0 };
     if (!robot_control_is_safe_for_ota(handle->config.robot, reason, sizeof(reason))) {
@@ -1984,6 +2008,9 @@ static void handle_set_svd48_gear_ratio(serial_gateway_handle_t handle, int argc
         strcasecmp(argv[4], "CONFIRM") != 0) {
         print_locked(handle,
                      "ERR USAGE SET_SVD48_GEAR_RATIO drive_id motor_teeth wheel_teeth CONFIRM\n");
+        return;
+    }
+    if (reject_continuous_control_conflict(handle, "SET_SVD48_GEAR_RATIO")) {
         return;
     }
 
@@ -2259,6 +2286,10 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
         return;
     }
 
+    if (reject_continuous_control_conflict(handle, "APPLY_PY6514_CONFIG")) {
+        return;
+    }
+
     bool gear_written = true;
     uint8_t first_channel = requested_channel == SVD48_CHANNEL_ALL ? 0 : (uint8_t)requested_channel;
     uint8_t last_channel = requested_channel == SVD48_CHANNEL_ALL ? 1 : (uint8_t)requested_channel;
@@ -2510,6 +2541,15 @@ static void handle_svd48_bench_operation(serial_gateway_handle_t handle,
                                             ? "SVD48_BENCH_DISABLE device_id M1|M2"
                                             : "SVD48_BENCH_STOP device_id M1|M2";
         print_locked(handle, "ERR USAGE %s\n", usage);
+        return;
+    }
+
+    if ((operation == SVD48_BENCH_SET_SPEED ||
+         operation == SVD48_BENCH_HOLD) &&
+        reject_continuous_control_conflict(handle,
+                                           operation == SVD48_BENCH_SET_SPEED
+                                               ? "SVD48_BENCH_SET_SPEED"
+                                               : "SVD48_BENCH_HOLD")) {
         return;
     }
 

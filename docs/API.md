@@ -131,6 +131,14 @@ All four route through `actuation_application` and the coordinator. The direct S
 endpoint adapter owns the target-plus-START and target-zero-plus-STOP register
 sequences; the transport command handler does not construct register writes.
 
+When continuous control reports `ARMED` or `ACTIVE`, firmware rejects
+`SVD48_BENCH_SET_SPEED` and `SVD48_BENCH_HOLD` with
+`ERR CONTINUOUS_CONTROL_CONFLICT ...`. `SVD48_BENCH_DISABLE`,
+`SVD48_BENCH_STOP` and global `STOP ALL` remain available. The same interlock rejects
+`WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO` and
+`APPLY_PY6514_CONFIG`. `DISARMED` and profiles where continuous control is
+`UNAVAILABLE` remain eligible, subject to every existing stopped/safety/write gate.
+
 These are persistent bench maintenance operations with no TTL, deadman, sequence or
 authority lease. The Engineering Console separately requires the exact phrase
 `motor elevado` before set-speed/hold; that phrase is a host operator guard and is not
@@ -400,6 +408,9 @@ Everything else returns `ERR LAN_COMMAND_BLOCKED <command>`. This allowlist is
 broader than the intended production boundary: speed and persistent writes over
 LAN have no command lease, deadman or replay protection. Use LAN as a trusted
 bench maintenance interface only.
+
+Allowlisting does not bypass the continuous-control interlock described above; that
+firmware-side state check occurs when an allowed command is executed.
 
 The independent client resolves its token in this order: `--token`,
 `BOTFARMS_MAINT_TOKEN`, then the untracked repository `.env`.

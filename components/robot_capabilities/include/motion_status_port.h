@@ -75,4 +75,10 @@ static inline bool motion_status_snapshot(motion_status_port_t *port,
 
 const char *motion_control_state_name(motion_control_state_t state);
 
+/* Maintenance writes and bench motion must not compete with a prepared or active
+ * continuous-control session. Profiles without this capability intentionally
+ * report UNAVAILABLE and remain eligible for bounded maintenance operations. */
+bool motion_status_blocks_maintenance_changes(motion_status_port_t *port,
+                                              motion_control_state_t *state);
+
 #endif
