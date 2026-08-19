@@ -4,7 +4,7 @@
 #define FW_PROJECT "sistema-motriz-rs485"
 #define FW_TARGET "esp32s3"
 #define FW_VERSION "1.0.0"
-#define FW_BUILD_NUMBER 25
+#define FW_BUILD_NUMBER 26
 
 #include "botfarms_firmware_identity.h"
 

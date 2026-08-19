@@ -8,6 +8,8 @@
 #include "config_manager.h"
 #include "esp_err.h"
 #include "ibus_receiver.h"
+#include "motion_control_port.h"
+#include "motion_status_port.h"
 #include "ota_announce.h"
 #include "ota_manager.h"
 #include "robot_control.h"
@@ -35,6 +37,10 @@ typedef void (*serial_gateway_output_fn_t)(void *ctx, const char *chunk);
 typedef struct {
     robot_control_handle_t robot;
     actuation_application_port_t *actuation;
+    /* Optional application-level continuous-control boundaries. Maintenance
+     * may observe state and revoke motion, but never publish velocity intent. */
+    motion_control_port_t *motion_control;
+    motion_status_port_t *motion_status;
     /* Optional typed SVD48 inventory/cached-observation boundary. */
     svd48_workspace_port_t *svd48_workspace;
     /* Optional concrete L2/L3 read-only sensor diagnostic path. It is not an

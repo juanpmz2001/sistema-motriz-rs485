@@ -252,6 +252,37 @@ class DependencyContracts(unittest.TestCase):
         self.assertIn("start_safe_diagnostic_gateway", main)
         self.assertIn("!diagnostics->composition_supported", main)
 
+    def test_continuous_control_uses_semantic_application_boundaries(self) -> None:
+        transport = source_text(
+            "components/control_lan/include/control_lan.h",
+            "components/control_lan/control_lan.c",
+            "components/control_lan/CMakeLists.txt",
+        )
+        self.assert_absent(
+            transport,
+            ("svd48", "robot_control", "actuation_application", "READ_REG", "WRITE_REG"),
+        )
+
+        motion = source_text(
+            "components/motion_application/include/motion_application_model.h",
+            "components/motion_application/include/motion_application_service.h",
+            "components/motion_application/motion_application_model.c",
+            "components/motion_application/motion_application_service.c",
+            "components/motion_application/CMakeLists.txt",
+        )
+        self.assertIn("command_authority_model_publish", motion)
+        self.assertIn("robot_kinematics_differential_inverse", motion)
+        self.assertIn("actuation_application_apply_endpoint_speeds_rpm", motion)
+        self.assert_absent(motion, ("svd48", "robot_control", "READ_REG", "WRITE_REG"))
+
+        main = source_text("main/main.c")
+        callback = main[
+            main.index("static control_lan_callback_result_t") :
+            main.index("static void deinit_control_plane")
+        ]
+        self.assertIn("motion_application_service_publish", callback)
+        self.assertNotIn("actuation_application", callback)
+
     def test_hil_runner_has_no_concrete_driver_imports(self) -> None:
         paths = set((ROOT / "tools").glob("hil*.py"))
         paths.add(ROOT / "tools/serial_gateway_client.py")

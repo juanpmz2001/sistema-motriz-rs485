@@ -59,6 +59,11 @@ flowchart TB
   MAINT[maintenance_lan]:::transition --> SERIAL
   RC[ibus_receiver / PPM]:::active --> SAFETY
 
+  CLAN[control_lan UDP 32322]:::active --> MOTION[motion_application service]:::active
+  MOTION --> AUTH[command_authority]:::active
+  MOTION --> KIN[robot_kinematics]:::active
+  MOTION --> APP
+
   COMPOSE --> WRAP[legacy svd48_handle_t attached view]:::legacy
   WRAP --> CONTROL[robot_control facade]:::legacy
   SERIAL -->|unmigrated handlers| CONTROL
@@ -67,9 +72,6 @@ flowchart TB
   CONFIG[config_manager / NVS]:::infra --> WIFI[wifi_manager]:::infra --> OTA
 
   STATE[robot_state]:::dormant
-  AUTH[command_authority]:::dormant
-  KIN[robot_kinematics]:::dormant
-  CLAN[control_lan]:::dormant
 ```
 
 The active speed/stop adapter is the direct SVD48 channel adapter. In the selected
@@ -85,6 +87,15 @@ or sensor to its client. The separate `svd48_workspace_port` is a concrete read-
 maintenance projection: it enumerates configured SVD48 device IDs, bus/addresses,
 physical M1/M2 bindings and cached channel snapshots. It exposes no actuation method;
 workspace writes re-enter the application/coordinator boundary by endpoint ID.
+
+For a profile with validated differential geometry, `main` also creates one
+`motion_application` service and starts `control_lan` on UDP `32322`. The transport
+callback only copies ARM/COMMAND/DISARM/STOP events into semantic mailboxes; it never
+calls a driver or constructs an SVD48 command. The service applies LAN intent to the
+existing authority model, computes all wheel targets once through `robot_kinematics`,
+then submits one multi-endpoint velocity request through `actuation_application`.
+Profiles without qualified geometry, including `rafa`, construct neither service and
+report `CONTROL_UNAVAILABLE` through the read-only status command.
 
 ## `SET_SPEED` sequence
 
@@ -393,10 +404,12 @@ acquisition to the transaction timeout, however, and both SVD48 profiles configu
 | Task | Priority | Stack | Active mode |
 | --- | ---: | ---: | --- |
 | `robot_safety` | 9 | 4096 | Supported normal runtime |
+| `motion_app` | 9 | 6144 | Only for a profile with validated differential geometry; 20 ms service period |
 | `svd48_poll` | 8 | 4096 | Supported normal runtime |
 | `steering_ctl` | 8 | 4096 | Only when a selected profile contains AS5600 steering; 10 ms controller tick, profile-scheduled sensor polling |
 | `serial_gateway` | 6 | 12288 | Normal and restricted diagnostic runtime |
 | `ibus_rx` | 5 | 4096 | Normal runtime when the RC bus is present |
+| `control_lan` | 5 | 6144 | Only with `motion_app`; authenticated UDP intent ingress on port 32322 |
 | `gateway_stream` | 4 | 4096 | Normal runtime only |
 | `wifi_timeout` | 3 | 3072 | Transient normal-runtime connection attempts |
 | Wi-Fi reconnect | 2 | 4096 | Normal runtime only |
@@ -462,8 +475,11 @@ and can move a motor. These paths do not all pass through the coordinator.
 `robot_safety` emits migrated stops but still consumes legacy telemetry, so the new
 health model is not yet the active safety policy.
 
-`robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are compiled
-foundations, not active runtime behavior. Their presence must not be described as an
-authority, state machine or production control protocol. The next boundary is a
-priority-aware single actuation owner with stop precedence; see the
-[firmware handoff state](NEXT_STEPS.md).
+`command_authority`, `robot_kinematics` and `control_lan` are now active only behind
+`motion_application` for differential profiles. `robot_state` remains dormant. The
+semantic service gives STOP/DISARM mailbox precedence, drops an older pending APPLY,
+and turns source expiry into a global stop request. It cannot preempt a coordinator
+transaction already executing; the residual stop bound still includes that bounded
+transaction plus the service period. Other legacy hardware-changing paths continue to
+bypass this authority, so this is not yet a system-wide single-owner or production
+control protocol. See the [firmware handoff state](NEXT_STEPS.md).

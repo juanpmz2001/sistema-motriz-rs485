@@ -1,5 +1,10 @@
 # Safe Control Plane v1 — Plan
 
+> **Status (2026-08-18):** implemented and host/build tested for profiles with
+> validated differential geometry. Rafa remains disabled because its physical M1/M2
+> side/sign mapping is unqualified; OTA deployment and the elevated browser/backend/
+> LAN-loss evidence below are still pending.
+
 ## Goal
 
 Create `/control` for actual interactive robot motion over LAN.
@@ -26,9 +31,9 @@ motion/application service
 traction endpoints
 ```
 
-The current firmware contains `control_lan` and `command_authority`, but `main` does not currently initialize/start `control_lan`.
-
-This iteration connects the prepared pieces instead of creating another control protocol.
+`main` now starts this path only for a profile whose immutable geometry and endpoint
+side/sign mapping validate. Maintenance LAN remains observation and bench maintenance,
+not the heartbeat transport.
 
 ---
 
@@ -55,7 +60,9 @@ Required:
 - STOP;
 - source-switch barrier.
 
-The exact TTL should be selected from measured workshop behavior rather than guessed permanently.
+The software candidate is profile-owned 300 ms, with schema validation bounded to
+50–500 ms. Rafa workshop evidence must still qualify the exact value and physical
+stop latency before it becomes an accepted robot setting.
 
 ---
 

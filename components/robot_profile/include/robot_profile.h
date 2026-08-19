@@ -7,7 +7,9 @@
 
 #include "robot_capabilities.h"
 
-#define ROBOT_PROFILE_SCHEMA_VERSION 3
+#define ROBOT_PROFILE_SCHEMA_VERSION 4
+#define ROBOT_PROFILE_CONTROL_TTL_MIN_MS 50U
+#define ROBOT_PROFILE_CONTROL_TTL_MAX_MS 500U
 #define ROBOT_PROFILE_MAX_BUSES 5
 #define ROBOT_PROFILE_MAX_DEVICES 4
 #define ROBOT_PROFILE_MAX_ENDPOINTS 8
@@ -15,6 +17,9 @@
 #define ROBOT_PROFILE_NO_BUS UINT16_MAX
 #define ROBOT_PROFILE_NO_GEOMETRY 0
 #define ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY 1
+#define ROBOT_PROFILE_MOTION_SIDE_NONE 0
+#define ROBOT_PROFILE_MOTION_SIDE_LEFT 1
+#define ROBOT_PROFILE_MOTION_SIDE_RIGHT 2
 /* The selected steering composition runs its sensor/controller service at
  * this fixed cadence. Steering-profile validation includes it in the local
  * stale-feedback scheduling budget. */
@@ -71,6 +76,11 @@ typedef struct {
     int16_t max_rpm;
     float min_position_degrees;
     float max_position_degrees;
+    /* Application-level differential mapping. A zero side deliberately keeps
+     * this endpoint out of robot motion while preserving its device capability. */
+    uint8_t motion_side;
+    int8_t motion_direction_sign;
+    float motor_to_wheel_ratio;
 } robot_endpoint_profile_t;
 
 /* A linearity calibration is profile data, not a generic AS5600 property.  Its
@@ -127,6 +137,10 @@ typedef struct {
     float wheelbase_m;
     float track_width_m;
     float wheel_radius_m;
+    float max_vx_mps;
+    float max_vy_mps;
+    float max_wz_radps;
+    uint32_t control_ttl_ms;
 } robot_application_profile_t;
 
 typedef struct {

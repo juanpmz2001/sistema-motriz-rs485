@@ -55,7 +55,7 @@ do not load unrelated domain material.
 | `tests/hil/README.md` | using or changing the host HIL runner | Executable manifest workflow, identity gates and explicit motion confirmations. |
 | `docs/NEXT_STEPS.md` | choosing a new firmware scope or evaluating open gates | Compact as-built handoff; it does not authorize a feature or physical operation. |
 | `docs/SVD48_WORKSPACE_V2_PLAN.md` | implementing generic controller/channel inventory, SVD48 UI contracts or bench controls | Future multi-controller workspace scope, typed catalog shape and acceptance criteria. |
-| `docs/SAFE_CONTROL_PLANE_V1_PLAN.md` | implementing `/control`, LAN motion or host controls | Future control-plane scope: authority, TTL/deadman, mixer and elevated-test criteria. |
+| `docs/SAFE_CONTROL_PLANE_V1_PLAN.md` | implementing or qualifying `/control`, LAN motion or host controls | NEXT-3 control-plane contract, deliberate non-goals and still-open elevated-test criteria. |
 | `docs/archive/README.md` and `docs/archive/` | tracing a historical decision | Superseded plans and closeouts; never an active contract or evidence source. |
 
 Plans describe intent, not implementation. When a plan conflicts with code, tests,
@@ -107,8 +107,10 @@ in the same change whenever behavior or a public contract changes.
   diagnostic gateway; it must not construct outputs or accept actuation/register-write
   commands. `STOP ALL` must report outputs unavailable when no endpoints exist. A
   pending-verification OTA image takes the startup-failure rollback path instead.
-- `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are not
-  part of the active runtime despite being compiled.
+- `command_authority`, `robot_kinematics` and `control_lan` are active through
+  `motion_application` only for a profile with validated differential geometry.
+  `robot_state` remains outside the active runtime. Rafa intentionally has no such
+  geometry until M1/M2 side/sign are physically qualified.
 - The firmware is bench-only until every release gate in `docs/SAFETY.md` passes.
 - Never infer that a servo reached a requested angle without independent feedback.
 

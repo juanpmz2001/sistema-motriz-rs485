@@ -56,6 +56,22 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME motion_application_model_test
+    SOURCES
+        host/motion_application_model_test.c
+        ../components/motion_application/motion_application_model.c
+        ../components/command_authority/command_authority_model.c
+        ../components/robot_kinematics/robot_kinematics.c
+    INCLUDE_DIRS
+        ../components/motion_application/include
+        ../components/command_authority/include
+        ../components/robot_kinematics/include
+        ../components/robot_capabilities/include
+    LINK_LIBRARIES
+        m
+)
+
+botfarms_add_host_test(
     NAME steering_position_controller_test
     SOURCES
         host/steering_position_controller_test.c

@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
@@ -5,8 +7,10 @@
 #include "esp_system.h"
 #include "app_version.h"
 #include "config_manager.h"
+#include "control_lan.h"
 #include "ibus_receiver.h"
 #include "maintenance_lan.h"
+#include "motion_application_service.h"
 #include "nvs_flash.h"
 #include "ota_announce.h"
 #include "ota_manager.h"
@@ -30,7 +34,147 @@ static ota_announce_handle_t ota_announce = NULL;
 static maintenance_lan_handle_t maintenance_lan = NULL;
 static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
+static motion_application_service_handle_t motion_application = NULL;
+static control_lan_handle_t control_lan = NULL;
 static robot_composition_t composition;
+
+static bool motion_safety_gate(void *context,
+                               char *detail,
+                               size_t detail_size)
+{
+    robot_safety_handle_t safety = context;
+    robot_safety_status_t status;
+    if (!safety || robot_safety_get_status(safety, &status) != ESP_OK) {
+        snprintf(detail, detail_size, "%s", "SAFETY_STATUS_UNAVAILABLE");
+        return false;
+    }
+    if (!status.task_running) {
+        snprintf(detail, detail_size, "%s", "SAFETY_TASK_NOT_RUNNING");
+        return false;
+    }
+    if (status.motor_fault_active) {
+        snprintf(detail, detail_size, "%s", "MOTOR_FAULT");
+        return false;
+    }
+    if (status.rc_loss_active) {
+        snprintf(detail, detail_size, "%s", "RC_LOSS");
+        return false;
+    }
+    snprintf(detail, detail_size, "%s", "SAFE");
+    return true;
+}
+
+static control_lan_callback_result_t control_lan_event_callback(
+    control_lan_event_t event,
+    void *context)
+{
+    motion_application_event_action_t action;
+    switch (event.action) {
+    case CONTROL_LAN_ACTION_ARM:
+        action = MOTION_APPLICATION_EVENT_ARM;
+        break;
+    case CONTROL_LAN_ACTION_COMMAND:
+        action = MOTION_APPLICATION_EVENT_COMMAND;
+        break;
+    case CONTROL_LAN_ACTION_DISARM:
+        action = MOTION_APPLICATION_EVENT_DISARM;
+        break;
+    case CONTROL_LAN_ACTION_STOP:
+        action = MOTION_APPLICATION_EVENT_STOP;
+        break;
+    default:
+        return (control_lan_callback_result_t){
+            .accepted = false,
+            .detail = "INVALID_ACTION",
+        };
+    }
+    motion_application_event_t command = {
+        .action = action,
+        .stream_id = event.stream_id_hash,
+        .sequence = event.sequence,
+        .received_at_ms = event.timestamp_us / 1000U,
+        .vx_mps = event.vx_mps,
+        .vy_mps = event.vy_mps,
+        .wz_radps = event.wz_radps,
+        .deadman = event.deadman,
+    };
+    motion_application_submit_result_t result =
+        motion_application_service_publish(context, &command);
+    control_lan_callback_result_t response = {
+        .accepted = result.accepted,
+    };
+    snprintf(response.detail, sizeof(response.detail), "%s", result.detail);
+    return response;
+}
+
+static void deinit_control_plane(void)
+{
+    control_lan_deinit(control_lan);
+    control_lan = NULL;
+    motion_application_service_deinit(motion_application);
+    motion_application = NULL;
+}
+
+static esp_err_t start_control_plane(void)
+{
+    if (profile->application.kind != ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY) {
+        ESP_LOGW(TAG,
+                 "Continuous LAN control disabled: profile has no qualified motion geometry");
+        return ESP_OK;
+    }
+    const motion_application_service_config_t motion_config = {
+        .profile = profile,
+        .actuation = &composition.application_port,
+        .period_ms = MOTION_APPLICATION_DEFAULT_PERIOD_MS,
+        .task_priority = MOTION_APPLICATION_DEFAULT_TASK_PRIORITY,
+        .safety_gate = motion_safety_gate,
+        .safety_context = robot_safety,
+    };
+    esp_err_t error = motion_application_service_init(&motion_config,
+                                                       &motion_application);
+    if (error != ESP_OK) {
+        return error;
+    }
+    error = motion_application_service_start(motion_application);
+    if (error != ESP_OK) {
+        deinit_control_plane();
+        return error;
+    }
+
+    float max_vx_mps;
+    float max_vy_mps;
+    float max_wz_radps;
+    if (!motion_application_service_limits(motion_application,
+                                           &max_vx_mps,
+                                           &max_vy_mps,
+                                           &max_wz_radps)) {
+        deinit_control_plane();
+        return ESP_ERR_INVALID_STATE;
+    }
+    const control_lan_config_t control_config = {
+        .config_manager = config_manager,
+        .listen_port = CONTROL_LAN_DEFAULT_PORT,
+        .task_priority = CONTROL_LAN_DEFAULT_TASK_PRIORITY,
+        .max_abs_vx_mps = max_vx_mps,
+        .max_abs_vy_mps = max_vy_mps,
+        .max_abs_wz_radps = max_wz_radps,
+        .event_callback = control_lan_event_callback,
+        .callback_context = motion_application,
+    };
+    error = control_lan_init(&control_config, &control_lan);
+    if (error == ESP_OK) {
+        error = control_lan_start(control_lan);
+    }
+    if (error != ESP_OK) {
+        deinit_control_plane();
+        return error;
+    }
+    ESP_LOGI(TAG,
+             "Continuous LAN control active on UDP:%u ttl:%lums",
+             CONTROL_LAN_DEFAULT_PORT,
+             (unsigned long)profile->application.control_ttl_ms);
+    return ESP_OK;
+}
 
 static float profile_max_abs_rpm(const robot_profile_t *selected_profile)
 {
@@ -376,6 +520,20 @@ void app_main(void)
         return;
     }
 
+    err = start_control_plane();
+    if (err != ESP_OK) {
+        handle_startup_failure("control_plane", err, pending_verify);
+        deinit_control_plane();
+        robot_safety_deinit(robot_safety);
+        ibus_receiver_deinit(ibus_receiver);
+        robot_composition_deinit(&composition);
+        robot_control_deinit(robot);
+        ota_manager_deinit(ota_manager);
+        wifi_manager_deinit(wifi_manager);
+        config_manager_deinit(config_manager);
+        return;
+    }
+
     if (ota_manager && wifi_manager) {
         ota_announce_config_t announce_config = {
             .config_manager = config_manager,
@@ -394,6 +552,10 @@ void app_main(void)
     serial_gateway_config_t gateway_config = {
         .robot = robot,
         .actuation = &composition.application_port,
+        .motion_control = motion_application_service_control_port(
+            motion_application),
+        .motion_status = motion_application_service_status_port(
+            motion_application),
         .svd48_workspace =
             robot_composition_svd48_workspace_port(&composition),
         .as5600_diagnostics =
@@ -431,6 +593,7 @@ void app_main(void)
     if (!gateway) {
         handle_startup_failure("serial_gateway_init", ESP_FAIL, pending_verify);
         ota_announce_deinit(ota_announce);
+        deinit_control_plane();
         robot_safety_deinit(robot_safety);
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);
@@ -445,6 +608,7 @@ void app_main(void)
         handle_startup_failure("serial_gateway_start", ESP_FAIL, pending_verify);
         serial_gateway_deinit(gateway);
         ota_announce_deinit(ota_announce);
+        deinit_control_plane();
         robot_safety_deinit(robot_safety);
         ibus_receiver_deinit(ibus_receiver);
         robot_composition_deinit(&composition);

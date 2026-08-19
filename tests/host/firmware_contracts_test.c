@@ -310,6 +310,7 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *stop_all[] = { "STOP", "ALL" };
     const char *profile_status[] = { "PROFILE_STATUS" };
     const char *composition_status[] = { "COMPOSITION_STATUS" };
+    const char *control_status[] = {"CONTROL_STATUS"};
     const char *endpoints[] = { "ENDPOINTS" };
     const char *set_endpoint_speed[] = { "SET_ENDPOINT_SPEED", "1", "5" };
     const char *set_endpoint_position[] = { "SET_ENDPOINT_POSITION", "1", "5" };
@@ -356,6 +357,7 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_all));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, profile_status));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, composition_status));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, control_status));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(1, endpoints));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, set_endpoint_speed));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, set_endpoint_position));

@@ -64,6 +64,7 @@ set(COMPONENTS
     robot_state
     command_authority
     robot_kinematics
+    motion_application
     as5600_device
     as5600_position_endpoint_adapter
     i2c_bitbang_transport

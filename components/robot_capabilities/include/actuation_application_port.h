@@ -17,6 +17,11 @@ typedef enum {
 
 typedef struct actuation_application_port actuation_application_port_t;
 
+typedef struct {
+    robot_endpoint_id_t endpoint_id;
+    int16_t rpm;
+} actuation_application_velocity_request_t;
+
 /* Internal in-firmware DTO, not a wire format or stable binary ABI. Components
  * that consume it are rebuilt together and should use named fields. */
 typedef struct {
@@ -53,6 +58,10 @@ typedef struct {
         actuation_application_port_t *port,
         robot_endpoint_id_t endpoint_id,
         int16_t rpm);
+    actuation_application_result_t (*apply_endpoint_speeds_rpm)(
+        actuation_application_port_t *port,
+        const actuation_application_velocity_request_t *requests,
+        size_t request_count);
     actuation_application_result_t (*stop_endpoint)(
         actuation_application_port_t *port,
         robot_endpoint_id_t endpoint_id);
@@ -171,6 +180,19 @@ actuation_application_set_endpoint_speed_rpm(
 {
     return port && port->ops && port->ops->set_endpoint_speed_rpm
                ? port->ops->set_endpoint_speed_rpm(port, endpoint_id, rpm)
+               : ACTUATION_APPLICATION_INVALID_ARGUMENT;
+}
+
+static inline actuation_application_result_t
+actuation_application_apply_endpoint_speeds_rpm(
+    actuation_application_port_t *port,
+    const actuation_application_velocity_request_t *requests,
+    size_t request_count)
+{
+    return port && port->ops && port->ops->apply_endpoint_speeds_rpm
+               ? port->ops->apply_endpoint_speeds_rpm(port,
+                                                      requests,
+                                                      request_count)
                : ACTUATION_APPLICATION_INVALID_ARGUMENT;
 }
 

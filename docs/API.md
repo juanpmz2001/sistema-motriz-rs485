@@ -24,7 +24,7 @@ its `raw` subcommand.
 
 | Group | Commands |
 | --- | --- |
-| Identity/health | `PING`, `VERSION`, `PLATFORM_STATUS`, `PROFILE_STATUS`, `COMPOSITION_STATUS`, `SAFETY_STATUS`, `HELP` |
+| Identity/health | `PING`, `VERSION`, `PLATFORM_STATUS`, `PROFILE_STATUS`, `COMPOSITION_STATUS`, `SAFETY_STATUS`, `CONTROL_STATUS`, `HELP` |
 | Stored config | `CONFIG_STATUS`, `CONFIG_CLEAR` |
 | Wi-Fi | `WIFI_SET`, `WIFI_CLEAR`, `WIFI_STATUS`, `WIFI_CONNECT`, `WIFI_DISCONNECT` |
 | Maintenance auth | `MAINT_LAN_STATUS`, `MAINT_TOKEN_SET`, `MAINT_TOKEN_CLEAR` |
@@ -61,6 +61,7 @@ GET_ENDPOINT_OBSERVATION 1
 GET_ENDPOINT_POSITION_OBSERVATION 2
 GET_AS5600_DIAGNOSTICS 2
 SAFETY_STATUS
+CONTROL_STATUS
 WIFI_STATUS
 OTA_CONFIG
 OTA_AUTO_STATUS
@@ -415,6 +416,68 @@ LAN telemetry in this version.
 
 ## Control LAN
 
-`control_lan` defines a separate sequenced protocol on default port `32322`, but the
-current build does not initialize or start it. It is not an available device API and
-must not be confused with maintenance LAN.
+`control_lan` is the authenticated continuous-intent protocol on UDP port `32322`.
+It starts only when the selected profile has validated differential geometry. It is
+separate from Maintenance LAN: joystick heartbeats never use port `32321` or ASCII
+speed commands, and PPM is not a control authority in this version.
+
+Every request carries the current maintenance token plus a client-generated stream
+and monotonically increasing sequence. ARM, DISARM and STOP omit `command`; COMMAND
+includes semantic body velocity and deadman:
+
+```json
+{
+  "type": "botfarms_control_command",
+  "protocol_version": "1.0",
+  "request_id": "unique-request-id",
+  "token": "secret",
+  "action": "command",
+  "stream_id": "unique-session-id",
+  "sequence": 2,
+  "command": {
+    "vx_mps": 0.05,
+    "vy_mps": 0.0,
+    "wz_radps": -0.10,
+    "deadman": true
+  }
+}
+```
+
+The response shape is:
+
+```json
+{
+  "type": "botfarms_control_response",
+  "protocol_version": "1.0",
+  "request_id": "unique-request-id",
+  "status": "ok",
+  "detail": "QUEUED"
+}
+```
+
+`QUEUED` means the semantic event passed transport checks and was copied to the
+motion-service mailbox; it is not an SVD48 acknowledgement or proof of physical
+motion. The motion service independently checks safety and endpoint health. The
+client supplies no TTL: the immutable profile owns it (300 ms for `current_robot`,
+with profile validation bounded to 50–500 ms). Replayed/non-increasing commands do
+not refresh that lease. Deadman false is normalized by the Console to zero intent and
+causes the firmware to stop. Exact source expiry retires the stream and requests
+STOP; the old stream cannot silently resume.
+
+STOP/DISARM are accepted as fail-safe terminal actions without requiring a matching
+active stream. A new ARM for another stream first publishes a source-switch STOP.
+Velocity fields must be finite and within the profile limits returned by
+`CONTROL_STATUS`; differential v1 accepts no material lateral velocity.
+
+`CONTROL_STATUS` is a read-only ASCII command exposed through Maintenance LAN for
+observation, not intent. It returns one session line followed by the declared number
+of endpoint lines:
+
+```text
+DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:LAN DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
+DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> OBSERVED_RPM:<rpm> OBSERVATION_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<health>
+```
+
+Profiles without qualified differential geometry return `ERR CONTROL_UNAVAILABLE`.
+The current `rafa` profile intentionally does so until its M1/M2 side/sign mapping is
+physically qualified.

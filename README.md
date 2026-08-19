@@ -5,7 +5,7 @@ RS485. It provides serial diagnostics, low-priority Wi-Fi maintenance, OTA and
 an active build-time robot profile with profile-driven buses, devices, channels
 and typed actuator endpoints.
 
-> **Status: bench firmware, not a production motion controller.** Build 25 has
+> **Status: bench firmware, not a production motion controller.** Build 26 has
 > unresolved safety gaps. Keep wheels off the ground and an independent power
 > cut-off available whenever actuation is possible. See [Safety](docs/SAFETY.md).
 
@@ -37,6 +37,12 @@ and typed actuator endpoints.
   physical M1/M2 channel by profile device identity. It returns cached device
   telemetry and routes bounded per-channel bench requests through the application
   coordinator; clients do not need Rafa addresses or legacy motor indices.
+- Profiles with qualified differential geometry start a dedicated UDP control plane
+  on port `32322`: `control_lan` publishes semantic robot intent through
+  `command_authority`, `robot_kinematics` and `motion_application` before the typed
+  traction endpoints. ARM, stream/sequence, deadman and a profile-owned short TTL are
+  firmware contracts. Maintenance LAN remains a separate bench path. Rafa deliberately
+  does not start this plane while its M1/M2 side/sign mapping is unqualified.
 - `SET_SPEED`, `STOP n`, `STOP ALL`, boot stop and safety stop use an application
   port backed by the serialized `actuation_coordinator` and the direct SVD48
   channel endpoint adapter.
@@ -212,8 +218,10 @@ the complete release and recovery procedure in [OTA](docs/OTA.md).
   192 KiB effective-headroom floor for every supported build profile; see the
   [firmware handoff state](docs/NEXT_STEPS.md). Runtime heap, stack
   and timing qualification remain open.
-- `robot_state`, `command_authority`, `robot_kinematics` and `control_lan` are
-  compiled foundations but are not wired into the active runtime.
+- `robot_state` remains a compiled foundation outside the active runtime. The
+  continuous control components are active only for profiles with validated
+  differential endpoint geometry; this is software integration, not physical motion
+  qualification.
 - Firmware authenticity relies on a manifest SHA-256 checksum, not signed images
   with a protected trust root.
 

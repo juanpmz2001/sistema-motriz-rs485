@@ -8,6 +8,12 @@
 
 Rafa is sufficiently observable for continued controlled bench work, but individual motor behavior still needs physical correlation before broader motion testing.
 
+NEXT-3 continuous-control software now exists, but the Rafa profile intentionally
+keeps `NO_GEOMETRY` and returns `CONTROL_UNAVAILABLE`. No build-26 NEXT-3 image has
+been accepted/deployed and no browser-close, backend-loss or LAN-loss motion evidence
+has been collected. M1/M2 side and positive direction must be established first; the
+software must not infer them from endpoint order or controller RPM.
+
 ## Confirmed facts
 
 - Profile: `rafa`.

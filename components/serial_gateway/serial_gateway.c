@@ -807,6 +807,59 @@ static void handle_safety_status(serial_gateway_handle_t handle, int argc, char 
                  (unsigned long)status.loop_count);
 }
 
+static void handle_control_status(serial_gateway_handle_t handle,
+                                  int argc,
+                                  char *argv[])
+{
+    (void)argv;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE CONTROL_STATUS\n");
+        return;
+    }
+    motion_status_snapshot_t status;
+    if (!motion_status_snapshot(handle->config.motion_status, &status) ||
+        !status.available) {
+        print_locked(handle, "ERR CONTROL_UNAVAILABLE\n");
+        return;
+    }
+
+    print_locked(
+        handle,
+        "DATA CONTROL TASK:%s STATE:%s SOURCE:LAN DEADMAN:%u TTL_MS:%lu LEASE_FRESH:%u LEASE_AGE_MS:%lu LEASE_REMAINING_MS:%lu STREAM_HASH:%016llx SEQUENCE:%llu MAX_VX_MPS:%.4f MAX_VY_MPS:%.4f MAX_WZ_RADPS:%.4f REQUESTED_VX_MPS:%.4f REQUESTED_VY_MPS:%.4f REQUESTED_WZ_RADPS:%.4f ENDPOINTS:%u DETAIL:%s\n",
+        status.task_running ? "RUNNING" : "STOPPED",
+        motion_control_state_name(status.state),
+        status.deadman ? 1U : 0U,
+        (unsigned long)status.command_ttl_ms,
+        status.lease_fresh ? 1U : 0U,
+        (unsigned long)status.lease_age_ms,
+        (unsigned long)status.lease_remaining_ms,
+        (unsigned long long)status.stream_id_hash,
+        (unsigned long long)status.sequence,
+        (double)status.max_vx_mps,
+        (double)status.max_vy_mps,
+        (double)status.max_wz_radps,
+        (double)status.requested_vx_mps,
+        (double)status.requested_vy_mps,
+        (double)status.requested_wz_radps,
+        (unsigned)status.endpoint_count,
+        safe_text(status.last_detail, "UNKNOWN"));
+    for (size_t index = 0U; index < status.endpoint_count; ++index) {
+        const motion_status_endpoint_t *endpoint = &status.endpoints[index];
+        print_locked(
+            handle,
+            "DATA CONTROL_ENDPOINT ID:%u NAME:%s TARGET_RPM:%d OBSERVED_VALID:%u OBSERVED_RPM:%d OBSERVATION_MS:%lu ONLINE:%u STALE:%u HEALTH:%s\n",
+            (unsigned)endpoint->endpoint_id,
+            safe_text(endpoint->name, "UNKNOWN"),
+            endpoint->target_rpm,
+            endpoint->observed_valid ? 1U : 0U,
+            endpoint->observed_rpm,
+            (unsigned long)endpoint->observation_timestamp_ms,
+            endpoint->online ? 1U : 0U,
+            endpoint->stale ? 1U : 0U,
+            endpoint_health_name(endpoint->health));
+    }
+}
+
 static void handle_config_status(serial_gateway_handle_t handle, int argc, char *argv[])
 {
     (void)argv;
@@ -2258,7 +2311,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_INVENTORY,GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2,SVD48_BENCH_SET_SPEED device_id M1|M2 rpm,SVD48_BENCH_HOLD device_id M1|M2,SVD48_BENCH_DISABLE device_id M1|M2,SVD48_BENCH_STOP device_id M1|M2,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,CONTROL_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_INVENTORY,GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2,SVD48_BENCH_SET_SPEED device_id M1|M2 rpm,SVD48_BENCH_HOLD device_id M1|M2,SVD48_BENCH_DISABLE device_id M1|M2,SVD48_BENCH_STOP device_id M1|M2,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
 }
 
 static void print_diagnostic_help(serial_gateway_handle_t handle)
@@ -3412,11 +3465,24 @@ static void handle_stop(serial_gateway_handle_t handle, int argc, char *argv[])
     }
 
     if (strcasecmp(argv[1], "ALL") == 0) {
+        char motion_detail[MOTION_STATUS_DETAIL_MAX] = {0};
+        bool control_stopped = !handle->config.motion_control ||
+                               motion_control_stop_all(
+                                   handle->config.motion_control,
+                                   motion_detail,
+                                   sizeof(motion_detail));
         esp_err_t err = actuation_application_stop_all(handle->config.actuation) == ACTUATION_APPLICATION_OK ? ESP_OK : ESP_FAIL;
-        if (err == ESP_OK) {
-            print_locked(handle, "OK STOP ALL\n");
-        } else {
+        if (err != ESP_OK) {
             print_locked(handle, "ERR STOP_FAILED 0x%x\n", err);
+        } else if (!control_stopped) {
+            /* The physical STOP must never be skipped because the semantic
+             * authority port was briefly busy.  Report the partial result so
+             * callers do not confuse it with a fully revoked session. */
+            print_locked(handle,
+                         "ERR CONTROL_STOP_FAILED %s PHYSICAL_STOP:OK\n",
+                         safe_text(motion_detail, "UNKNOWN"));
+        } else {
+            print_locked(handle, "OK STOP ALL\n");
         }
         return;
     }
@@ -3554,6 +3620,8 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_platform_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SAFETY_STATUS") == 0) {
         handle_safety_status(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "CONTROL_STATUS") == 0) {
+        handle_control_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "CONFIG_STATUS") == 0) {
         handle_config_status(handle, argc, argv);
     } else if (strcasecmp(argv[0], "CONFIG_CLEAR") == 0) {

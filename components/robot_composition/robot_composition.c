@@ -1341,6 +1341,52 @@ static actuation_application_result_t application_set_endpoint_speed(
     return map_actuation_result(result);
 }
 
+static actuation_application_result_t application_apply_endpoint_speeds(
+    actuation_application_port_t *port,
+    const actuation_application_velocity_request_t *requests,
+    size_t request_count)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || !requests ||
+        request_count == 0U ||
+        request_count > ACTUATION_COORDINATOR_MAX_SETPOINTS) {
+        return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+    }
+
+    actuation_velocity_request_t coordinator_requests[
+        ACTUATION_COORDINATOR_MAX_SETPOINTS];
+    for (size_t index = 0U; index < request_count; ++index) {
+        if (requests[index].endpoint_id == 0U ||
+            !robot_endpoint_registry_find(&composition->registry,
+                                          requests[index].endpoint_id)) {
+            return ACTUATION_APPLICATION_INVALID_ARGUMENT;
+        }
+        coordinator_requests[index].endpoint_id = requests[index].endpoint_id;
+        coordinator_requests[index].rpm = requests[index].rpm;
+    }
+
+    actuation_report_t report;
+    actuation_result_t result = actuation_coordinator_apply_velocity_rpm(
+        &composition->coordinator,
+        coordinator_requests,
+        request_count,
+        &report);
+    if (result == ACTUATION_RESULT_SUCCESS && composition->legacy_robot) {
+        for (size_t index = 0U; index < request_count; ++index) {
+            uint8_t motor = 0U;
+            if (legacy_motor_for_endpoint(composition,
+                                          requests[index].endpoint_id,
+                                          &motor)) {
+                (void)robot_control_record_coordinated_motor_speed(
+                    composition->legacy_robot,
+                    motor,
+                    requests[index].rpm);
+            }
+        }
+    }
+    return map_actuation_result(result);
+}
+
 static actuation_application_result_t application_stop_endpoint(
     actuation_application_port_t *port,
     robot_endpoint_id_t endpoint_id)
@@ -1655,6 +1701,7 @@ static const actuation_application_ops_t APPLICATION_OPS = {
     .endpoint_count = application_endpoint_count,
     .endpoint_at = application_endpoint_at,
     .set_endpoint_speed_rpm = application_set_endpoint_speed,
+    .apply_endpoint_speeds_rpm = application_apply_endpoint_speeds,
     .stop_endpoint = application_stop_endpoint,
     .get_endpoint_velocity_observation =
         application_get_endpoint_velocity_observation,

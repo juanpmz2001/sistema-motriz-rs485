@@ -51,12 +51,40 @@ static const robot_profile_t CURRENT __attribute__((unused)) = {
     },
     .endpoint_count = 4,
     .endpoints = {
-        {1, "traction_front_left", 1, 0, 3, ROBOT_ENDPOINT_REQUIRED, -15, 15},
-        {2, "traction_front_right", 1, 1, 3, ROBOT_ENDPOINT_REQUIRED, -15, 15},
-        {3, "traction_rear_left", 2, 0, 3, ROBOT_ENDPOINT_REQUIRED, -15, 15},
-        {4, "traction_rear_right", 2, 1, 3, ROBOT_ENDPOINT_REQUIRED, -15, 15},
+        {.id = 1, .name = "traction_front_left", .device_id = 1,
+         .channel = 0, .capabilities = 3, .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15, .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_LEFT,
+         .motion_direction_sign = 1, .motor_to_wheel_ratio = 1.0f},
+        {.id = 2, .name = "traction_front_right", .device_id = 1,
+         .channel = 1, .capabilities = 3, .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15, .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_RIGHT,
+         .motion_direction_sign = 1, .motor_to_wheel_ratio = 1.0f},
+        {.id = 3, .name = "traction_rear_left", .device_id = 2,
+         .channel = 0, .capabilities = 3, .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15, .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_LEFT,
+         .motion_direction_sign = 1, .motor_to_wheel_ratio = 1.0f},
+        {.id = 4, .name = "traction_rear_right", .device_id = 2,
+         .channel = 1, .capabilities = 3, .criticality = ROBOT_ENDPOINT_REQUIRED,
+         .min_rpm = -15, .max_rpm = 15,
+         .motion_side = ROBOT_PROFILE_MOTION_SIDE_RIGHT,
+         .motion_direction_sign = 1, .motor_to_wheel_ratio = 1.0f},
     },
-    .application = {ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY, 1.60f, 0.70f, 0.10f},
+    .application = {
+        .kind = ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY,
+        .wheelbase_m = 1.60f,
+        .track_width_m = 0.70f,
+        .wheel_radius_m = 0.10f,
+        .max_vx_mps = 0.15f,
+        /* Differential v1 has no lateral degree of freedom.  The strictly
+         * positive epsilon satisfies the shared authority/transport contract
+         * while rejecting every materially lateral command. */
+        .max_vy_mps = 0.0001f,
+        .max_wz_radps = 0.40f,
+        .control_ttl_ms = 300U,
+    },
 };
 
 static const robot_profile_t SINGLE_MOTOR __attribute__((unused)) = {
@@ -501,10 +529,58 @@ robot_profile_error_t robot_profile_validate_with_registry(
             }
         }
     }
-    if (profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY &&
-        (!isfinite(profile->application.wheelbase_m) || profile->application.wheelbase_m <= 0 ||
-         !isfinite(profile->application.track_width_m) || profile->application.track_width_m <= 0 ||
-         !isfinite(profile->application.wheel_radius_m) || profile->application.wheel_radius_m <= 0)) return ROBOT_PROFILE_BAD_GEOMETRY;
+    if (profile->application.kind == ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY) {
+        if (!isfinite(profile->application.wheelbase_m) ||
+            profile->application.wheelbase_m <= 0 ||
+            !isfinite(profile->application.track_width_m) ||
+            profile->application.track_width_m <= 0 ||
+            !isfinite(profile->application.wheel_radius_m) ||
+            profile->application.wheel_radius_m <= 0 ||
+            !isfinite(profile->application.max_vx_mps) ||
+            profile->application.max_vx_mps <= 0 ||
+            !isfinite(profile->application.max_vy_mps) ||
+            profile->application.max_vy_mps <= 0 ||
+            !isfinite(profile->application.max_wz_radps) ||
+            profile->application.max_wz_radps <= 0 ||
+            profile->application.control_ttl_ms <
+                ROBOT_PROFILE_CONTROL_TTL_MIN_MS ||
+            profile->application.control_ttl_ms >
+                ROBOT_PROFILE_CONTROL_TTL_MAX_MS) {
+            return ROBOT_PROFILE_BAD_GEOMETRY;
+        }
+        size_t left = 0U;
+        size_t right = 0U;
+        for (size_t index = 0U; index < profile->endpoint_count; ++index) {
+            const robot_endpoint_profile_t *endpoint = &profile->endpoints[index];
+            if (endpoint->motion_side == ROBOT_PROFILE_MOTION_SIDE_NONE) {
+                continue;
+            }
+            if ((endpoint->capabilities & (ROBOT_CAPABILITY_VELOCITY_RPM |
+                                           ROBOT_CAPABILITY_STOPPABLE)) !=
+                    (ROBOT_CAPABILITY_VELOCITY_RPM |
+                     ROBOT_CAPABILITY_STOPPABLE) ||
+                (endpoint->motion_side != ROBOT_PROFILE_MOTION_SIDE_LEFT &&
+                 endpoint->motion_side != ROBOT_PROFILE_MOTION_SIDE_RIGHT) ||
+                (endpoint->motion_direction_sign != -1 &&
+                 endpoint->motion_direction_sign != 1) ||
+                !isfinite(endpoint->motor_to_wheel_ratio) ||
+                endpoint->motor_to_wheel_ratio <= 0.0f) {
+                return ROBOT_PROFILE_BAD_GEOMETRY;
+            }
+            left += endpoint->motion_side == ROBOT_PROFILE_MOTION_SIDE_LEFT;
+            right += endpoint->motion_side == ROBOT_PROFILE_MOTION_SIDE_RIGHT;
+        }
+        if (left == 0U || right == 0U) {
+            return ROBOT_PROFILE_BAD_GEOMETRY;
+        }
+    } else {
+        for (size_t index = 0U; index < profile->endpoint_count; ++index) {
+            if (profile->endpoints[index].motion_side !=
+                ROBOT_PROFILE_MOTION_SIDE_NONE) {
+                return ROBOT_PROFILE_BAD_GEOMETRY;
+            }
+        }
+    }
     return ROBOT_PROFILE_VALID;
 }
 

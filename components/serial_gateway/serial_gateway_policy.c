@@ -17,6 +17,7 @@ static bool no_arg_command_allowed(const char *command)
         "COMPOSITION_STATUS",
         "PLATFORM_STATUS",
         "SAFETY_STATUS",
+        "CONTROL_STATUS",
         "CONFIG_STATUS",
         "WIFI_STATUS",
         "OTA_CONFIG",

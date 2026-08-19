@@ -60,6 +60,19 @@ power path.
   explicit endpoint/global stop, output failure and move timeout clear the target and
   request neutral. The normal stop path is still best effort and remains subordinate
   to the known coordinator/physical-power limitations below.
+- A profile with validated differential endpoint geometry starts the continuous LAN
+  path `control_lan → command_authority → motion_application → traction endpoints`.
+  ARM creates a new nonzero stream, COMMAND requires an increasing sequence and
+  explicit deadman, and the client cannot select its TTL. The current profile uses
+  300 ms; profile validation constrains this contract to 50–500 ms. A released deadman
+  requests zero/global stop, and an expired source is retired before a stop is issued.
+  A retired stream cannot resume without a new ARM/stream.
+- STOP and DISARM evict older pending motion intent and STOP plans are consumed before
+  APPLY plans. This is semantic priority, not physical preemption: an already-running
+  coordinator/driver transaction completes before the service can execute the next
+  stop. The 300 ms value and physical stop latency remain workshop-qualification
+  gates. Rafa does not expose continuous control until its M1/M2 side and direction
+  mapping is independently established.
 - Establishing the logical steering reference is a separate, explicitly confirmed
   maintenance operation. It stops first and maps a freshly observed, physically
   verified pose into the configured coordinate system; it never drives, auto-homes or
@@ -92,6 +105,7 @@ all hazards are controlled.
 | `STOP n`, `STOP ALL` | application port → coordinator → direct SVD48 or steering endpoint adapter | Migrated for constructed stoppable endpoints |
 | `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct SVD48 or steering adapter | Migrated; serial only |
 | `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` | device/channel inventory lookup → application port → coordinator → direct SVD48 adapter | Migrated bench-only maintenance path; no lease/deadman, not `/control` |
+| `/control` LAN intent | `control_lan` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | Active only for validated differential profiles; fixed 300 ms current-profile TTL, software-tested, not physically qualified |
 | Boot and safety stop | application port → coordinator → constructed stoppable adapters | Migrated; physical effectiveness remains unqualified |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
 | `CLEAR_FAULT` | gateway → `robot_control` compatibility facade | Bypass |
@@ -198,7 +212,7 @@ The following block a production baseline:
 | Initial RC absence | RC loss starts only after first valid frame | Explicit startup/arming policy |
 | Command ownership | Speed/stop use coordinator; other writers bypass it | Priority-aware single owner and arbitration |
 | Stop latency | May wait 500 ms for coordinator mutex plus driver timeout | Measured deadline with stop precedence |
-| Command lifetime | Maintenance speed has no TTL/deadman | Lease expiry forces stop |
+| Command lifetime | `/control` has firmware TTL/deadman; maintenance speed still persists | Physically qualify `/control` expiry/stop timing and migrate or isolate every remaining persistent motion path |
 | LAN trust | Shared token and plaintext UDP | Replay protection, rotation and threat model |
 | Steering development axis | A separate AS5600 observation endpoint, local controller and provisional profile LUT are composed in source, but no physical session has run | L2/L3 sensor and actuator qualification, explicit-reference verification, then bounded L4/L5 evidence on the named fixture |
 | AS5600 calibration/reference | Offline 7+7 analysis can reject a bad capture and produce a monotonic candidate LUT; it does not establish zero or absolute wheel angle. The scoped historical candidate still had 7.925° P95 / 15.924° maximum post-correction residual in its historical validation. | Preserve capture/hash/fixture provenance, independently verify reference/angle and direction effects, and review every LUT change before use; do not derive an L4/L5 tolerance from the controller's 3° arrival band. |
