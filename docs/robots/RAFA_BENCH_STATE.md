@@ -1,35 +1,44 @@
 # Rafa — Bench State and Physical Learnings
 
-> Canonical physical bring-up summary after the first real Engineering Console / SVD48 campaign.
+> Canonical physical bring-up summary through the short 2026-08-19 Engineering
+> Console / SVD48 hardening session.
 
 ## Current state
 
 **A — NOT READY FOR FLOOR MOTION**
 
-Rafa is sufficiently observable for continued controlled bench work, but individual motor behavior still needs physical correlation before broader motion testing.
+Rafa is sufficiently observable for controlled read-only and parameter work, but the
+new typed Bench Control path is not yet accepted for the operator's longer manual
+campaign. Its first `HOLD 0 M1` attempt was rejected by the backend before a typed
+firmware actuation result was returned. No speed smoke was attempted afterward.
 
 NEXT-3 continuous-control software now exists, but the Rafa profile intentionally
-keeps `NO_GEOMETRY` and returns `CONTROL_UNAVAILABLE`. No build-26 NEXT-3 image has
-been accepted/deployed and no browser-close, backend-loss or LAN-loss motion evidence
-has been collected. M1/M2 side and positive direction must be established first; the
-software must not infer them from endpoint order or controller RPM.
+keeps `NO_GEOMETRY` and returns `CONTROL_UNAVAILABLE`. Build 27 was deployed by OTA,
+and that unavailable gate plus rejected ARM were verified. Browser-close,
+backend-loss and LAN-loss motion evidence was intentionally not attempted. M1/M2 side
+and positive direction must be established first; software must not infer them from
+endpoint order or controller RPM.
 
 ## Confirmed facts
 
 - Profile: `rafa`.
 - Maintenance LAN works.
 - Last verified address during the campaign: `192.168.1.194`.
-- Last verified firmware: build `24`, SHA beginning `f32c343`.
+- Last verified firmware: version `1.0.0`, build `27`, SHA
+  `1f97bd23146c0214b9932b6f30cca37724022ff1`, clean, OTA slot `ota_0`.
 - Composition active and runtime-ready.
 - Platform returned to `SAFE_IDLE`, `MOTION_ACTIVE:0`.
-- RC input: GPIO14, PPM, 8 valid/fresh channels, `RC_VALID:1`, `RC_LOSS:0`.
+- RC input remains configured on GPIO14 in PPM mode. The 2026-08-19 transmitter-off
+  session reported `RC_SEEN:0`, `RC_VALID:0`, `RC_LOSS:0`; prior valid/fresh receiver
+  evidence remains historical context, not evidence for this boot.
 - One SVD48 is physically present.
 - The real SVD48 RS485 address is **2**.
 - A repeated read-only scan `1..247` found only address 2.
 - Firmware profile was corrected to address 2 and deployed by OTA.
 - Both M1/M2 provide RPM, current, voltage, position, status/error telemetry.
-- `STOP 0`, `STOP 1` and `STOP ALL` work through the Engineering Console/application path.
-- Bus voltage observed around 53.8 V.
+- Legacy `STOP 0`, `STOP 1` and `STOP ALL` worked in the first campaign. Build 27
+  again acknowledged global `STOP ALL` through the Console backend.
+- Bus voltage observed around 53.7–53.8 V.
 - No persistent SVD48 controller or communication error was observed.
 
 ## RS485 discovery rule
@@ -172,7 +181,7 @@ Confirmed:
 - Wheel diameter: 100 mm.
 - Pole pairs M1/M2: 24 / 24.
 - Sensor type M1/M2: Hall / Hall.
-- No parameter write or persistence physically executed.
+- No parameter write or persistence was physically executed in the first campaign.
 
 NEXT-2 float qualification added read-only evidence on 2026-08-18:
 
@@ -185,10 +194,18 @@ NEXT-2 float qualification added read-only evidence on 2026-08-18:
 - golden software tests added for the observed word/value pairs;
 - no parameter write, PID tuning, save, motion or OTA was issued.
 
-The expanded catalog is implemented in the Console and software-tested against Rafa
-and two-controller Toño fakes. Loading the new UI against Rafa still requires the
-already-built NEXT-1 inventory firmware to be deployed OTA in a separately authorized
-session; current physical firmware remains build 24.
+The 2026-08-19 build-27 session exercised the expanded Console API against Rafa:
+
+- M1 and M2 each returned one 29-entry semantic catalog covering controller
+  configuration, motor basics/limits, motion, PID/loop and Hall diagnostics;
+- float fields decoded with the qualified high-word-first codec;
+- M1 returned 22 `AVAILABLE`, 5 `READ_ONLY` and 2 `UNAVAILABLE` entries; M2 returned
+  22 `AVAILABLE`, 4 `READ_ONLY` and 3 `UNAVAILABLE` entries without aborting either
+  snapshot;
+- `control_mode` remained visible/read-only as SPEED; direction was not written;
+- one volatile benign write changed `wheel_diameter_mm` from 100 to 101, independently
+  read back 101, restored 100 and independently read back 100;
+- `SAVE_SVD48_CONFIG` was not requested.
 
 Preserve:
 
@@ -196,6 +213,36 @@ Preserve:
 - real error detail;
 - snapshot/compare despite partial catalog support;
 - no invented adjacent registers.
+
+## Build-27 short smoke session
+
+On 2026-08-19 the current Rafa image was built cleanly with ESP-IDF 5.4.1 and
+`BOTFARMS_PROFILE_RAFA`, installed by OTA only, and verified over Maintenance LAN.
+The deployed binary SHA-256 was
+`c8089e72ae364083e726da4454205c91e97bb73114600a59193dc809b0cca17a`.
+
+Read-only evidence:
+
+- exactly one SVD48 controller, device 1 / bus 1 / RS485 address 2;
+- M1 → endpoint 1 `rafa_traction_m1` and M2 → endpoint 2
+  `rafa_traction_m2`;
+- both channels ended `STOPPED`, 0 RPM, 53.7 V, zero controller and communication
+  errors, and `HEALTHY`/not stale;
+- `PROFILE_STATUS`, `COMPOSITION_STATUS`, `PLATFORM_STATUS` and `SAFETY_STATUS`
+  reported Rafa, active/runtime-ready, `SAFE_IDLE`, no motion/fault and a running
+  safety task;
+- `CONTROL_STATUS` and ARM correctly returned unavailable because Rafa has no
+  qualified geometry.
+
+Bench Control did not pass. The first harness attempt stopped before actuation when
+the freshly connected inventory was `STALE`. After one bounded cache-settle correction,
+the preconditions and both channel snapshots were healthy, but the first
+`ENABLE / HOLD 0 M1` API request returned HTTP 400 before a typed firmware command
+result was exposed. No M2 HOLD, DISABLE or `+1 RPM` test was attempted. Cleanup and a
+separate final check both acknowledged software `STOP ALL`; Rafa ended `SAFE_IDLE`
+with both channels `STOPPED`. Do not treat this as motor-path acceptance. Capture the
+exact backend rejection on one targeted future attempt before deciding whether the
+cause is a freshness race, another pre-actuation gate or a transport error.
 
 ## Recording
 
@@ -236,6 +283,7 @@ USB is recovery-only.
 - M1/M2 physical side;
 - physical positive/negative direction;
 - M2 individual command behavior;
+- typed Bench Control HOLD/DISABLE and `+1 RPM` behavior;
 - negative-direction testing;
 - ±5 RPM characterization;
 - dual-motor motion;

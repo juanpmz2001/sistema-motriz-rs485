@@ -1,11 +1,14 @@
 # SVD48 Workspace v2 — Design Plan
 
-> **Implementation status (2026-08-18):** NEXT-1 generic inventory, cached channel
+> **Implementation status (2026-08-19):** NEXT-1 generic inventory, cached channel
 > telemetry, controller/channel selection and typed Bench Control are implemented in
-> firmware build 25 and the Engineering Console. NEXT-2 is implemented in the Console:
+> firmware build 27 and the Engineering Console. NEXT-2 is implemented in the Console:
 > one semantic per-channel catalog, variant-local `UNAVAILABLE`, snapshot schema 2 and
-> qualified float support. The float codec was validated read-only on physical Rafa;
-> no physical parameter write/save or NEXT-1 motion validation was performed.
+> qualified float support. Build 27 was deployed to Rafa by OTA; physical inventory,
+> channel telemetry, parameter reads and one restored volatile wheel-diameter write
+> passed. No save was requested. Typed Bench Control remains unaccepted because the
+> first HOLD request was rejected before a firmware actuation result; no speed command
+> was attempted. See `docs/robots/RAFA_BENCH_STATE.md` for exact evidence.
 
 ## 1. Why this iteration exists
 

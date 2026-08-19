@@ -19,12 +19,16 @@ feature. Recheck the current code, tests and task scope before acting.
 - The NEXT-1 maintenance contract now exposes typed N-controller SVD48 inventory,
   cached physical-channel telemetry and bounded bench commands. It bypasses neither
   the application coordinator nor the four-binding legacy limit, and it is not the
-  continuous control transport. Physical Rafa validation remains pending.
+  continuous control transport. Build 27 physical Rafa inventory, telemetry,
+  parameter reads and a restored volatile wheel-diameter write passed. Typed Bench
+  Control remains unaccepted after a pre-actuation HTTP 400 on the first M1 HOLD;
+  no speed command was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
   TTL expiry, retired streams and STOP semantics. The current `rafa` profile correctly
-  reports control unavailable because its physical side/sign mapping is still open;
-  no NEXT-3 OTA or Rafa loss-path motion test has been accepted yet.
+  reports control unavailable because its physical side/sign mapping is still open.
+  Build 27 OTA and the unavailable/ARM gate passed; no Rafa loss-path motion test was
+  attempted or accepted.
 
 ## Gates that remain open
 

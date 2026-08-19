@@ -1,9 +1,10 @@
 # Safe Control Plane v1 — Plan
 
-> **Status (2026-08-18):** implemented and host/build tested for profiles with
+> **Status (2026-08-19):** implemented and host/build tested for profiles with
 > validated differential geometry. Rafa remains disabled because its physical M1/M2
-> side/sign mapping is unqualified; OTA deployment and the elevated browser/backend/
-> LAN-loss evidence below are still pending.
+> side/sign mapping is unqualified. Build 27 was deployed to Rafa by OTA and
+> `CONTROL_UNAVAILABLE` plus rejected ARM were confirmed. Elevated browser/backend/
+> LAN-loss motion evidence was correctly not attempted because geometry remains open.
 
 ## Goal
 
