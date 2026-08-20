@@ -19,6 +19,7 @@ static const char *TAG = "robot_safety";
 
 struct robot_safety_t {
     robot_safety_config_t config;
+    robot_safety_rc_lan_interlock_model_t rc_lan_interlock;
     SemaphoreHandle_t lock;
     TaskHandle_t task;
     bool stop_task;
@@ -46,7 +47,8 @@ static void record_status(robot_safety_handle_t handle,
                           bool rc_signal_valid,
                           bool rc_loss_active,
                           bool motor_fault_active,
-                          uint32_t rc_last_frame_age_ms)
+                          uint32_t rc_last_frame_age_ms,
+                          const robot_safety_rc_lan_interlock_snapshot_t *interlock)
 {
     if (take_lock(handle) != ESP_OK) {
         return;
@@ -57,6 +59,12 @@ static void record_status(robot_safety_handle_t handle,
     handle->status.rc_signal_valid = rc_signal_valid;
     handle->status.rc_loss_active = rc_loss_active;
     handle->status.motor_fault_active = motor_fault_active;
+    if (interlock) {
+        handle->status.lan_control_allowed = interlock->lan_allowed;
+        handle->status.rc_lan_channel_us = interlock->channel_us;
+        handle->status.rc_lan_priority_epoch = interlock->priority_epoch;
+        handle->status.rc_lan_interlock_state = interlock->state;
+    }
     handle->status.rc_last_frame_age_ms = rc_last_frame_age_ms;
     handle->status.loop_count++;
     xSemaphoreGive(handle->lock);
@@ -111,10 +119,12 @@ static void safety_task(void *arg)
         bool rc_signal_valid = false;
         uint32_t rc_last_frame_age_ms = 0;
         bool rc_loss_active = false;
+        ibus_receiver_status_t ibus_status = {0};
+        bool have_ibus_status = false;
 
         if (rc_available) {
-            ibus_receiver_status_t ibus_status;
             if (ibus_receiver_get_status(handle->config.ibus_receiver, &ibus_status) == ESP_OK) {
+                have_ibus_status = true;
                 rc_signal_valid = ibus_status.signal_valid;
                 rc_last_frame_age_ms = ibus_status.last_frame_age_ms;
                 if (rc_signal_valid) {
@@ -126,6 +136,18 @@ static void safety_task(void *arg)
             }
         }
 
+        const robot_safety_rc_lan_observation_t interlock_observation = {
+            .receiver_available = rc_available,
+            .signal_valid = rc_signal_valid,
+            .channel_count = have_ibus_status ? ibus_status.frame_channel_count : 0U,
+            .channels = have_ibus_status ? ibus_status.channels : NULL,
+        };
+        robot_safety_rc_lan_interlock_snapshot_t interlock = {0};
+        (void)robot_safety_rc_lan_interlock_model_update(
+            &handle->rc_lan_interlock,
+            &interlock_observation,
+            &interlock);
+
         bool motor_fault_active = handle->config.stop_on_motor_fault && motor_fault_detected(handle);
         record_status(handle,
                       rc_available,
@@ -133,7 +155,8 @@ static void safety_task(void *arg)
                       rc_signal_valid,
                       rc_loss_active,
                       motor_fault_active,
-                      rc_last_frame_age_ms);
+                      rc_last_frame_age_ms,
+                      &interlock);
 
         const bool stop_for_rc = handle->config.stop_on_rc_loss && rc_loss_active;
         const bool stop_for_fault = motor_fault_active;
@@ -181,12 +204,26 @@ esp_err_t robot_safety_init(const robot_safety_config_t *config, robot_safety_ha
     if (handle->config.stop_repeat_ms == 0) {
         handle->config.stop_repeat_ms = ROBOT_SAFETY_DEFAULT_STOP_REPEAT_MS;
     }
+    if (!robot_safety_rc_lan_interlock_model_init(
+            &handle->rc_lan_interlock,
+            &handle->config.rc_lan_interlock)) {
+        free(handle);
+        return ESP_ERR_INVALID_ARG;
+    }
 
     handle->lock = xSemaphoreCreateMutex();
     if (!handle->lock) {
         free(handle);
         return ESP_ERR_NO_MEM;
     }
+    robot_safety_rc_lan_interlock_snapshot_t interlock = {0};
+    const robot_safety_rc_lan_observation_t no_signal = {0};
+    (void)robot_safety_rc_lan_interlock_model_update(&handle->rc_lan_interlock,
+                                                       &no_signal,
+                                                       &interlock);
+    handle->status.lan_control_allowed = interlock.lan_allowed;
+    handle->status.rc_lan_interlock_state = interlock.state;
+    handle->status.rc_lan_priority_epoch = interlock.priority_epoch;
     copy_text(handle->status.last_stop_reason, sizeof(handle->status.last_stop_reason), "NONE");
 
     *out_handle = handle;

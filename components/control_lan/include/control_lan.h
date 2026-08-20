@@ -59,6 +59,20 @@ typedef struct {
 typedef control_lan_callback_result_t (*control_lan_event_callback_t)(control_lan_event_t event,
                                                                       void *context);
 
+/* The transport asks this source-policy boundary whether a fresh LAN session
+ * may be accepted.  revocation_epoch is monotonic: when it changes, any
+ * existing stream is stopped and retired before another packet is processed.
+ * This keeps source selection out of the UDP grammar and out of the motion
+ * application itself. */
+typedef struct {
+    bool lan_allowed;
+    uint32_t revocation_epoch;
+    char detail[CONTROL_LAN_DETAIL_MAX];
+} control_lan_authority_status_t;
+
+typedef control_lan_authority_status_t (*control_lan_authority_status_callback_t)(
+    void *context);
+
 typedef struct {
     config_manager_handle_t config_manager;
     uint16_t listen_port;
@@ -68,6 +82,8 @@ typedef struct {
     float max_abs_wz_radps;
     control_lan_event_callback_t event_callback;
     void *callback_context;
+    control_lan_authority_status_callback_t authority_status_callback;
+    void *authority_context;
 } control_lan_config_t;
 
 typedef struct {
@@ -79,6 +95,9 @@ typedef struct {
     char last_sender[CONTROL_LAN_SENDER_MAX];
     char last_action[CONTROL_LAN_ACTION_MAX];
     char last_detail[CONTROL_LAN_DETAIL_MAX];
+    bool lan_allowed;
+    uint32_t revocation_epoch;
+    char authority_detail[CONTROL_LAN_DETAIL_MAX];
 } control_lan_status_t;
 
 /*

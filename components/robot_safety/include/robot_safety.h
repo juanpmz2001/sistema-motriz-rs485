@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "ibus_receiver.h"
 #include "robot_control.h"
+#include "robot_safety_rc_lan_interlock_model.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,7 @@ typedef struct {
     uint32_t stop_repeat_ms;
     bool stop_on_rc_loss;
     bool stop_on_motor_fault;
+    robot_safety_rc_lan_interlock_config_t rc_lan_interlock;
 } robot_safety_config_t;
 
 typedef struct {
@@ -34,6 +36,10 @@ typedef struct {
     bool rc_signal_valid;
     bool rc_loss_active;
     bool motor_fault_active;
+    bool lan_control_allowed;
+    uint16_t rc_lan_channel_us;
+    uint32_t rc_lan_priority_epoch;
+    robot_safety_rc_lan_interlock_state_t rc_lan_interlock_state;
     uint32_t rc_last_frame_age_ms;
     uint32_t loop_count;
     uint32_t stop_requests;

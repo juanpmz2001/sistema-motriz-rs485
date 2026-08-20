@@ -20,7 +20,7 @@ static const char *TAG = "control_lan";
 
 #define CONTROL_LAN_RESPONSE_MAX 1024U
 #define CONTROL_LAN_JSON_DEPTH_MAX 8U
-#define CONTROL_LAN_SOCKET_TIMEOUT_US 250000
+#define CONTROL_LAN_SOCKET_TIMEOUT_US 20000
 #define CONTROL_LAN_RETRY_DELAY_MS 500U
 
 struct control_lan_t {
@@ -34,6 +34,7 @@ struct control_lan_t {
     bool stream_active;
     uint64_t active_stream_hash;
     uint64_t last_sequence;
+    uint32_t active_authority_epoch;
     control_lan_status_t status;
 };
 
@@ -464,6 +465,34 @@ static void reject_packet(control_lan_handle_t handle,
     (void)write_response(response, response_size, request_id, "err", detail);
 }
 
+static control_lan_authority_status_t authority_status(
+    control_lan_handle_t handle)
+{
+    control_lan_authority_status_t status = {
+        .lan_allowed = true,
+        .revocation_epoch = 0U,
+    };
+    copy_text(status.detail, sizeof(status.detail), "LAN_ALLOWED");
+    if (handle->config.authority_status_callback) {
+        status = handle->config.authority_status_callback(
+            handle->config.authority_context);
+        if (!memchr(status.detail, '\0', sizeof(status.detail)) ||
+            status.detail[0] == '\0') {
+            copy_text(status.detail,
+                      sizeof(status.detail),
+                      status.lan_allowed ? "LAN_ALLOWED" : "LAN_BLOCKED");
+        }
+    }
+    state_lock(handle);
+    handle->status.lan_allowed = status.lan_allowed;
+    handle->status.revocation_epoch = status.revocation_epoch;
+    copy_text(handle->status.authority_detail,
+              sizeof(handle->status.authority_detail),
+              status.detail);
+    state_unlock(handle);
+    return status;
+}
+
 static void normalize_callback_detail(const control_lan_callback_result_t *result,
                                       char *detail,
                                       size_t detail_size)
@@ -507,11 +536,49 @@ static void retire_active_stream(control_lan_handle_t handle)
     handle->stream_active = false;
     handle->active_stream_hash = 0U;
     handle->last_sequence = 0U;
+    handle->active_authority_epoch = 0U;
+}
+
+static void enforce_authority(control_lan_handle_t handle,
+                              const control_lan_authority_status_t *authority,
+                              uint64_t timestamp_us)
+{
+    if (!handle->stream_active ||
+        (authority->lan_allowed &&
+         handle->active_authority_epoch == authority->revocation_epoch)) {
+        return;
+    }
+
+    control_lan_event_t stop_event = {
+        .action = CONTROL_LAN_ACTION_STOP,
+        .stream_id_hash = handle->active_stream_hash,
+        .sequence = handle->last_sequence,
+        .timestamp_us = timestamp_us,
+    };
+    control_lan_callback_result_t stop_result =
+        handle->config.event_callback(stop_event, handle->config.callback_context);
+    const bool accepted = stop_result.accepted;
+    retire_active_stream(handle);
+
+    state_lock(handle);
+    copy_text(handle->status.last_action,
+              sizeof(handle->status.last_action),
+              "authority");
+    copy_text(handle->status.last_detail,
+              sizeof(handle->status.last_detail),
+              accepted ? authority->detail : "AUTHORITY_STOP_REJECTED");
+    state_unlock(handle);
+    ESP_LOGW(TAG,
+             "LAN stream revoked authority=%s epoch=%lu stop=%s",
+             authority->detail,
+             (unsigned long)authority->revocation_epoch,
+             accepted ? "QUEUED" : "REJECTED");
 }
 
 static void commit_event_order(control_lan_handle_t handle,
                                const control_lan_event_t *event,
-                               bool callback_accepted)
+                               bool callback_accepted,
+                               uint32_t authority_epoch)
 {
     if (event->action == CONTROL_LAN_ACTION_STOP ||
         event->action == CONTROL_LAN_ACTION_DISARM) {
@@ -527,6 +594,7 @@ static void commit_event_order(control_lan_handle_t handle,
         retire_active_stream(handle);
         handle->stream_active = true;
         handle->active_stream_hash = event->stream_id_hash;
+        handle->active_authority_epoch = authority_epoch;
     }
     handle->last_sequence = event->sequence;
 }
@@ -716,6 +784,20 @@ static void handle_packet(control_lan_handle_t handle,
     }
 
     event.timestamp_us = received_at_us;
+    control_lan_authority_status_t authority = authority_status(handle);
+    enforce_authority(handle, &authority, received_at_us);
+    if ((action == CONTROL_LAN_ACTION_ARM || action == CONTROL_LAN_ACTION_COMMAND) &&
+        !authority.lan_allowed) {
+        reject_packet(handle,
+                      sender,
+                      action_text,
+                      request_id,
+                      authority.detail,
+                      response,
+                      response_size);
+        cJSON_Delete(root);
+        return;
+    }
     const char *order_error = validate_event_order(handle, &event);
     if (order_error) {
         reject_packet(handle,
@@ -756,7 +838,10 @@ static void handle_packet(control_lan_handle_t handle,
 
     control_lan_callback_result_t callback_result =
         handle->config.event_callback(event, handle->config.callback_context);
-    commit_event_order(handle, &event, callback_result.accepted);
+    commit_event_order(handle,
+                       &event,
+                       callback_result.accepted,
+                       authority.revocation_epoch);
 
     char callback_detail[CONTROL_LAN_DETAIL_MAX] = { 0 };
     normalize_callback_detail(&callback_result, callback_detail, sizeof(callback_detail));
@@ -845,6 +930,12 @@ static void control_lan_task(void *arg)
         bool receive_burst_active = false;
         uint64_t receive_burst_timestamp_us = 0U;
         while (!stop_requested(handle)) {
+            int64_t authority_timer_us = esp_timer_get_time();
+            const control_lan_authority_status_t authority = authority_status(handle);
+            enforce_authority(handle,
+                              &authority,
+                              authority_timer_us > 0 ?
+                                  (uint64_t)authority_timer_us : 0U);
             char packet[CONTROL_LAN_PACKET_MAX + 1U];
             struct sockaddr_in source_addr = { 0 };
             socklen_t source_len = sizeof(source_addr);
@@ -966,6 +1057,10 @@ esp_err_t control_lan_init(const control_lan_config_t *config, control_lan_handl
     handle->socket_fd = -1;
     handle->status.listen_port = handle->config.listen_port;
     copy_text(handle->status.last_detail, sizeof(handle->status.last_detail), "NEVER_RUN");
+    handle->status.lan_allowed = true;
+    copy_text(handle->status.authority_detail,
+              sizeof(handle->status.authority_detail),
+              "LAN_ALLOWED");
 
     handle->lock = xSemaphoreCreateMutex();
     handle->task_done = xSemaphoreCreateBinary();

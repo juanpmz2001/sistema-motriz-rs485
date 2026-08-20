@@ -154,6 +154,20 @@ Not established:
 
 Do not add automatic `PPM → traction` control as part of UI work.
 
+### RC/LAN priority policy (build 30 target)
+
+The operator qualified the receiver failsafe for Rafa: with the RC transmitter
+disconnected, the receiver emits a valid PPM frame with `CH5=2000us`. The static
+Rafa profile therefore treats valid CH5≤1500us as `PPM_PRIORITY` and valid
+CH5>1500us as `RC_FAILSAFE`.
+
+This is deliberately not PPM traction authority. `PPM_PRIORITY` must stop/revoke
+an existing LAN session and prevent LAN ARM while it remains valid. `RC_FAILSAFE`
+and no first valid PPM frame permit only a fresh explicit LAN ARM. If valid PPM is
+lost after it held priority, the state is `PPM_LOST`; the prior LAN stream remains
+retired. OTA/runtime verification of this policy belongs to the build-30 handoff,
+not this physical-evidence record.
+
 `PPM_CAPTURE` should not be used as a live LAN operation if its blocking behavior can delay STOP.
 
 ## Telemetry

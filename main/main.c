@@ -56,12 +56,38 @@ static bool motion_safety_gate(void *context,
         snprintf(detail, detail_size, "%s", "MOTOR_FAULT");
         return false;
     }
-    if (status.rc_loss_active) {
+    if ((!profile || !profile->rc_lan_interlock.enabled) &&
+        status.rc_loss_active) {
         snprintf(detail, detail_size, "%s", "RC_LOSS");
         return false;
     }
     snprintf(detail, detail_size, "%s", "SAFE");
     return true;
+}
+
+static control_lan_authority_status_t control_lan_authority_status(
+    void *context)
+{
+    robot_safety_status_t safety_status;
+    control_lan_authority_status_t status = {
+        .lan_allowed = false,
+    };
+    if (!context ||
+        robot_safety_get_status(context, &safety_status) != ESP_OK) {
+        snprintf(status.detail,
+                 sizeof(status.detail),
+                 "%s",
+                 "SAFETY_STATUS_UNAVAILABLE");
+        return status;
+    }
+    status.lan_allowed = safety_status.lan_control_allowed;
+    status.revocation_epoch = safety_status.rc_lan_priority_epoch;
+    snprintf(status.detail,
+             sizeof(status.detail),
+             "%s",
+             robot_safety_rc_lan_interlock_state_name(
+                 safety_status.rc_lan_interlock_state));
+    return status;
 }
 
 static control_lan_callback_result_t control_lan_event_callback(
@@ -160,6 +186,8 @@ static esp_err_t start_control_plane(void)
         .max_abs_wz_radps = max_wz_radps,
         .event_callback = control_lan_event_callback,
         .callback_context = motion_application,
+        .authority_status_callback = control_lan_authority_status,
+        .authority_context = robot_safety,
     };
     error = control_lan_init(&control_config, &control_lan);
     if (error == ESP_OK) {
@@ -502,8 +530,16 @@ void app_main(void)
         .period_ms = 20,
         .rc_loss_timeout_ms = 150,
         .stop_repeat_ms = 500,
-        .stop_on_rc_loss = true,
+        /* Rafa's receiver failsafe is a source-selection input (CH5), not a
+         * global reason to stop a valid LAN lease.  Legacy profiles retain
+         * their existing generic RC-loss stop behavior. */
+        .stop_on_rc_loss = !profile->rc_lan_interlock.enabled,
         .stop_on_motor_fault = true,
+        .rc_lan_interlock = {
+            .enabled = profile->rc_lan_interlock.enabled,
+            .channel = profile->rc_lan_interlock.channel,
+            .active_max_us = profile->rc_lan_interlock.active_max_us,
+        },
     };
     err = robot_safety_init(&safety_config, &robot_safety);
     if (err != ESP_OK) {

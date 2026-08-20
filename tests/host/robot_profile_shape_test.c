@@ -159,6 +159,9 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(fabsf(profile->application.max_wz_radps - 0.20f) <
                     0.000001f);
     HOST_TEST_CHECK(profile->application.control_ttl_ms == 300U);
+    HOST_TEST_CHECK(profile->rc_lan_interlock.enabled);
+    HOST_TEST_CHECK(profile->rc_lan_interlock.channel == 5U);
+    HOST_TEST_CHECK(profile->rc_lan_interlock.active_max_us == 1500U);
     HOST_TEST_CHECK(robot_profile_validate(profile) == ROBOT_PROFILE_VALID);
 
     robot_profile_t pin_conflict = *profile;

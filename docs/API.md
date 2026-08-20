@@ -432,6 +432,22 @@ It starts only when the selected profile has validated differential geometry. It
 separate from Maintenance LAN: joystick heartbeats never use port `32321` or ASCII
 speed commands, and PPM is not a control authority in this version.
 
+Rafa additionally has a profile-owned RC/LAN interlock. It is source selection, not
+PPM motion control:
+
+- Before the first valid PPM frame, LAN may create a session.
+- Rafa's reviewed receiver failsafe is `CH5=2000us`; valid `CH5>1500us` is
+  `RC_FAILSAFE` and permits a **new** LAN ARM.
+- Valid `CH5<=1500us` is `PPM_PRIORITY`. `control_lan` revokes its active stream,
+  queues STOP through the normal motion service and rejects ARM/COMMAND while that
+  condition persists.
+- A loss after PPM priority is recorded as `PPM_LOST`. It never resumes the retired
+  LAN stream; a new ARM is required after PPM no longer has priority.
+
+This check is polled by `control_lan` independently of incoming joystick packets.
+It therefore also revokes an already-active LAN stream when the browser/backend has
+gone quiet. STOP and DISARM remain terminal actions regardless of this interlock.
+
 Every request carries the current maintenance token plus a client-generated stream
 and monotonically increasing sequence. ARM, DISARM and STOP omit `command`; COMMAND
 includes semantic body velocity and deadman:
@@ -489,7 +505,7 @@ observation, not intent. It returns one session line followed by the declared nu
 of endpoint lines:
 
 ```text
-DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:LAN DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
+DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:LAN DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> LAN_ELIGIBLE:<0|1> RC_INTERLOCK:<DISABLED|RC_NO_SIGNAL|RC_FAILSAFE|PPM_PRIORITY|PPM_LOST|RC_CHANNEL_UNAVAILABLE> RC_CH5_US:<n|0> LAN_REVOCATION_EPOCH:<n> DETAIL:<token>
 DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> OBSERVED_RPM:<rpm> OBSERVATION_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<health>
 ```
 
@@ -497,3 +513,7 @@ Profiles without qualified differential geometry return `ERR CONTROL_UNAVAILABLE
 The current `rafa` profile carries its operator-qualified M1/M2 side/sign mapping and
 therefore exposes this control plane. Availability does not by itself qualify physical
 direction, expiry latency or floor motion for a particular deployed artifact.
+
+`SAFETY_STATUS` appends the same `RC_INTERLOCK`, `RC_CH5_US`, `LAN_ELIGIBLE` and
+`LAN_REVOCATION_EPOCH` fields. Consumers must continue to parse by key and ignore
+unknown additions, as required by the ASCII v1 framing contract.

@@ -80,11 +80,20 @@ power path.
   proves that the selected pose is mechanically correct. It also cannot clear or
   re-arm a latched steering fault.
 - A priority-9 safety task runs every 20 ms. After a valid RC frame has been seen,
-  invalid RC for at least 150 ms activates RC-loss handling.
+  invalid RC for at least 150 ms activates RC-loss observation. For profiles without
+  an RC/LAN interlock it remains a global stop condition.
+- Rafa has a profile-owned RC/LAN interlock on receiver CH5: valid CH5≤1500us gives
+  PPM priority, revokes any active LAN stream through `control_lan →
+  motion_application`, and blocks LAN ARM/COMMAND. CH5=2000us is the reviewed
+  receiver failsafe and allows a fresh LAN ARM. PPM itself has no motion authority.
+  Loss after PPM priority is surfaced as `PPM_LOST`; the old LAN stream is retired
+  and cannot resume automatically.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates
   motor-fault handling.
-- While RC loss or a reported motor fault remains active, the safety task requests a
-  serialized global stop every 500 ms.
+- While a legacy RC-loss stop or a reported motor fault remains active, the safety
+  task requests a serialized global stop every 500 ms. Rafa does not turn an absent
+  or failsafe RC signal into a stop of a live LAN lease; the source-aware interlock
+  above is the applicable safeguard.
 - OTA checks `robot_control_is_safe_for_ota()` and uses the legacy preparation path
   before changing the boot partition. That predicate skips offline/stale telemetry and
   otherwise blocks on an unconfirmed raw observed-speed magnitude above 5 RPM.

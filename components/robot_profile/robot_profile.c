@@ -155,6 +155,14 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
         .max_wz_radps = 0.20f,
         .control_ttl_ms = 300U,
     },
+    /* PPM is deliberately an interlock rather than a motion authority.  The
+     * receiver's configured failsafe is CH5=2000us, so CH5>1500 leaves a
+     * fresh LAN session eligible while CH5<=1500 revokes it. */
+    .rc_lan_interlock = {
+        .enabled = true,
+        .channel = 5U,
+        .active_max_us = 1500U,
+    },
 };
 
 /* This table is a reviewed, static calibration candidate from the empirical
@@ -608,6 +616,13 @@ robot_profile_error_t robot_profile_validate_with_registry(
                 return ROBOT_PROFILE_BAD_GEOMETRY;
             }
         }
+    }
+
+    if (profile->rc_lan_interlock.enabled &&
+        (profile->rc_lan_interlock.channel == 0U ||
+         profile->rc_lan_interlock.channel > 14U ||
+         profile->rc_lan_interlock.active_max_us == 0U)) {
+        return ROBOT_PROFILE_BAD_RC_LAN_INTERLOCK;
     }
     return ROBOT_PROFILE_VALID;
 }

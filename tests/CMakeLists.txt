@@ -133,6 +133,15 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME robot_safety_rc_lan_interlock_model_test
+    SOURCES
+        host/robot_safety_rc_lan_interlock_model_test.c
+        ../components/robot_safety/robot_safety_rc_lan_interlock_model.c
+    INCLUDE_DIRS
+        ../components/robot_safety/include
+)
+
+botfarms_add_host_test(
     NAME bus_transport_test
     SOURCES
         host/bus_transport_test.c

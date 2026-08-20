@@ -7,7 +7,7 @@
 
 #include "robot_capabilities.h"
 
-#define ROBOT_PROFILE_SCHEMA_VERSION 4
+#define ROBOT_PROFILE_SCHEMA_VERSION 5
 #define ROBOT_PROFILE_CONTROL_TTL_MIN_MS 50U
 #define ROBOT_PROFILE_CONTROL_TTL_MAX_MS 500U
 #define ROBOT_PROFILE_MAX_BUSES 5
@@ -146,6 +146,15 @@ typedef struct {
     uint32_t control_ttl_ms;
 } robot_application_profile_t;
 
+/* RC is not a motion authority in this profile.  This static interlock only
+ * says when an observed RC frame has priority over a LAN control session.  The
+ * selected channel is one-based because it is physical receiver terminology. */
+typedef struct {
+    bool enabled;
+    uint8_t channel;
+    uint16_t active_max_us;
+} robot_rc_lan_interlock_profile_t;
+
 typedef struct {
     const char *id;
     uint64_t valid_gpio_mask;
@@ -171,6 +180,7 @@ typedef struct {
     size_t steering_axis_count;
     robot_steering_axis_profile_t steering_axes[ROBOT_PROFILE_MAX_STEERING_AXES];
     robot_application_profile_t application;
+    robot_rc_lan_interlock_profile_t rc_lan_interlock;
 } robot_profile_t;
 
 typedef struct {
@@ -205,6 +215,7 @@ typedef enum {
     ROBOT_PROFILE_DUPLICATE_ADDRESS,
     ROBOT_PROFILE_BAD_STEERING_AXIS,
     ROBOT_PROFILE_BAD_CALIBRATION,
+    ROBOT_PROFILE_BAD_RC_LAN_INTERLOCK,
 } robot_profile_error_t;
 
 robot_profile_error_t robot_profile_validate(const robot_profile_t *profile);
