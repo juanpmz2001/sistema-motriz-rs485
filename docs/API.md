@@ -478,7 +478,11 @@ STOP; the old stream cannot silently resume.
 STOP/DISARM are accepted as fail-safe terminal actions without requiring a matching
 active stream. A new ARM for another stream first publishes a source-switch STOP.
 Velocity fields must be finite and within the profile limits returned by
-`CONTROL_STATUS`; differential v1 accepts no material lateral velocity.
+`CONTROL_STATUS`; differential v1 accepts no material lateral velocity. The packet
+is parsed as decimal JSON but the active control representation is `float`, so
+validation quantizes to that representation before comparing the profile bound. A
+decimal equal to a published bound such as Rafa's `0.02` m/s is therefore accepted;
+values that quantize above the bound remain rejected as `BAD_VELOCITY`.
 
 `CONTROL_STATUS` is a read-only ASCII command exposed through Maintenance LAN for
 observation, not intent. It returns one session line followed by the declared number

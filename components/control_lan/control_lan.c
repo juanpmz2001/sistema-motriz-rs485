@@ -353,17 +353,30 @@ static bool parse_command(control_lan_handle_t handle,
     if (!parse_finite_number(command, "vx_mps", &vx_mps) ||
         !parse_finite_number(command, "vy_mps", &vy_mps) ||
         !parse_finite_number(command, "wz_radps", &wz_radps) ||
-        fabs(vx_mps) > (double)handle->config.max_abs_vx_mps ||
-        fabs(vy_mps) > (double)handle->config.max_abs_vy_mps ||
-        fabs(wz_radps) > (double)handle->config.max_abs_wz_radps ||
         fabs(vx_mps) > FLT_MAX || fabs(vy_mps) > FLT_MAX ||
         fabs(wz_radps) > FLT_MAX) {
         *detail = "BAD_VELOCITY";
         return false;
     }
-    event->vx_mps = (float)vx_mps;
-    event->vy_mps = (float)vy_mps;
-    event->wz_radps = (float)wz_radps;
+    /*
+     * The profile limits and event payload are floats, while cJSON exposes
+     * decimal JSON as double. Compare in the same representation consumed by
+     * motion_application so a decimal equal to a published limit (for example
+     * 0.02) is not rejected merely because its configured float widens to a
+     * slightly smaller double.
+     */
+    const float requested_vx_mps = (float)vx_mps;
+    const float requested_vy_mps = (float)vy_mps;
+    const float requested_wz_radps = (float)wz_radps;
+    if (fabsf(requested_vx_mps) > handle->config.max_abs_vx_mps ||
+        fabsf(requested_vy_mps) > handle->config.max_abs_vy_mps ||
+        fabsf(requested_wz_radps) > handle->config.max_abs_wz_radps) {
+        *detail = "BAD_VELOCITY";
+        return false;
+    }
+    event->vx_mps = requested_vx_mps;
+    event->vy_mps = requested_vy_mps;
+    event->wz_radps = requested_wz_radps;
 
     const cJSON *deadman = NULL;
     if (!unique_item(command, "deadman", &deadman) || !cJSON_IsBool(deadman)) {
