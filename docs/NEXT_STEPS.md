@@ -30,8 +30,10 @@ feature. Recheck the current code, tests and task scope before acting.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
   TTL expiry, retired streams and STOP semantics. Build 28 source now activates Rafa's
   qualified geometry with conservative 0.02 m/s and 0.20 rad/s limits and TTL 300 ms.
-  OTA/runtime and the first elevated bounded motion smoke remain to be recorded; no
-  Rafa browser/backend/LAN-loss motion test has yet been accepted.
+  Build 28 was installed by OTA on 2026-08-19 and returned `CONTROL_STATUS` as
+  `DISARMED`, `DETAIL:READY`, with both traction endpoints healthy. The first elevated
+  bounded motion smoke remains to be recorded; no Rafa browser/backend/LAN-loss motion
+  test has yet been accepted.
 
 ## Gates that remain open
 
@@ -39,8 +41,8 @@ feature. Recheck the current code, tests and task scope before acting.
    authorized elevated bench session under [Safety](SAFETY.md) and the testing
    contract. Resolve the historical M2 feedback anomaly during operator work;
    controller feedback alone is insufficient for a new physical claim.
-2. Keep Maintenance LAN out of continuous motion and do not add PPM authority. Deploy
-   and perform the single bounded elevated Rafa smoke for the encoded mapping, then
+2. Keep Maintenance LAN out of continuous motion and do not add PPM authority. Perform
+   the single bounded elevated Rafa smoke for the encoded mapping, then
    separately measure key-release, browser close, backend loss and LAN-loss expiry
    with wheels elevated and an independent physical cut-off. A software/model pass is
    not that evidence.

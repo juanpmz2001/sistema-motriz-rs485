@@ -14,21 +14,24 @@ required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
 intermittent HTTP 400 responses from read-only Console preflight endpoints before
 further HOLD requests were sent. No speed smoke was attempted.
 
-Build 27 remains the last verified installed artifact and correctly returned
-`CONTROL_UNAVAILABLE`. The operator has since qualified the physical differential
-mapping and dimensions below; build 28 source encodes them, but OTA/runtime and the
-first bounded elevated `/control` smoke still require separate evidence. Browser-close,
-backend-loss and LAN-loss motion evidence has not been attempted.
+Build 28 is the verified installed artifact. It encodes the operator-qualified
+differential mapping and dimensions below and now exposes continuous LAN control as
+`DISARMED`, `DETAIL:READY`. No ARM or motion command was issued during the OTA retry;
+the first bounded elevated `/control` smoke and browser-close, backend-loss and
+LAN-loss motion evidence still require separate operator-authorized sessions.
 
 ## Confirmed facts
 
 - Profile: `rafa`.
 - Maintenance LAN works.
 - Last verified address during the campaign: `192.168.1.194`.
-- Last verified firmware: version `1.0.0`, build `27`, SHA
-  `1f97bd23146c0214b9932b6f30cca37724022ff1`, clean, OTA slot `ota_0`.
+- Last verified firmware: version `1.0.0`, build `28`, SHA
+  `d256ef87f0e386839b456ba3adfddec365e3ac1a`, clean, OTA slot `ota_1`, OTA state
+  `VALID`, with no pending verification.
 - Composition active and runtime-ready.
 - Platform returned to `SAFE_IDLE`, `MOTION_ACTIVE:0`.
+- `CONTROL_STATUS` returned `TASK:RUNNING`, `STATE:DISARMED`, `SOURCE:LAN`,
+  `TTL_MS:300`, `DETAIL:READY`; M1 and M2 observations were healthy at 0 RPM.
 - RC input remains configured on GPIO14 in PPM mode. The 2026-08-19 transmitter-off
   session reported `RC_SEEN:0`, `RC_VALID:0`, `RC_LOSS:0`; prior valid/fresh receiver
   evidence remains historical context, not evidence for this boot.

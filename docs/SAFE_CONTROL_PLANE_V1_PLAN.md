@@ -1,10 +1,10 @@
 # Safe Control Plane v1 — Plan
 
-> **Status (2026-08-19):** implemented and host-tested. The operator has now qualified
-> Rafa's M1/M2 side/sign and physical differential dimensions, and build 28 source
-> encodes that immutable geometry. OTA/runtime and the first elevated bounded motion
-> smoke remain deployment evidence, not facts implied by this plan. Browser/backend/
-> LAN-loss motion evidence remains a later elevated qualification.
+> **Status (2026-08-19):** implemented and host-tested. The operator has qualified
+> Rafa's M1/M2 side/sign and physical differential dimensions, and build 28 encodes
+> that immutable geometry. Build 28 is installed by OTA and runtime reports continuous
+> control `DISARMED` and ready with TTL 300 ms. The first elevated bounded motion smoke
+> and browser/backend/LAN-loss motion evidence remain later elevated qualifications.
 
 ## Goal
 
