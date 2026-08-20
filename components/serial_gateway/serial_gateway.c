@@ -835,7 +835,7 @@ static void handle_control_status(serial_gateway_handle_t handle,
 
     print_locked(
         handle,
-        "DATA CONTROL TASK:%s STATE:%s SOURCE:LAN DEADMAN:%u TTL_MS:%lu LEASE_FRESH:%u LEASE_AGE_MS:%lu LEASE_REMAINING_MS:%lu STREAM_HASH:%016llx SEQUENCE:%llu MAX_VX_MPS:%.4f MAX_VY_MPS:%.4f MAX_WZ_RADPS:%.4f REQUESTED_VX_MPS:%.4f REQUESTED_VY_MPS:%.4f REQUESTED_WZ_RADPS:%.4f ENDPOINTS:%u LAN_ELIGIBLE:%u RC_INTERLOCK:%s RC_CH5_US:%u LAN_REVOCATION_EPOCH:%lu DETAIL:%s\n",
+        "DATA CONTROL TASK:%s STATE:%s SOURCE:LAN DEADMAN:%u TTL_MS:%lu LEASE_FRESH:%u LEASE_AGE_MS:%lu LEASE_REMAINING_MS:%lu STREAM_HASH:%016llx SEQUENCE:%llu MAX_VX_MPS:%.4f MAX_VY_MPS:%.4f MAX_WZ_RADPS:%.4f REQUESTED_VX_MPS:%.4f REQUESTED_VY_MPS:%.4f REQUESTED_WZ_RADPS:%.4f ENDPOINTS:%u DETAIL:%s\n",
         status.task_running ? "RUNNING" : "STOPPED",
         motion_control_state_name(status.state),
         status.deadman ? 1U : 0U,
@@ -852,13 +852,15 @@ static void handle_control_status(serial_gateway_handle_t handle,
         (double)status.requested_vy_mps,
         (double)status.requested_wz_radps,
         (unsigned)status.endpoint_count,
-        safety_available && safety.lan_control_allowed ? 1U : 0U,
-        safety_available ? robot_safety_rc_lan_interlock_state_name(
-                               safety.rc_lan_interlock_state)
-                         : "UNAVAILABLE",
-        safety_available ? safety.rc_lan_channel_us : 0U,
-        (unsigned long)(safety_available ? safety.rc_lan_priority_epoch : 0U),
         safe_text(status.last_detail, "UNKNOWN"));
+    print_locked(handle,
+                 "DATA CONTROL_AUTHORITY LAN_ELIGIBLE:%u RC_INTERLOCK:%s RC_CH5_US:%u LAN_REVOCATION_EPOCH:%lu\n",
+                 safety_available && safety.lan_control_allowed ? 1U : 0U,
+                 safety_available ? robot_safety_rc_lan_interlock_state_name(
+                                       safety.rc_lan_interlock_state)
+                                  : "UNAVAILABLE",
+                 safety_available ? safety.rc_lan_channel_us : 0U,
+                 (unsigned long)(safety_available ? safety.rc_lan_priority_epoch : 0U));
     for (size_t index = 0U; index < status.endpoint_count; ++index) {
         const motion_status_endpoint_t *endpoint = &status.endpoints[index];
         print_locked(
