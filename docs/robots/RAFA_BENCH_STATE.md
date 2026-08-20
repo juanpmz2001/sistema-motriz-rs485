@@ -154,7 +154,7 @@ Not established:
 
 Do not add automatic `PPM → traction` control as part of UI work.
 
-### RC/LAN priority policy (build 31 target)
+### RC/LAN priority policy (build 31 installed)
 
 The operator qualified the receiver failsafe for Rafa: with the RC transmitter
 disconnected, the receiver emits a valid PPM frame with `CH5=2000us`. The static
@@ -170,6 +170,13 @@ Console can expose the firmware decision without risking truncation of the contr
 session detail. Physical verification of a CH5≤1500us transition still belongs to a
 separate, explicitly authorized bench observation; it is not implied by the
 receiver-failsafe observation above.
+
+On 2026-08-20, build 31 (`ca1fa79`) was installed by OTA. The post-reboot LAN
+snapshot reported the `rafa` profile, active composition, `SAFE_IDLE`, two zero-RPM
+traction endpoints, `RC_INTERLOCK:RC_FAILSAFE`, `RC_CH5_US:2000`,
+`LAN_ELIGIBLE:1`, and a separate `DATA CONTROL_AUTHORITY ...` line with
+`DETAIL:READY` preserved on the session line. No physical CH5≤1500us priority
+transition or motor motion was performed as part of that OTA verification.
 
 `PPM_CAPTURE` should not be used as a live LAN operation if its blocking behavior can delay STOP.
 
