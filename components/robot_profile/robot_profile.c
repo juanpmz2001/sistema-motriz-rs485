@@ -155,13 +155,28 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
         .max_wz_radps = 0.20f,
         .control_ttl_ms = 300U,
     },
-    /* PPM is deliberately an interlock rather than a motion authority.  The
-     * receiver's configured failsafe is CH5=2000us, so CH5>1500 leaves a
-     * fresh LAN session eligible while CH5<=1500 revokes it. */
+    /* The receiver's configured failsafe is CH5=2000us, so CH5>1500 leaves a
+     * fresh LAN session eligible while CH5<=1500 grants PPM source priority. */
     .rc_lan_interlock = {
         .enabled = true,
         .channel = 5U,
         .active_max_us = 1500U,
+    },
+    .ppm_motion = {
+        .enabled = true,
+        .throttle_channel = 2U,
+        .steering_channel = 4U,
+        .enable_channel = 5U,
+        .enable_active_max_us = 1500U,
+        .neutral_us = 1500U,
+        .neutral_deadband_us = 30U,
+        /* These bounds equal the receiver's reviewed PPM acceptance window.
+         * They deliberately do not assert a full-scale radio calibration. */
+        .input_min_us = 750U,
+        .input_max_us = 2250U,
+        .throttle_sign = 1,
+        /* Differential +wz is left. Operator-qualified CH4 high is right. */
+        .steering_sign = -1,
     },
 };
 
@@ -623,6 +638,29 @@ robot_profile_error_t robot_profile_validate_with_registry(
          profile->rc_lan_interlock.channel > 14U ||
          profile->rc_lan_interlock.active_max_us == 0U)) {
         return ROBOT_PROFILE_BAD_RC_LAN_INTERLOCK;
+    }
+    if (profile->ppm_motion.enabled) {
+        const robot_ppm_motion_profile_t *ppm = &profile->ppm_motion;
+        if (profile->application.kind != ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY ||
+            !profile->rc_lan_interlock.enabled ||
+            ppm->throttle_channel == 0U || ppm->throttle_channel > 14U ||
+            ppm->steering_channel == 0U || ppm->steering_channel > 14U ||
+            ppm->enable_channel == 0U || ppm->enable_channel > 14U ||
+            ppm->throttle_channel == ppm->steering_channel ||
+            ppm->throttle_channel == ppm->enable_channel ||
+            ppm->steering_channel == ppm->enable_channel ||
+            ppm->enable_channel != profile->rc_lan_interlock.channel ||
+            ppm->enable_active_max_us !=
+                profile->rc_lan_interlock.active_max_us ||
+            ppm->neutral_deadband_us == 0U ||
+            ppm->input_min_us >= ppm->input_max_us ||
+            ppm->neutral_deadband_us >= ppm->input_max_us ||
+            ppm->neutral_us <= ppm->input_min_us + ppm->neutral_deadband_us ||
+            ppm->neutral_us >= ppm->input_max_us - ppm->neutral_deadband_us ||
+            (ppm->throttle_sign != -1 && ppm->throttle_sign != 1) ||
+            (ppm->steering_sign != -1 && ppm->steering_sign != 1)) {
+            return ROBOT_PROFILE_BAD_PPM_MOTION;
+        }
     }
     return ROBOT_PROFILE_VALID;
 }

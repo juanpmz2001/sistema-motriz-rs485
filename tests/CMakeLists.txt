@@ -133,6 +133,15 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME ppm_motion_model_test
+    SOURCES
+        host/ppm_motion_model_test.c
+        ../components/ppm_motion_source/ppm_motion_model.c
+    INCLUDE_DIRS
+        ../components/ppm_motion_source/include
+)
+
+botfarms_add_host_test(
     NAME robot_safety_rc_lan_interlock_model_test
     SOURCES
         host/robot_safety_rc_lan_interlock_model_test.c

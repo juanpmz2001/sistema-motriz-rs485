@@ -78,6 +78,14 @@ typedef enum {
 } svd48_observation_mask_t;
 
 #define SVD48_OBSERVATION_COUNT ((size_t)SVD48_OBSERVATION_INDEX_COUNT)
+/* These measurements are refreshed by every device poll and establish that a
+ * velocity endpoint has a live controller feedback path. Slow diagnostics
+ * (status, temperatures, bus voltage and error register) retain independent
+ * freshness bits; they must not turn a live velocity channel into a false
+ * communication outage merely because their lower-rate cadence is older. */
+#define SVD48_OBSERVATION_VELOCITY_COMMUNICATION \
+    (SVD48_OBSERVATION_POSITION | SVD48_OBSERVATION_SPEED | \
+     SVD48_OBSERVATION_CURRENT)
 
 typedef struct {
     bool online;

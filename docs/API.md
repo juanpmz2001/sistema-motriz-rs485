@@ -505,7 +505,7 @@ observation, not intent. It returns one session line followed by the declared nu
 of endpoint lines:
 
 ```text
-DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:LAN DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
+DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:<NONE|LAN|RC> DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
 DATA CONTROL_AUTHORITY LAN_ELIGIBLE:<0|1> RC_INTERLOCK:<DISABLED|RC_NO_SIGNAL|RC_FAILSAFE|PPM_PRIORITY|PPM_LOST|RC_CHANNEL_UNAVAILABLE> RC_CH5_US:<n|0> LAN_REVOCATION_EPOCH:<n>
 DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> OBSERVED_RPM:<rpm> OBSERVATION_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<health>
 ```
@@ -514,6 +514,23 @@ Profiles without qualified differential geometry return `ERR CONTROL_UNAVAILABLE
 The current `rafa` profile carries its operator-qualified M1/M2 side/sign mapping and
 therefore exposes this control plane. Availability does not by itself qualify physical
 direction, expiry latency or floor motion for a particular deployed artifact.
+
+### Rafa PPM source
+
+Rafa additionally owns one local PPM source. It does not use Maintenance LAN and it
+does not send controller commands directly: `ibus_receiver → ppm_motion_source →
+motion_application → command_authority → robot_kinematics → traction endpoints`.
+`CONTROL_STATUS SOURCE:RC` identifies that selected source; `SOURCE:NONE` means no
+armed stream and `SOURCE:LAN` identifies the UDP source.
+
+The immutable Rafa mapping is CH2 high = forward (`+vx`), CH4 high = right
+(`-wz`, because differential positive yaw is left), and CH5≤1500us = PPM priority.
+The receiver failsafe CH5=2000us leaves LAN eligible. The source needs a *new* valid
+PPM frame with CH2 and CH4 neutral (1500±30us) after PPM priority begins, after PPM
+loss, or after any external STOP before it can ARM. Each following fresh PPM frame
+publishes a bounded command with the profile TTL (300 ms); stale/missing PPM stops
+and retires the RC stream. The profile uses the reviewed PPM acceptance window
+750–2250us as an input bound, not a claim that radio endpoints are calibrated.
 
 `SAFETY_STATUS` appends the same `RC_INTERLOCK`, `RC_CH5_US`, `LAN_ELIGIBLE` and
 `LAN_REVOCATION_EPOCH` fields. Consumers must continue to parse by key and ignore

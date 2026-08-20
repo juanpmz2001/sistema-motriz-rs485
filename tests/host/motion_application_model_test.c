@@ -46,11 +46,46 @@ static motion_application_event_t event(motion_application_event_action_t action
 {
     motion_application_event_t value = {
         .action = action,
+        .source = COMMAND_AUTHORITY_SOURCE_LAN,
         .stream_id = stream,
         .sequence = sequence,
         .received_at_ms = received_at_ms,
     };
     return value;
+}
+
+static bool init_model(motion_application_model_t *model);
+
+static bool test_rc_source_is_explicit_and_cannot_mix_with_lan(void)
+{
+    motion_application_model_t model;
+    motion_application_plan_t plan;
+    HOST_TEST_CHECK(init_model(&model));
+    motion_application_event_t arm =
+        event(MOTION_APPLICATION_EVENT_ARM, 88U, 1U, 0U);
+    arm.source = COMMAND_AUTHORITY_SOURCE_RC;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &arm, true, 0U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    motion_application_model_snapshot_t snapshot;
+    HOST_TEST_CHECK(motion_application_model_snapshot(&model, &snapshot));
+    HOST_TEST_CHECK(snapshot.source == COMMAND_AUTHORITY_SOURCE_RC);
+
+    motion_application_event_t command =
+        event(MOTION_APPLICATION_EVENT_COMMAND, 88U, 2U, 10U);
+    command.source = COMMAND_AUTHORITY_SOURCE_RC;
+    command.deadman = true;
+    command.vx_mps = 0.1f;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &command, true, 10U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    command.sequence = 3U;
+    command.received_at_ms = 20U;
+    command.source = COMMAND_AUTHORITY_SOURCE_LAN;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &command, true, 20U, &plan) ==
+                    MOTION_APPLICATION_RESULT_SOURCE_MISMATCH);
+    return true;
 }
 
 static bool init_model(motion_application_model_t *model)
@@ -312,6 +347,7 @@ int main(void)
         HOST_TEST_CASE(
             test_stop_has_global_priority_and_stream_history_is_bounded),
         HOST_TEST_CASE(test_rafa_qualified_geometry_targets_and_ttl),
+        HOST_TEST_CASE(test_rc_source_is_explicit_and_cannot_mix_with_lan),
     };
     host_test_summary_t summary =
         host_test_run_cases(cases, HOST_TEST_ARRAY_COUNT(cases), stdout);

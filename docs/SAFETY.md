@@ -85,9 +85,13 @@ power path.
 - Rafa has a profile-owned RC/LAN interlock on receiver CH5: valid CH5≤1500us gives
   PPM priority, revokes any active LAN stream through `control_lan →
   motion_application`, and blocks LAN ARM/COMMAND. CH5=2000us is the reviewed
-  receiver failsafe and allows a fresh LAN ARM. PPM itself has no motion authority.
-  Loss after PPM priority is surfaced as `PPM_LOST`; the old LAN stream is retired
-  and cannot resume automatically.
+  receiver failsafe and allows a fresh LAN ARM. Rafa's PPM source reaches traction
+  only through `ppm_motion_source → motion_application → command_authority →
+  robot_kinematics`; it never calls an SVD48 driver. A PPM takeover first stops and
+  retires the prior stream, then requires a new CH2/CH4-neutral frame before RC ARM.
+  PPM loss, CH5 failsafe, or an external STOP requires that neutral handshake again.
+  Loss after PPM priority is surfaced as `PPM_LOST`; an old LAN or RC stream cannot
+  resume automatically.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates
   motor-fault handling.
 - While a legacy RC-loss stop or a reported motor fault remains active, the safety
@@ -116,6 +120,7 @@ all hazards are controlled.
 | `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct SVD48 or steering adapter | Migrated; serial only |
 | `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` | device/channel inventory lookup → application port → coordinator → direct SVD48 adapter | Migrated bench-only maintenance path; no lease/deadman, not `/control` |
 | `/control` LAN intent | `control_lan` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | Active only for validated differential profiles; fixed 300 ms current-profile TTL, software-tested, not physically qualified |
+| Rafa PPM intent | `ibus_receiver` → `ppm_motion_source` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | CH5 source priority, neutral-before-arm, profile TTL; software-tested, not physically qualified |
 | Boot and safety stop | application port → coordinator → constructed stoppable adapters | Migrated; physical effectiveness remains unqualified |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
 | `CLEAR_FAULT` | gateway → `robot_control` compatibility facade | Bypass |
@@ -156,10 +161,12 @@ fresh.
   failed. It is not counted as complete success and receives polling backoff. It
   contributes to `DEGRADED` only after the higher-precedence `OFFLINE`, fresh `FAULT`
   and `STALE` checks described below.
-- **Healthy:** every configured SVD48 observation is valid and fresh, the latest cycle
-  is complete and the controller reports no fault.
-- **Degraded:** communication remains available and prior values are still fresh, but
-  an observation has a failure bit or the latest cycle is partial/failed.
+- **Healthy velocity communication:** position, speed and current are valid and
+  fresh, and no fresh controller error is present. Lower-rate diagnostic fields have
+  their own freshness; their expiry is shown in the snapshot but does not by itself
+  make a velocity endpoint unavailable.
+- **Degraded velocity communication:** communication remains available and prior
+  velocity feedback is still fresh, but position, speed or current has a failure bit.
 - **Stale observation:** its own age exceeds the configured freshness threshold,
   independently of later success for another field.
 - **Offline:** no successful device transaction remains within the configured
@@ -167,11 +174,12 @@ fresh.
 - **Fault:** a valid, fresh error-code observation is nonzero; a successful unrelated
   bus operation does not erase it.
 
-Channel health applies these states in order: `OFFLINE`, fresh `FAULT`, `STALE`,
-`DEGRADED`, then `HEALTHY`. Offline always wins; a fresh nonzero error yields `FAULT`
-even if another field is stale, while a stale error observation no longer yields
-`FAULT`. A totally failed poll can be degraded during the window in which prior
-observations and the last successful transaction remain fresh.
+Velocity-channel health applies these states in order: `OFFLINE`, fresh `FAULT`,
+fast-feedback `STALE`, fast-feedback `DEGRADED`, then `HEALTHY`. Offline always
+wins; a fresh nonzero error yields `FAULT` even if a lower-rate diagnostic is stale,
+while a stale error observation no longer yields `FAULT`. A totally failed poll can
+be degraded during the window in which prior observations and the last successful
+transaction remain fresh.
 
 These driver facts are diagnostic foundations. The active `robot_safety` task still
 reads the legacy projection and ignores offline/stale telemetry rather than applying

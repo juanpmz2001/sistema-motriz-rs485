@@ -180,10 +180,9 @@ power cut-off and stored as an external artifact; it is not part of CI.
 ## Polling, freshness and health
 
 Each fast cycle attempts position, speed and current; the periodic slow cycle also
-attempts status, temperatures, bus voltage and error code. All eight configured
-observations are required for a fully healthy channel, but each retains independent
-validity, failure state and update time. Later success for current, status or
-temperature does not refresh a failed speed observation.
+attempts status, temperatures, bus voltage and error code. Every observation retains
+independent validity, failure state and update time. Later success for current,
+status or temperature does not refresh a failed speed observation.
 
 The public snapshot exposes `valid_observations`, `failed_observations`,
 `stale_observations`, per-field `observation_update_ms`, `last_poll_ms` and
@@ -198,17 +197,22 @@ The public snapshot exposes `valid_observations`, `failed_observations`,
   timeout/busy/I/O/frame/protocol result.
 - `stale` is evaluated independently per observation from its own timestamp.
 - `offline` means no successful device transaction remains within the configured
-  timeout. `stale` means at least one configured observation is invalid or too old;
-  `degraded` retains online, fresh prior observations but records a failure bit or a
-  non-complete latest poll, including a totally failed poll while the prior success is
-  still recent.
+  timeout. Snapshot-level `stale` means at least one configured observation is
+  invalid or too old; it is deliberately more sensitive than the velocity-channel
+  communication health.
+- Velocity-channel communication health requires only the fast feedback set:
+  position, speed and current. A stale lower-rate status, temperature, bus-voltage or
+  error-code observation remains visible in `stale_observations`, but does not by
+  itself report the channel as unavailable or inhibit velocity control.
+- `degraded` for the velocity channel records a failure in that same fast feedback
+  set while the controller remains online and its last valid feedback is fresh.
 - A valid, fresh nonzero controller error code maps to fault and is not erased by a
   later unrelated read.
 
-Health precedence is `OFFLINE`, fresh `FAULT`, `STALE`, `DEGRADED`, then `HEALTHY`.
-Offline always wins; a fresh nonzero error yields `FAULT` even if another field is
-stale, while a stale error observation no longer yields `FAULT`. Unrelated success
-does not clear a fresh fault.
+Velocity-channel health precedence is `OFFLINE`, fresh `FAULT`, fast-feedback
+`STALE`, fast-feedback `DEGRADED`, then `HEALTHY`. Offline always wins; a fresh
+nonzero error yields `FAULT` even if another field is stale, while a stale error
+observation no longer yields `FAULT`. Unrelated success does not clear a fresh fault.
 
 The active safety task still consumes the legacy telemetry projection and does not
 yet turn all stale/offline/degraded required observations into motion inhibits. See

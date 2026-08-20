@@ -11,6 +11,7 @@
 #include "ibus_receiver.h"
 #include "maintenance_lan.h"
 #include "motion_application_service.h"
+#include "ppm_motion_source.h"
 #include "nvs_flash.h"
 #include "ota_announce.h"
 #include "ota_manager.h"
@@ -36,6 +37,7 @@ static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
 static motion_application_service_handle_t motion_application = NULL;
 static control_lan_handle_t control_lan = NULL;
+static ppm_motion_source_handle_t ppm_motion_source = NULL;
 static robot_composition_t composition;
 
 static bool motion_safety_gate(void *context,
@@ -116,6 +118,7 @@ static control_lan_callback_result_t control_lan_event_callback(
     }
     motion_application_event_t command = {
         .action = action,
+        .source = COMMAND_AUTHORITY_SOURCE_LAN,
         .stream_id = event.stream_id_hash,
         .sequence = event.sequence,
         .received_at_ms = event.timestamp_us / 1000U,
@@ -135,6 +138,8 @@ static control_lan_callback_result_t control_lan_event_callback(
 
 static void deinit_control_plane(void)
 {
+    ppm_motion_source_deinit(ppm_motion_source);
+    ppm_motion_source = NULL;
     control_lan_deinit(control_lan);
     control_lan = NULL;
     motion_application_service_deinit(motion_application);
@@ -165,6 +170,29 @@ static esp_err_t start_control_plane(void)
     if (error != ESP_OK) {
         deinit_control_plane();
         return error;
+    }
+    if (profile->ppm_motion.enabled) {
+        const ppm_motion_source_config_t ppm_config = {
+            .profile = profile,
+            .receiver = ibus_receiver,
+            .motion_application = motion_application,
+            .period_ms = PPM_MOTION_SOURCE_DEFAULT_PERIOD_MS,
+            .task_priority = PPM_MOTION_SOURCE_DEFAULT_TASK_PRIORITY,
+        };
+        error = ppm_motion_source_init(&ppm_config, &ppm_motion_source);
+        if (error == ESP_OK) {
+            error = ppm_motion_source_start(ppm_motion_source);
+        }
+        if (error != ESP_OK) {
+            ESP_LOGE(TAG, "PPM motion source failed to start, err=0x%x", error);
+            deinit_control_plane();
+            return error;
+        }
+        ESP_LOGI(TAG,
+                 "PPM motion source active: CH%u throttle, CH%u steering, CH%u priority",
+                 (unsigned)profile->ppm_motion.throttle_channel,
+                 (unsigned)profile->ppm_motion.steering_channel,
+                 (unsigned)profile->ppm_motion.enable_channel);
     }
 
     float max_vx_mps;

@@ -37,3 +37,17 @@ const char *motion_control_state_name(motion_control_state_t state)
         return "UNKNOWN";
     }
 }
+
+const char *motion_control_source_name(motion_control_source_t source)
+{
+    switch (source) {
+    case MOTION_CONTROL_SOURCE_NONE:
+        return "NONE";
+    case MOTION_CONTROL_SOURCE_LAN:
+        return "LAN";
+    case MOTION_CONTROL_SOURCE_RC:
+        return "RC";
+    default:
+        return "UNKNOWN";
+    }
+}

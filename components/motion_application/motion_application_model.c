@@ -59,10 +59,17 @@ static bool retire_active_stream(motion_application_model_t *model)
             model->active_stream_id;
     }
     model->active_stream_id = 0U;
+    model->active_source = COMMAND_AUTHORITY_SOURCE_NONE;
     model->sequence = 0U;
     model->deadman = false;
     model->requested = zero_velocity();
     return true;
+}
+
+static bool event_source_supported(command_authority_source_t source)
+{
+    return source == COMMAND_AUTHORITY_SOURCE_LAN ||
+           source == COMMAND_AUTHORITY_SOURCE_RC;
 }
 
 static bool config_valid(const motion_application_model_config_t *config)
@@ -283,6 +290,9 @@ static motion_application_result_t handle_arm(
     uint64_t now_ms,
     motion_application_plan_t *plan)
 {
+    if (!event_source_supported(event->source)) {
+        return MOTION_APPLICATION_RESULT_SOURCE_INVALID;
+    }
     if (!safety_gate_open) {
         copy_detail(model->last_detail, "SAFETY_GATE_CLOSED");
         return MOTION_APPLICATION_RESULT_UNSAFE;
@@ -312,7 +322,7 @@ static motion_application_result_t handle_arm(
         .body = {0.0f, 0.0f, 0.0f},
     };
     if (command_authority_model_publish(&model->authority,
-                                        COMMAND_AUTHORITY_SOURCE_LAN,
+                                        event->source,
                                         &command,
                                         now_ms) != COMMAND_AUTHORITY_RESULT_OK) {
         return MOTION_APPLICATION_RESULT_AUTHORITY_REJECTED;
@@ -320,6 +330,7 @@ static motion_application_result_t handle_arm(
     command_authority_cycle_result_t cycle;
     (void)command_authority_model_arbitrate(&model->authority, now_ms, &cycle);
     model->active_stream_id = event->stream_id;
+    model->active_source = event->source;
     model->sequence = event->sequence;
     model->last_received_ms = event->received_at_ms;
     model->deadman = false;
@@ -345,6 +356,12 @@ static motion_application_result_t handle_command(
     if (event->stream_id != model->active_stream_id) {
         return MOTION_APPLICATION_RESULT_STREAM_MISMATCH;
     }
+    if (!event_source_supported(event->source)) {
+        return MOTION_APPLICATION_RESULT_SOURCE_INVALID;
+    }
+    if (event->source != model->active_source) {
+        return MOTION_APPLICATION_RESULT_SOURCE_MISMATCH;
+    }
     if (!safety_gate_open) {
         return fault_stop(model,
                           now_ms,
@@ -363,7 +380,7 @@ static motion_application_result_t handle_command(
     };
     command_authority_result_t published = command_authority_model_publish(
         &model->authority,
-        COMMAND_AUTHORITY_SOURCE_LAN,
+        event->source,
         &command,
         now_ms);
     if (published != COMMAND_AUTHORITY_RESULT_OK) {
@@ -491,6 +508,7 @@ bool motion_application_model_snapshot(
     }
     memset(snapshot, 0, sizeof(*snapshot));
     snapshot->state = model->state;
+    snapshot->source = model->active_source;
     snapshot->command_ttl_ms = model->config.command_ttl_ms;
     snapshot->deadman = model->deadman;
     snapshot->stream_id = model->active_stream_id;
@@ -532,6 +550,10 @@ const char *motion_application_result_name(motion_application_result_t result)
         return "AUTHORITY_REJECTED";
     case MOTION_APPLICATION_RESULT_KINEMATICS_FAILED:
         return "KINEMATICS_FAILED";
+    case MOTION_APPLICATION_RESULT_SOURCE_INVALID:
+        return "SOURCE_INVALID";
+    case MOTION_APPLICATION_RESULT_SOURCE_MISMATCH:
+        return "SOURCE_MISMATCH";
     default:
         return "UNKNOWN";
     }

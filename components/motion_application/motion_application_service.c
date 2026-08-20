@@ -45,6 +45,19 @@ static void copy_detail(char *destination, size_t size, const char *detail)
     snprintf(destination, size, "%s", detail ? detail : "UNKNOWN");
 }
 
+static motion_control_source_t status_source(
+    command_authority_source_t source)
+{
+    switch (source) {
+    case COMMAND_AUTHORITY_SOURCE_LAN:
+        return MOTION_CONTROL_SOURCE_LAN;
+    case COMMAND_AUTHORITY_SOURCE_RC:
+        return MOTION_CONTROL_SOURCE_RC;
+    default:
+        return MOTION_CONTROL_SOURCE_NONE;
+    }
+}
+
 static bool take_lock(motion_application_service_handle_t handle,
                       TickType_t ticks)
 {
@@ -349,6 +362,7 @@ static bool status_snapshot(motion_status_port_t *port,
     snapshot->available = true;
     snapshot->task_running = task_running;
     snapshot->state = model_snapshot.state;
+    snapshot->source = status_source(model_snapshot.source);
     snapshot->command_ttl_ms = model_snapshot.command_ttl_ms;
     snapshot->deadman = model_snapshot.deadman;
     snapshot->stream_id_hash = model_snapshot.stream_id;
@@ -403,6 +417,7 @@ static bool emergency_stop(motion_control_port_t *port,
     motion_application_service_handle_t handle = port ? port->context : NULL;
     motion_application_event_t event = {
         .action = MOTION_APPLICATION_EVENT_STOP,
+        .source = COMMAND_AUTHORITY_SOURCE_NONE,
         .received_at_ms = now_ms(),
     };
     motion_application_submit_result_t result =

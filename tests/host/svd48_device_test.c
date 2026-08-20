@@ -843,6 +843,30 @@ static bool test_total_poll_failure_degrades_then_goes_offline(void)
     return true;
 }
 
+static bool test_slow_diagnostics_do_not_make_live_velocity_communication_stale(void)
+{
+    svd48_channel_snapshot_t snapshot = {
+        .online = true,
+        .valid_observations = SVD48_OBSERVATION_ALL,
+        .stale_observations = SVD48_OBSERVATION_STATUS |
+                              SVD48_OBSERVATION_MOTOR_TEMP |
+                              SVD48_OBSERVATION_MOS_TEMP |
+                              SVD48_OBSERVATION_BUS_VOLTAGE |
+                              SVD48_OBSERVATION_ERROR_CODE,
+        .stale = true,
+    };
+    HOST_TEST_CHECK(svd48_channel_health_from_snapshot(&snapshot) ==
+                    SVD48_CHANNEL_HEALTH_HEALTHY);
+    snapshot.stale_observations |= SVD48_OBSERVATION_SPEED;
+    HOST_TEST_CHECK(svd48_channel_health_from_snapshot(&snapshot) ==
+                    SVD48_CHANNEL_HEALTH_STALE);
+    snapshot.stale_observations = 0U;
+    snapshot.failed_observations = SVD48_OBSERVATION_CURRENT;
+    HOST_TEST_CHECK(svd48_channel_health_from_snapshot(&snapshot) ==
+                    SVD48_CHANNEL_HEALTH_DEGRADED);
+    return true;
+}
+
 static bool test_fresh_fault_clears_after_zero_error_poll(void)
 {
     device_fixture_t fixture;
@@ -1010,6 +1034,7 @@ int main(void)
         HOST_TEST_CASE(test_successful_poll_has_rpm_and_fresh_observations),
         HOST_TEST_CASE(test_partial_poll_preserves_independent_speed_freshness),
         HOST_TEST_CASE(test_total_poll_failure_degrades_then_goes_offline),
+        HOST_TEST_CASE(test_slow_diagnostics_do_not_make_live_velocity_communication_stale),
         HOST_TEST_CASE(test_fresh_fault_clears_after_zero_error_poll),
         HOST_TEST_CASE(test_successful_read_clears_failed_observation),
         HOST_TEST_CASE(test_fast_poll_after_initial_success),

@@ -835,9 +835,10 @@ static void handle_control_status(serial_gateway_handle_t handle,
 
     print_locked(
         handle,
-        "DATA CONTROL TASK:%s STATE:%s SOURCE:LAN DEADMAN:%u TTL_MS:%lu LEASE_FRESH:%u LEASE_AGE_MS:%lu LEASE_REMAINING_MS:%lu STREAM_HASH:%016llx SEQUENCE:%llu MAX_VX_MPS:%.4f MAX_VY_MPS:%.4f MAX_WZ_RADPS:%.4f REQUESTED_VX_MPS:%.4f REQUESTED_VY_MPS:%.4f REQUESTED_WZ_RADPS:%.4f ENDPOINTS:%u DETAIL:%s\n",
+        "DATA CONTROL TASK:%s STATE:%s SOURCE:%s DEADMAN:%u TTL_MS:%lu LEASE_FRESH:%u LEASE_AGE_MS:%lu LEASE_REMAINING_MS:%lu STREAM_HASH:%016llx SEQUENCE:%llu MAX_VX_MPS:%.4f MAX_VY_MPS:%.4f MAX_WZ_RADPS:%.4f REQUESTED_VX_MPS:%.4f REQUESTED_VY_MPS:%.4f REQUESTED_WZ_RADPS:%.4f ENDPOINTS:%u DETAIL:%s\n",
         status.task_running ? "RUNNING" : "STOPPED",
         motion_control_state_name(status.state),
+        motion_control_source_name(status.source),
         status.deadman ? 1U : 0U,
         (unsigned long)status.command_ttl_ms,
         status.lease_fresh ? 1U : 0U,

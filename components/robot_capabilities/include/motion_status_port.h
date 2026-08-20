@@ -19,6 +19,12 @@ typedef enum {
     MOTION_CONTROL_FAULT,
 } motion_control_state_t;
 
+typedef enum {
+    MOTION_CONTROL_SOURCE_NONE = 0,
+    MOTION_CONTROL_SOURCE_LAN,
+    MOTION_CONTROL_SOURCE_RC,
+} motion_control_source_t;
+
 typedef struct {
     robot_endpoint_id_t endpoint_id;
     const char *name;
@@ -35,6 +41,7 @@ typedef struct {
     bool available;
     bool task_running;
     motion_control_state_t state;
+    motion_control_source_t source;
     uint32_t command_ttl_ms;
     uint32_t lease_age_ms;
     uint32_t lease_remaining_ms;
@@ -74,6 +81,7 @@ static inline bool motion_status_snapshot(motion_status_port_t *port,
 }
 
 const char *motion_control_state_name(motion_control_state_t state);
+const char *motion_control_source_name(motion_control_source_t source);
 
 /* Maintenance writes and bench motion must not compete with a prepared or active
  * continuous-control session. Profiles without this capability intentionally

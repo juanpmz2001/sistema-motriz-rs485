@@ -667,11 +667,15 @@ svd48_channel_health_t svd48_channel_health_from_snapshot(
         snapshot->error_code != 0U) {
         return SVD48_CHANNEL_HEALTH_FAULT;
     }
-    if (snapshot->stale) {
+    if ((snapshot->valid_observations &
+         SVD48_OBSERVATION_VELOCITY_COMMUNICATION) !=
+            SVD48_OBSERVATION_VELOCITY_COMMUNICATION ||
+        (snapshot->stale_observations &
+         SVD48_OBSERVATION_VELOCITY_COMMUNICATION) != 0U) {
         return SVD48_CHANNEL_HEALTH_STALE;
     }
-    if (snapshot->failed_observations != 0U ||
-        snapshot->last_poll_result != SVD48_DEVICE_OK) {
+    if ((snapshot->failed_observations &
+         SVD48_OBSERVATION_VELOCITY_COMMUNICATION) != 0U) {
         return SVD48_CHANNEL_HEALTH_DEGRADED;
     }
     return SVD48_CHANNEL_HEALTH_HEALTHY;

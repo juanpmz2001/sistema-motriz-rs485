@@ -20,8 +20,10 @@ and typed actuator endpoints.
   dual-channel SVD48 controllers. The `bench_single_svd48_motor` profile maps
   only logical index `0` to M1 of one controller and has no motion geometry.
 - The `rafa` profile maps one SVD48 at address 2 to the stable endpoint names
-  `rafa_traction_m1` and `rafa_traction_m2`, configures PPM observation on GPIO14,
-  and carries the operator-qualified two-wheel differential side/sign geometry.
+  `rafa_traction_m1` and `rafa_traction_m2`, and carries the operator-qualified
+  two-wheel differential side/sign geometry. Its PPM source on GPIO14 maps CH2
+  high to forward and CH4 high to right; CH5≤1500 selects RC priority and CH5=2000
+  is the receiver failsafe that leaves LAN eligible.
 - A separate build-selected `bench_single_steering_as5600` development profile
   composes one motor-mode PWM output, one AS5600 position sensor and one local
   steering controller. It has no traction geometry and is not a qualified robot

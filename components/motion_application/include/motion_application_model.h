@@ -21,6 +21,7 @@ typedef enum {
 
 typedef struct {
     motion_application_event_action_t action;
+    command_authority_source_t source;
     uint64_t stream_id;
     uint64_t sequence;
     uint64_t received_at_ms;
@@ -82,10 +83,13 @@ typedef enum {
     MOTION_APPLICATION_RESULT_UNSAFE,
     MOTION_APPLICATION_RESULT_AUTHORITY_REJECTED,
     MOTION_APPLICATION_RESULT_KINEMATICS_FAILED,
+    MOTION_APPLICATION_RESULT_SOURCE_INVALID,
+    MOTION_APPLICATION_RESULT_SOURCE_MISMATCH,
 } motion_application_result_t;
 
 typedef struct {
     motion_control_state_t state;
+    command_authority_source_t source;
     uint32_t command_ttl_ms;
     bool deadman;
     uint64_t stream_id;
@@ -101,6 +105,7 @@ typedef struct {
     motion_application_model_config_t config;
     command_authority_model_t authority;
     motion_control_state_t state;
+    command_authority_source_t active_source;
     uint64_t active_stream_id;
     uint64_t sequence;
     uint64_t last_received_ms;

@@ -99,7 +99,8 @@ Do not duplicate the mixer in:
 
 - keyboard;
 - virtual joystick;
-- future PPM;
+- a future PPM source (the Rafa profile now has a separately scoped PPM source;
+  it reuses this application/authority path and does not alter the LAN protocol);
 - future ROS/Jetson.
 
 All sources publish robot intent.
@@ -164,7 +165,8 @@ No SVD48 register configuration belongs on this page.
 
 # Explicitly excluded
 
-- PPM authority;
+- a general multi-profile PPM authority framework (Rafa's profile-owned PPM source
+  is intentionally narrower and is documented by the as-built architecture);
 - torque/current command mode;
 - floor motion qualification;
 - autonomous control;

@@ -162,6 +162,17 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->rc_lan_interlock.enabled);
     HOST_TEST_CHECK(profile->rc_lan_interlock.channel == 5U);
     HOST_TEST_CHECK(profile->rc_lan_interlock.active_max_us == 1500U);
+    HOST_TEST_CHECK(profile->ppm_motion.enabled);
+    HOST_TEST_CHECK(profile->ppm_motion.throttle_channel == 2U);
+    HOST_TEST_CHECK(profile->ppm_motion.steering_channel == 4U);
+    HOST_TEST_CHECK(profile->ppm_motion.enable_channel == 5U);
+    HOST_TEST_CHECK(profile->ppm_motion.enable_active_max_us == 1500U);
+    HOST_TEST_CHECK(profile->ppm_motion.neutral_us == 1500U);
+    HOST_TEST_CHECK(profile->ppm_motion.neutral_deadband_us == 30U);
+    HOST_TEST_CHECK(profile->ppm_motion.input_min_us == 750U);
+    HOST_TEST_CHECK(profile->ppm_motion.input_max_us == 2250U);
+    HOST_TEST_CHECK(profile->ppm_motion.throttle_sign == 1);
+    HOST_TEST_CHECK(profile->ppm_motion.steering_sign == -1);
     HOST_TEST_CHECK(robot_profile_validate(profile) == ROBOT_PROFILE_VALID);
 
     robot_profile_t pin_conflict = *profile;

@@ -146,13 +146,19 @@ Confirmed:
 - 8 channels;
 - no RC loss.
 
-Not established:
+Operator-supplied source configuration for the next OTA artifact (not physical
+qualification yet):
 
-- stick/channel mapping;
-- neutral/min/max per control;
-- RC-to-motion authority.
+- CH2 high: forward;
+- CH4 high: right;
+- CH5≤1500us: PPM priority;
+- neutral: 1500±30us before PPM arm;
+- PPM TTL: 300 ms;
+- input acceptance window: 750–2250us.
 
-Do not add automatic `PPM → traction` control as part of UI work.
+The associated software path is `ibus_receiver → ppm_motion_source →
+motion_application → command_authority → robot_kinematics → traction endpoints`.
+It must be installed by OTA and tested elevated before any floor-motion conclusion.
 
 ### RC/LAN priority policy (build 31 installed)
 
