@@ -1,7 +1,7 @@
 # Rafa — Bench State and Physical Learnings
 
-> Canonical physical bring-up summary through the short 2026-08-19 Engineering
-> Console / SVD48 hardening session.
+> Canonical physical bring-up summary through the 2026-08-20 OTA and PPM-control
+> readiness update.
 
 ## Current state
 
@@ -14,24 +14,26 @@ required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
 intermittent HTTP 400 responses from read-only Console preflight endpoints before
 further HOLD requests were sent. No speed smoke was attempted.
 
-Build 28 is the verified installed artifact. It encodes the operator-qualified
-differential mapping and dimensions below and now exposes continuous LAN control as
-`DISARMED`, `DETAIL:READY`. No ARM or motion command was issued during the OTA retry;
-the first bounded elevated `/control` smoke and browser-close, backend-loss and
-LAN-loss motion evidence still require separate operator-authorized sessions.
+Build 33 is the verified installed artifact. It encodes the operator-qualified
+differential mapping and dimensions below, the profile-owned PPM source described
+later in this document, and the corrected fast-feedback health semantics. It exposes
+continuous control as `DISARMED`, `SOURCE:NONE`, `TTL_MS:300`. No ARM, PPM command or
+motion command was issued during this OTA verification; the first bounded elevated
+smoke and browser-close, backend-loss and LAN-loss motion evidence still require
+separate operator-authorized sessions.
 
 ## Confirmed facts
 
 - Profile: `rafa`.
 - Maintenance LAN works.
 - Last verified address during the campaign: `192.168.1.194`.
-- Last verified firmware: version `1.0.0`, build `28`, SHA
-  `d256ef87f0e386839b456ba3adfddec365e3ac1a`, clean, OTA slot `ota_1`, OTA state
+- Last verified firmware: version `1.0.0`, build `33`, SHA
+  `2f43d4d30220c5b86423b8204281175b561aa410`, clean, OTA slot `ota_0`, OTA state
   `VALID`, with no pending verification.
 - Composition active and runtime-ready.
 - Platform returned to `SAFE_IDLE`, `MOTION_ACTIVE:0`.
-- `CONTROL_STATUS` returned `TASK:RUNNING`, `STATE:DISARMED`, `SOURCE:LAN`,
-  `TTL_MS:300`, `DETAIL:READY`; M1 and M2 observations were healthy at 0 RPM.
+- `CONTROL_STATUS` returned `TASK:RUNNING`, `STATE:DISARMED`, `SOURCE:NONE`,
+  `TTL_MS:300`, `DETAIL:EXPLICIT_STOP`; M1 and M2 observations were healthy at 0 RPM.
 - RC input remains configured on GPIO14 in PPM mode. The 2026-08-19 transmitter-off
   session reported `RC_SEEN:0`, `RC_VALID:0`, `RC_LOSS:0`; prior valid/fresh receiver
   evidence remains historical context, not evidence for this boot.
@@ -146,7 +148,7 @@ Confirmed:
 - 8 channels;
 - no RC loss.
 
-Operator-supplied source configuration for the next OTA artifact (not physical
+Operator-supplied source configuration installed in build 33 (not physical
 qualification yet):
 
 - CH2 high: forward;
@@ -158,9 +160,10 @@ qualification yet):
 
 The associated software path is `ibus_receiver → ppm_motion_source →
 motion_application → command_authority → robot_kinematics → traction endpoints`.
-It must be installed by OTA and tested elevated before any floor-motion conclusion.
+It is installed by OTA, but must still be tested elevated before any floor-motion
+conclusion.
 
-### RC/LAN priority policy (build 31 installed)
+### RC/LAN priority policy
 
 The operator qualified the receiver failsafe for Rafa: with the RC transmitter
 disconnected, the receiver emits a valid PPM frame with `CH5=2000us`. The static
@@ -171,7 +174,7 @@ This is deliberately not PPM traction authority. `PPM_PRIORITY` must stop/revoke
 an existing LAN session and prevent LAN ARM while it remains valid. `RC_FAILSAFE`
 and no first valid PPM frame permit only a fresh explicit LAN ARM. If valid PPM is
 lost after it held priority, the state is `PPM_LOST`; the prior LAN stream remains
-retired. Build 31 publishes the interlock separately in `CONTROL_STATUS` so the
+retired. The firmware publishes the interlock separately in `CONTROL_STATUS` so the
 Console can expose the firmware decision without risking truncation of the control
 session detail. Physical verification of a CH5≤1500us transition still belongs to a
 separate, explicitly authorized bench observation; it is not implied by the
@@ -183,6 +186,13 @@ traction endpoints, `RC_INTERLOCK:RC_FAILSAFE`, `RC_CH5_US:2000`,
 `LAN_ELIGIBLE:1`, and a separate `DATA CONTROL_AUTHORITY ...` line with
 `DETAIL:READY` preserved on the session line. No physical CH5≤1500us priority
 transition or motor motion was performed as part of that OTA verification.
+
+On 2026-08-20, build 33 (`2f43d4d`) superseded build 31 by OTA after a successful
+manifest check and download/hash verification. Post-reboot evidence was: valid clean
+image, `rafa` profile schema-valid, active composition, `SAFE_IDLE`, two endpoints at
+0 RPM, `RC_INTERLOCK:RC_FAILSAFE`, `RC_CH5_US:2000`, `LAN_ELIGIBLE:1`, and a
+300-ms `DISARMED` control session. No PPM-priority transition, ARM or motion was
+sent during this verification.
 
 `PPM_CAPTURE` should not be used as a live LAN operation if its blocking behavior can delay STOP.
 
@@ -209,9 +219,14 @@ Upgrade telemetry only when a concrete vertical requires it.
 
 ## Health semantics
 
-Aggregate health can appear `STALE` while important fast observations are still fresh.
+The aggregate snapshot can still carry `STALE` when a lower-rate diagnostic
+observation expires. Build 33 separates this from velocity-channel communication:
+only position, speed and current freshness determine whether a traction endpoint is
+`HEALTHY`, `STALE` or `DEGRADED`; a fresh nonzero controller error remains `FAULT`.
 
-Do not interpret aggregate `STALE` alone as a dead RS485 link. The UI should expose freshness and communication state more clearly.
+The post-OTA `CONTROL_STATUS` was read twice four seconds apart and reported both
+M1/M2 `ONLINE:1 STALE:0 HEALTH:HEALTHY`. Do not interpret a diagnostic-field stale
+bit alone as a dead RS485 link; surface its field mask separately in the Console.
 
 ## Temperature
 
