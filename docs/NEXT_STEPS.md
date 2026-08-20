@@ -5,7 +5,7 @@ feature. Recheck the current code, tests and task scope before acting.
 
 ## Current baseline
 
-- Firmware source identity is version `1.0.0`, build `28`; the runtime topology is a
+- Firmware source identity is version `1.0.0`, build `29`; the runtime topology is a
   build-selected immutable C profile.
 - Supported compositions are `current_robot`, `bench_single_svd48_motor`, `rafa`,
   and the unqualified `bench_single_steering_as5600` development slice.
@@ -28,9 +28,11 @@ feature. Recheck the current code, tests and task scope before acting.
   was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
-  TTL expiry, retired streams and STOP semantics. Build 28 source now activates Rafa's
-  qualified geometry with conservative 0.02 m/s and 0.20 rad/s limits and TTL 300 ms.
-  Build 28 was installed by OTA on 2026-08-19 and returned `CONTROL_STATUS` as
+  TTL expiry, retired streams and STOP semantics. Build 29 activates Rafa's qualified
+  geometry with conservative 0.02 m/s and 0.20 rad/s limits and TTL 300 ms. It fixes
+  the `control_lan` float/double boundary that rejected a JSON decimal exactly equal to
+  `MAX_VX_MPS`; it does not increase any bound or change authority/deadman behavior.
+  Build 29 was installed by OTA on 2026-08-20 and returned `CONTROL_STATUS` as
   `DISARMED`, `DETAIL:READY`, with both traction endpoints healthy. The first elevated
   bounded motion smoke remains to be recorded; no Rafa browser/backend/LAN-loss motion
   test has yet been accepted.

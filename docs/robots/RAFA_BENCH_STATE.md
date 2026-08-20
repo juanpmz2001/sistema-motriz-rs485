@@ -316,10 +316,30 @@ Normal firmware workflow:
 
 USB is recovery-only.
 
+## Build-29 Control LAN boundary fix
+
+On 2026-08-20 build 29 (`0061665e34375a74b268bd3f79e62224b3388c0e`) was
+built cleanly for `BOTFARMS_PROFILE_RAFA` and installed by OTA only. The Console
+had already demonstrated successful ARM and command ingress through the dedicated UDP
+control path, but an exact full-scale decimal request could fail with
+`BAD_VELOCITY`: the advertised `0.0200` m/s limit is stored as `float`, whose widened
+value is slightly below JSON `0.02`.
+
+The firmware now quantizes finite JSON velocity values to the control `float`
+representation before comparing the immutable profile limit. This does not increase
+Rafa's 0.02 m/s or 0.20 rad/s limits, change TTL, or weaken deadman/authority checks.
+
+The OTA announcer did not receive a reply during the reboot, but subsequent LAN
+identity verified build 29, clean Git SHA, `OTA_STATE:VALID`, profile `rafa`, active
+composition/runtime, `SAFE_IDLE`, running safety task, `CONTROL_STATUS:DISARMED`
+with `TTL_MS:300`, and both traction endpoints healthy at 0 RPM. This is firmware and
+controller evidence only. It is not an elevated motion acceptance: the operator must
+reconnect the Console and perform the next authorized physical test separately.
+
 ## Explicitly not qualified
 
 - floor motion;
-- deployed build-28 `/control` target signs and physical elevated forward/turn smoke;
+- deployed build-29 `/control` target signs and physical elevated forward/turn smoke;
 - M2 individual command behavior;
 - typed M1 HOLD→DISABLE sequence, all typed M2 bench behavior and `+1 RPM` behavior;
 - negative-direction testing;
