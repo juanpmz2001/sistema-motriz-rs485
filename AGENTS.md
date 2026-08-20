@@ -164,6 +164,30 @@ idf.py build
 Flashing, OTA, network access and physical tests require explicit task relevance.
 Report what was and was not verified. A successful compile is not a safety test.
 
+## Runtime handoff after an accepted change
+
+An accepted code change is not complete merely because its tests pass. When the
+change affects a runnable layer and the operator has authorized activation, bring the
+affected runtime back up from the intended checkout and report the result.
+
+- **Engineering Console change:** start or restart both the FastAPI backend and the
+  Vite frontend that serve the changed checkout, verify a health/overview response and
+  the frontend route, then give the operator the exact URL. A feature worktree must
+  use separate ports; never replace an active operator session running from another
+  checkout without explicit authorization.
+- **Firmware change for Rafa:** after targeted tests and a clean Rafa build, follow
+  `docs/OTA.md`: increment the build number under the current policy, deploy by OTA
+  only, reboot and verify the installed `VERSION`, SHA/build, profile, composition,
+  platform and safety status over LAN. Do not perform OTA for Console-only or
+  documentation-only changes.
+- **No implicit actuation:** activating Console services or verifying an OTA does not
+  authorize ARM, motor enable, parameter writes or motion. Keep that authorization
+  separate and explicit.
+
+If activation would interrupt an operator who is already using a service, ask before
+replacing that service unless the user has explicitly requested the restart in the
+current task.
+
 ## Change discipline
 
 - Keep `main` as a composition root; move behavior into components.
