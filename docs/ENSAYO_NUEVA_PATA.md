@@ -398,6 +398,7 @@ La curva entra en saturación entre 700 y 600 us. Para este montaje se adopta
 **600 us como extremo práctico recomendado**, porque entrega casi toda la
 velocidad medida y conserva margen respecto del límite teórico de 500 us. El
 detalle completo queda en `artifacts/s550-pwm-sweep-summary-20260821.csv`, la
-gráfica en `artifacts/s550-pwm-sweep-curve-20260821.svg` y las muestras crudas
+gráfica en `artifacts/s550-pwm-sweep-curve-20260821.svg` (también exportada a
+PNG) y las muestras crudas
 en `artifacts/s550-pwm-sweep-20260821-135314.csv` y
 `artifacts/s550-pwm-sweep-partial-1450-1100-20260821-134945.csv`.
