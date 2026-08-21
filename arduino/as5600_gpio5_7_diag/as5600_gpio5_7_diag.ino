@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
+#include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <driver/gpio.h>
@@ -21,17 +22,32 @@
 
 // Comparacion aislada direccion-vs-encoder. No inicializa UART ni RS485.
 constexpr uint8_t AS5600_ADDRESS = 0x36;
+constexpr char NUEVA_PATA_AP_SSID[] = "NuevaPata";
+constexpr char NUEVA_PATA_AP_PASSWORD[] = "nueva-pata";
+constexpr uint16_t NUEVA_PATA_DNS_PORT = 53;
+const IPAddress NUEVA_PATA_AP_IP(192, 168, 4, 1);
+const IPAddress NUEVA_PATA_AP_GATEWAY(192, 168, 4, 1);
+const IPAddress NUEVA_PATA_AP_SUBNET(255, 255, 255, 0);
 constexpr uint8_t AS5600_SDA_PIN = 5;
 constexpr uint8_t AS5600_SCL_PIN = 7;
-constexpr uint32_t AS5600_CLOCK_HZ = 5000;
-constexpr uint32_t AS5600_HALF_PERIOD_US = 100;
+// El AS5600 admite hasta 1 MHz. Se usan 20 kHz para conservar amplio margen
+// con el cableado/divisores del banco sin mantener ocupado un nucleo completo.
+constexpr uint32_t AS5600_CLOCK_HZ = 20000;
+constexpr uint32_t AS5600_HALF_PERIOD_US = 25;
 constexpr int64_t AS5600_EDGE_TIMEOUT_US = 5000;
+// Cinco lecturas a 20 Hz abarcan 200 ms entre la mas antigua y la mas nueva.
 constexpr uint8_t FILTER_SAMPLE_COUNT = 5;
-constexpr uint32_t FILTER_CYCLE_MS = 200;
+constexpr uint32_t FILTER_CYCLE_MS = 250;
 constexpr uint32_t FILTER_SAMPLE_PERIOD_MS =
     FILTER_CYCLE_MS / FILTER_SAMPLE_COUNT;
+constexpr uint32_t FILTER_MAX_SPAN_MS = 240;
+constexpr float FILTER_OUTLIER_DEG = 5.0f;
+constexpr uint8_t FILTER_MIN_INLIER_COUNT = 4;
 constexpr float DISPLAY_QUANTUM_DEG = 0.5f;
 constexpr float DISPLAY_UPDATE_THRESHOLD_DEG = 0.5f;
+// Las rutas historicas de movimiento automatico quedan disponibles para
+// detener/consultar, pero no pueden iniciar movimiento en el build joystick.
+constexpr bool REMOTE_DIAGNOSTIC_MOTION_ENABLED = false;
 constexpr uint8_t SERVO_PWM_PIN = 14;
 constexpr uint32_t SERVO_PWM_HZ = 50;
 constexpr uint8_t SERVO_PWM_RESOLUTION_BITS = 14;
@@ -49,7 +65,7 @@ constexpr int32_t LINEARITY_MAX_SLOT_DELTA_RAW =
     int32_t(LINEARITY_MAX_SLOT_DELTA_DEG * 4096.0f / 360.0f);
 constexpr uint32_t LINEARITY_PHASE_TIMEOUT_MS = 150000;
 constexpr uint8_t LINEARITY_TARGET_CONFIRM_SAMPLES = 3;
-// 7800 x 12 bytes = 93.6 kB: cubre 312 s a 25 Hz, incluso ambos
+// 7800 x 12 bytes = 93.6 kB: cubre 390 s a 20 Hz, incluso ambos
 // timeouts de 150 s y las tres pausas, sin reservar Strings gigantes.
 constexpr size_t LINEARITY_TEST_MAX_SAMPLES = 7800;
 constexpr float POSITION_TOLERANCE_DEG = 3.0f;
@@ -84,11 +100,24 @@ constexpr float JOYSTICK_SLOW_ZONE_DEG = 6.0f;
 // 250 ms. Sigue siendo una parada corta frente a la velocidad mecanica medida.
 constexpr uint32_t JOYSTICK_COMMAND_TIMEOUT_MS = 650;
 constexpr uint32_t JOYSTICK_SENSOR_NEUTRAL_MS = 100;
-constexpr uint32_t JOYSTICK_SENSOR_TIMEOUT_MS = 400;
+// A 20 Hz, 500 ms deja reconstruir una ventana coherente despues de dos
+// slots perdidos. La salida sigue yendo a neutro mucho antes, a los 100 ms.
+constexpr uint32_t JOYSTICK_SENSOR_TIMEOUT_MS = 500;
 constexpr uint32_t JOYSTICK_REVERSAL_SETTLE_MS = 240;
 constexpr float JOYSTICK_MAX_SLOT_DELTA_DEG = 5.0f;
+// Una referencia desplazada no se adopta por una sola lectura. Con el filtro
+// a 20 Hz, cinco promedios coherentes representan aproximadamente 250 ms.
+constexpr uint8_t JOYSTICK_REFERENCE_CONFIRM_SAMPLES = 5;
+constexpr float JOYSTICK_REFERENCE_CLUSTER_DEG = 2.0f;
+constexpr uint8_t JOYSTICK_ARMED_RETURN_SAMPLES = 2;
+constexpr uint8_t JOYSTICK_ARMED_GLITCH_TRIP_SAMPLES = 3;
 static_assert(FILTER_CYCLE_MS % FILTER_SAMPLE_COUNT == 0,
               "Filter cycle must divide into exact sample slots");
+static_assert(FILTER_MIN_INLIER_COUNT <= FILTER_SAMPLE_COUNT,
+              "Filter inliers cannot exceed the window");
+static_assert(FILTER_MAX_SPAN_MS >=
+                  (FILTER_SAMPLE_COUNT - 1U) * FILTER_SAMPLE_PERIOD_MS,
+              "Filter span must hold one complete nominal window");
 static_assert(SERVO_TEST_MAX_SAMPLES >= 375,
               "Servo test log must cover the complete 14 second test");
 static_assert(LINEARITY_TEST_MAX_SAMPLES >= 6500,
@@ -232,6 +261,8 @@ enum JoystickSteeringMode : uint8_t {
 struct JoystickSteeringState {
   bool armed;
   bool armReleaseRequired;
+  bool sensorAlarmsEnabled;
+  bool referenceRecoveryActive;
   JoystickSteeringMode mode;
   JoystickSteeringMode lastTripReason;
   int16_t x;
@@ -239,6 +270,9 @@ struct JoystickSteeringState {
   uint16_t pulseUs;
   uint8_t stableSamples;
   uint8_t reacquireSamples;
+  uint8_t referenceCandidateSamples;
+  uint8_t armedOutlierSamples;
+  uint8_t armedReturnSamples;
   bool unwrapReady;
   uint32_t lastCommandMs;
   uint32_t lastAcceptedMs;
@@ -247,9 +281,12 @@ struct JoystickSteeringState {
   uint32_t invalidSamples;
   uint32_t glitches;
   uint32_t safetyTrips;
+  uint32_t referenceRebases;
   uint32_t ownerIpKey;
   uint32_t ownerSessionKey;
   float lastCorrectedCyclicDeg;
+  float referenceCandidateAnchorDeg;
+  float armedReturnAnchorDeg;
   float unwrappedCorrectedDeg;
   float zeroAbsoluteDeg;
   float logicalAngleDeg;
@@ -287,6 +324,8 @@ struct As5600Snapshot {
   float filterDeltaDeg;
   bool filterReady;
   uint8_t filterSamples;
+  uint8_t filterInliers;
+  uint32_t filterSpanMs;
   uint32_t displayUpdates;
   uint8_t status;
   uint8_t agc;
@@ -301,6 +340,9 @@ struct As5600Snapshot {
 };
 
 WebServer server(80);
+DNSServer dnsServer;
+bool softApReady = false;
+bool captiveDnsReady = false;
 portMUX_TYPE snapshotMux = portMUX_INITIALIZER_UNLOCKED;
 As5600Snapshot snapshot = {};
 volatile bool otaInProgress = false;
@@ -331,7 +373,7 @@ main{max-width:1060px;margin:auto;padding:16px;display:grid;grid-template-column
 .dial{position:relative;max-width:480px;aspect-ratio:1;margin:auto}.dial svg{width:100%;height:100%;display:block}.face{fill:#061321;stroke:#35546b;stroke-width:4}.ring{fill:none;stroke:#17364c;stroke-width:18}.tick{stroke:#7596aa;stroke-width:3}.major{stroke:#d7f5ff;stroke-width:5}.needle{stroke:var(--cyan);stroke-width:7;stroke-linecap:round;filter:drop-shadow(0 0 7px #38d8ff)}.hub{fill:#eefaff;stroke:#38d8ff;stroke-width:5}.degree{fill:#9bb9ca;font:700 15px Consolas,monospace;text-anchor:middle}.center{position:absolute;left:50%;top:57%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}.angle{font:800 clamp(45px,9vw,80px)/1 Consolas,monospace;color:var(--cyan);text-shadow:0 0 18px #38d8ff55;white-space:nowrap}.unit{font-size:.38em;color:#9bb9ca}.filter{font:700 12px Consolas,monospace;color:var(--warn);margin-top:8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.stat{background:#071522;border-radius:11px;padding:11px;border:1px solid #ffffff12}.label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#8daec5}.value{font:700 19px/1.3 Consolas,monospace;margin-top:4px}.wide{grid-column:1/-1}.tag{font:700 13px Consolas,monospace;color:var(--warn)}.ok{color:var(--ok)}.bad{color:var(--bad)}.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.controls button,.controls a{border:0;border-radius:9px;padding:10px 12px;font:700 13px Segoe UI,Arial;cursor:pointer;text-decoration:none;color:#06101d;background:var(--cyan)}.controls .stop{background:var(--bad);color:white}.controls .log{background:#9bb9ca}
 @media(max-width:760px){main{grid-template-columns:1fr;padding:8px}.card{padding:10px}.dial{max-width:390px}}
-</style></head><body><header><div><h1>Ángulo AS5600 · Nueva Pata</h1><div class="label">LUT de linealidad aplicada · 5 muestras / 200 ms · resolución visual 0.5°</div></div><div id="link" class="tag">CONECTANDO</div></header>
+</style></head><body><header><div><h1>Ángulo AS5600 · Nueva Pata</h1><div class="label">LUT de linealidad aplicada · últimas 5 muestras / 200 ms · resolución visual 0.5°</div></div><div id="link" class="tag">CONECTANDO</div></header>
 <main><section class="card"><div class="dial"><svg viewBox="0 0 300 300" aria-label="Dial angular"><circle class="face" cx="150" cy="150" r="133"/><circle class="ring" cx="150" cy="150" r="116"/>
 <line class="tick major" x1="150" y1="20" x2="150" y2="43"/><line class="tick major" x1="280" y1="150" x2="257" y2="150"/><line class="tick major" x1="150" y1="280" x2="150" y2="257"/><line class="tick major" x1="20" y1="150" x2="43" y2="150"/>
 <line class="tick" x1="215" y1="37" x2="204" y2="56"/><line class="tick" x1="263" y1="85" x2="244" y2="96"/><line class="tick" x1="263" y1="215" x2="244" y2="204"/><line class="tick" x1="215" y1="263" x2="204" y2="244"/><line class="tick" x1="85" y1="263" x2="96" y2="244"/><line class="tick" x1="37" y1="215" x2="56" y2="204"/><line class="tick" x1="37" y1="85" x2="56" y2="96"/><line class="tick" x1="85" y1="37" x2="96" y2="56"/>
@@ -339,7 +381,7 @@ main{max-width:1060px;margin:auto;padding:16px;display:grid;grid-template-column
 <g id="needle" transform="rotate(0 150 150)"><line class="needle" x1="150" y1="160" x2="150" y2="48"/></g><circle class="hub" cx="150" cy="150" r="10"/></svg>
 <div class="center"><div id="angle" class="angle">---<span class="unit">°</span></div><div id="filter" class="filter">CORREGIDO · FILTRO 0/5</div></div></div>
 <div class="grid"><div class="stat"><div class="label">Raw código</div><div id="raw" class="value">----</div></div><div class="stat"><div class="label">Raw ángulo · sin LUT</div><div id="rawangle" class="value">---°</div></div><div class="stat"><div class="label">Ángulo corregido · LUT</div><div id="correctedangle" class="value">---°</div></div><div class="stat"><div class="label">Promedio circular corregido</div><div id="mean" class="value">---°</div></div><div class="stat"><div class="label">Delta circular</div><div id="delta" class="value">---°</div></div><div class="stat"><div class="label">Actualizaciones</div><div id="updates" class="value">0</div></div><div class="stat"><div class="label">Posición raw</div><div id="pct" class="value">--%</div></div><div class="stat wide"><div class="label">Imán</div><div id="magnet" class="value">ESPERANDO</div></div></div></section>
-<section class="card"><div class="grid"><div class="stat"><div class="label">Bus</div><div id="bus" class="value">---</div></div><div class="stat"><div class="label">Último error</div><div id="error" class="value">---</div></div><div class="stat"><div class="label">Intentos I2C</div><div id="samples" class="value">0</div></div><div class="stat"><div class="label">Lecturas OK</div><div id="success" class="value">0</div></div><div class="stat"><div class="label">Errores</div><div id="errors" class="value">0</div></div><div class="stat"><div class="label">Atrasos 40 ms</div><div id="overruns" class="value">0</div></div><div class="stat"><div class="label">Diagnóstico inicial</div><div id="diag" class="value">---</div></div><div class="stat"><div class="label">AGC inicial</div><div id="agc" class="value">---</div></div><div class="stat"><div class="label">Magnitud inicial</div><div id="magnitude" class="value">---</div></div><div class="stat wide"><div class="label">Líneas en reposo</div><div id="lines" class="value">SDA? SCL?</div></div><div class="stat wide"><div class="label">Prueba servo vs encoder</div><div id="servo" class="value">NEUTRO 1500 us</div><div id="servotime" class="tag">IDLE</div><div class="controls"><button onclick="startTest()">Iniciar prueba 14 s</button><button class="stop" onclick="stopTest()">Parar / neutro</button><a class="log" href="/servo/test/log.csv">Descargar CSV</a></div></div><div class="stat wide"><div class="label">Linealidad · 7 vueltas por sentido</div><div id="linearity" class="value">IDLE · 1500 us</div><div id="linearitytime" class="tag">0.0° · 0% · 0 muestras</div><div class="controls"><button onclick="startLinearity()">Iniciar prueba larga</button><button class="stop" onclick="stopLinearity()">Parar / neutro</button><a class="log" href="/linearity/test/log.csv">Descargar CSV</a></div></div><div class="stat wide"><div class="label">Secuencia de posición corregida · 0 → 1080 → 0</div><div id="position" class="value">IDLE · 1500 us</div><div id="positiontime" class="tag">actual 0.0° · objetivo 0.0° · error 0.0°</div><div class="controls"><button onclick="startPosition()">Iniciar secuencia</button><button class="stop" onclick="stopPosition()">Parar / neutro</button></div></div></div></section></main>
+<section class="card"><div class="grid"><div class="stat"><div class="label">Bus</div><div id="bus" class="value">---</div></div><div class="stat"><div class="label">Último error</div><div id="error" class="value">---</div></div><div class="stat"><div class="label">Intentos I2C</div><div id="samples" class="value">0</div></div><div class="stat"><div class="label">Lecturas OK</div><div id="success" class="value">0</div></div><div class="stat"><div class="label">Errores</div><div id="errors" class="value">0</div></div><div class="stat"><div class="label">Atrasos 50 ms</div><div id="overruns" class="value">0</div></div><div class="stat"><div class="label">Diagnóstico inicial</div><div id="diag" class="value">---</div></div><div class="stat"><div class="label">AGC inicial</div><div id="agc" class="value">---</div></div><div class="stat"><div class="label">Magnitud inicial</div><div id="magnitude" class="value">---</div></div><div class="stat wide"><div class="label">Líneas en reposo</div><div id="lines" class="value">SDA? SCL?</div></div><div class="stat wide"><div class="label">Prueba servo vs encoder</div><div id="servo" class="value">NEUTRO 1500 us</div><div id="servotime" class="tag">IDLE</div><div class="controls"><button onclick="startTest()">Iniciar prueba 14 s</button><button class="stop" onclick="stopTest()">Parar / neutro</button><a class="log" href="/servo/test/log.csv">Descargar CSV</a></div></div><div class="stat wide"><div class="label">Linealidad · 7 vueltas por sentido</div><div id="linearity" class="value">IDLE · 1500 us</div><div id="linearitytime" class="tag">0.0° · 0% · 0 muestras</div><div class="controls"><button onclick="startLinearity()">Iniciar prueba larga</button><button class="stop" onclick="stopLinearity()">Parar / neutro</button><a class="log" href="/linearity/test/log.csv">Descargar CSV</a></div></div><div class="stat wide"><div class="label">Secuencia de posición corregida · 0 → 1080 → 0</div><div id="position" class="value">IDLE · 1500 us</div><div id="positiontime" class="tag">actual 0.0° · objetivo 0.0° · error 0.0°</div><div class="controls"><button onclick="startPosition()">Iniciar secuencia</button><button class="stop" onclick="stopPosition()">Parar / neutro</button></div></div></div></section></main>
 <script>
 const q=id=>document.getElementById(id);let fails=0;const err={0:'OK',100:'ARGUMENTO',101:'CONFIG GPIO',102:'ACCESO GPIO',110:'SCL BAJA',111:'TIMEOUT SCL',112:'SDA BAJA',120:'FALLO START',121:'NACK DIR-W',122:'NACK REG',123:'FALLO RESTART',124:'NACK DIR-R',125:'FALLO LECTURA',126:'FALLO STOP'};
 function setDial(angle){q('needle').setAttribute('transform',`rotate(${angle} 150 150)`)}
@@ -353,7 +395,7 @@ function startPosition(){if(confirm('Secuencia cerrada: home corregido, 0 a 1080
 function stopPosition(){postServo('/position/sequence/stop')}
 async function pollPosition(){try{const r=await fetch('/position/status.json?x='+Date.now(),{cache:'no-store'}),d=await r.json();q('position').textContent=`${d.phase} · ${d.servo_us} us · paso ${d.target_step}/12`;q('positiontime').textContent=`actual ${Number(d.logical_deg).toFixed(1)}° · objetivo ${Number(d.target_deg).toFixed(1)}° · error ${Number(d.error_deg).toFixed(2)}° · pausa ${(Number(d.dwell_remaining_ms)/1000).toFixed(1)} s`}catch(e){}finally{setTimeout(pollPosition,250)}}pollPosition();
 async function poll(){const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),900);try{const r=await fetch('/telemetry.json?x='+Date.now(),{cache:'no-store',signal:ctl.signal});if(!r.ok)throw Error('HTTP');const d=await r.json();
-q('bus').textContent=d.started?'0x36 @ 5k SW':'NO INICIADO';q('error').textContent=err[d.last_error]||'COD '+d.last_error;q('samples').textContent=d.samples;q('success').textContent=d.successes;q('errors').textContent=d.errors;q('overruns').textContent=d.schedule_overruns;q('lines').textContent=`SDA5=${d.sda_level} · SCL7=${d.scl_level}`;q('raw').textContent=d.raw;q('rawangle').textContent=Number(d.raw_angle).toFixed(2)+'°';q('correctedangle').textContent=Number(d.corrected_angle).toFixed(2)+'°';q('pct').textContent=Number(d.pct).toFixed(2)+'%';q('mean').textContent=d.filter_ready?Number(d.mean_angle).toFixed(2)+'°':'---°';q('delta').textContent=d.filter_ready?Number(d.filter_delta).toFixed(2)+'°':'---°';q('updates').textContent=d.display_updates;q('filter').textContent=`CORREGIDO · FILTRO ${d.filter_samples}/5${d.filter_ready?' · LISTO':''}`;
+q('bus').textContent=d.started?`0x36 @ ${Number(d.i2c_hz||20000)/1000}k SW`:'NO INICIADO';q('error').textContent=err[d.last_error]||'COD '+d.last_error;q('samples').textContent=d.samples;q('success').textContent=d.successes;q('errors').textContent=d.errors;q('overruns').textContent=d.schedule_overruns;q('lines').textContent=`SDA5=${d.sda_level} · SCL7=${d.scl_level}`;q('raw').textContent=d.raw;q('rawangle').textContent=Number(d.raw_angle).toFixed(2)+'°';q('correctedangle').textContent=Number(d.corrected_angle).toFixed(2)+'°';q('pct').textContent=Number(d.pct).toFixed(2)+'%';q('mean').textContent=d.filter_ready?Number(d.mean_angle).toFixed(2)+'°':'---°';q('delta').textContent=d.filter_ready?Number(d.filter_delta).toFixed(2)+'°':'---°';q('updates').textContent=d.display_updates;q('filter').textContent=`CORREGIDO · ${d.filter_samples}/${d.filter_window||5} · INLIERS ${d.filter_inliers||0} · ${d.filter_span_ms||0} ms${d.filter_ready?' · LISTO':''}`;
 if(d.filter_ready){q('angle').innerHTML=`${Number(d.angle).toFixed(1)}<span class="unit">°</span>`;setDial(Number(d.angle))}else{q('angle').innerHTML='---<span class="unit">°</span>';setDial(0)}
 q('diag').textContent=d.diag?'VÁLIDO':'ESPERANDO';q('agc').textContent=d.diag?d.agc:'---';q('magnitude').textContent=d.diag?d.magnitude:'---';let m='NO DETECTADO',c='bad';if(d.ml){m='IMÁN MUY DÉBIL'}else if(d.mh){m='IMÁN MUY FUERTE'}else if(d.md){m='IMÁN DETECTADO';c='ok'}q('magnet').textContent=m;q('magnet').className='value '+c;
 q('servo').textContent=`${d.servo_us} us${d.servo_test_active?' · EN MOVIMIENTO':' · NEUTRO'}`;q('servotime').textContent=`${d.servo_phase} · ${(Number(d.servo_elapsed_ms)/1000).toFixed(1)} s · ${d.servo_log_samples} muestras`;
@@ -372,31 +414,28 @@ const char TELEMETRY_HTML[] PROGMEM = R"HTML(
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Direcci&oacute;n &middot; Nueva Pata</title>
 <style>
-:root{color-scheme:dark;--bg:#06111f;--card:#0c2034;--card2:#071827;--cyan:#38d8ff;--yellow:#ffd166;--green:#60eca0;--red:#ff617a;--muted:#8facbf;--line:#294a61}
+:root{color-scheme:dark;--bg:#06111f;--cyan:#38d8ff;--yellow:#ffd166;--green:#60eca0;--red:#ff617a;--muted:#8facbf;--axis-y:55%}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;min-height:100%;background:var(--bg);color:#edfaff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overscroll-behavior:none}
-body{min-height:100dvh;background:radial-gradient(circle at 50% -10%,#174966 0,#081827 42%,var(--bg) 76%);padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-button{font:inherit}.app{width:min(100%,780px);margin:auto;padding:12px;display:grid;gap:12px}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 3px}
-h1{font-size:clamp(21px,5.6vw,30px);margin:0;line-height:1.05}.sub{font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
-.badge{flex:0 0 auto;padding:8px 10px;border:1px solid #ffffff25;border-radius:999px;font:800 11px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--yellow);background:#06111fb8}.badge.ok{color:var(--green);border-color:#60eca055}.badge.bad{color:var(--red);border-color:#ff617a55}
-.card{background:linear-gradient(145deg,#0e263de8,#091b2ce8);border:1px solid #ffffff18;border-radius:20px;padding:14px;box-shadow:0 16px 45px #0006;backdrop-filter:blur(8px)}
-.gauge{position:relative;margin:auto;width:min(100%,420px);aspect-ratio:320/205}.gauge svg{display:block;width:100%;height:100%}.arc{fill:none;stroke:#1a394e;stroke-width:20;stroke-linecap:round}.arc-live{fill:none;stroke:url(#arcGradient);stroke-width:7;stroke-linecap:round}.tick{stroke:#6c8ea3;stroke-width:2}.tick.major{stroke:#dff8ff;stroke-width:4}.gauge-label{fill:#99b6c7;font:700 13px ui-monospace,SFMono-Regular,Consolas,monospace;text-anchor:middle}.needle-actual{stroke:var(--cyan);stroke-width:7;stroke-linecap:round;filter:drop-shadow(0 0 6px #38d8ffaa)}.needle-target{stroke:var(--yellow);stroke-width:4;stroke-linecap:round;stroke-dasharray:7 6}.hub{fill:#e9fbff;stroke:var(--cyan);stroke-width:4}
-.readout{position:absolute;left:50%;bottom:1%;transform:translateX(-50%);text-align:center;white-space:nowrap}.actual{font:900 clamp(42px,13vw,72px)/.92 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--cyan);text-shadow:0 0 19px #38d8ff55}.actual small{font-size:.35em;color:var(--muted)}.target{margin-top:7px;color:var(--yellow);font:800 14px ui-monospace,SFMono-Regular,Consolas,monospace}
-.statebar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:5px}.mini{min-width:0;background:#061522;border:1px solid #ffffff12;border-radius:11px;padding:9px;text-align:center}.mini-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}.mini-value{font:800 14px/1.25 ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:3px;overflow:hidden;text-overflow:ellipsis}.mini-value.warn{color:var(--yellow)}
-.control-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.control-title strong{font-size:17px}.hint{font-size:11px;color:var(--muted)}
-.pad{position:relative;width:min(100%,390px);height:142px;margin:2px auto 12px;border-radius:75px;border:1px solid #5e8aa044;background:linear-gradient(90deg,#091b2c,#0d2940 50%,#091b2c);box-shadow:inset 0 8px 25px #0008;touch-action:none;cursor:grab;outline:none}.pad:focus-visible{box-shadow:0 0 0 3px #38d8ff88,inset 0 8px 25px #0008}.pad.dragging{cursor:grabbing}.axis{position:absolute;left:38px;right:38px;top:50%;height:4px;transform:translateY(-50%);background:linear-gradient(90deg,var(--red),#6d8290 50%,var(--green));border-radius:4px}.zero{position:absolute;left:50%;top:18px;bottom:18px;width:2px;background:#ffffff38}.endmark{position:absolute;top:12px;font:800 12px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}.endmark.left{left:19px}.endmark.right{right:19px}.knob{position:absolute;left:50%;top:50%;width:78px;height:78px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 36% 30%,#fff,#bdefff 38%,#38bde4 72%,#147898);border:4px solid #eaffff;box-shadow:0 8px 21px #0009,0 0 23px #38d8ff44;display:grid;place-items:center;color:#082033;font:900 13px ui-monospace,SFMono-Regular,Consolas,monospace;will-change:transform}.pad.locked{opacity:.48}.pad.locked .knob{box-shadow:0 8px 21px #0009}
-.setpoint{text-align:center;font:800 15px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--yellow);margin-bottom:10px}.fixed-speed{text-align:center;border:1px solid #38d8ff44;border-radius:10px;padding:9px;color:var(--cyan);background:#061522;font:900 12px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}.btn{min-height:52px;border:0;border-radius:13px;font-weight:900;letter-spacing:.05em;color:#fff}.arm{background:#16745c}.arm.on{background:var(--green);color:#042014;box-shadow:0 0 20px #60eca044}.stop{background:var(--red);box-shadow:0 6px 17px #ff617a2e}.btn:active{transform:scale(.98)}
-.safety{text-align:center;color:var(--muted);font-size:11px;line-height:1.35;margin:10px 4px 0}.safety b{color:#dff8ff}
-.chart-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:7px}.legend{font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 3px 0 8px}.dot:first-child{margin-left:0}.dot.actual-dot{background:var(--cyan)}.dot.target-dot{background:var(--yellow)}canvas{display:block;width:100%;height:116px;background:#061522;border:1px solid #ffffff12;border-radius:12px}
-.fault{display:none;margin-top:9px;padding:9px 11px;border-radius:10px;background:#5e1b2a;color:#fff;font-size:12px;font-weight:800}.fault.show{display:block}.diaglink{display:block;text-align:center;color:#87bfd6;font-size:11px;margin:4px 0 1px;text-decoration:none}
-@media(min-width:690px){.app{grid-template-columns:1fr 1fr}.app header{grid-column:1/-1}.gauge-card{grid-row:2/4}.chart-card{grid-column:2}.gauge{margin-top:20px}.control-card{align-self:start}}
-@media(max-height:650px) and (orientation:landscape){.app{max-width:980px;grid-template-columns:.88fr 1.12fr}.app header{grid-column:1/-1}.gauge{width:min(100%,330px)}.gauge-card{grid-row:2/4}.pad{height:112px}.knob{width:68px;height:68px}.chart-card{grid-column:2}canvas{height:88px}}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;background:var(--bg);color:#edfaff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+body{position:fixed;inset:0;padding:0;user-select:none;-webkit-user-select:none;background:radial-gradient(circle at 50% 38%,#164762 0,#091d2f 36%,var(--bg) 78%)}
+button{font:inherit;-webkit-appearance:none}.app{position:fixed;inset:0;width:100%;max-width:none;height:100vh;height:100dvh;margin:0;padding:0;display:block;overflow:hidden;isolation:isolate}
+header{position:absolute;z-index:3;top:calc(env(safe-area-inset-top) + 7px);left:calc(env(safe-area-inset-left) + 10px);right:calc(env(safe-area-inset-right) + 10px);display:flex;align-items:center;justify-content:space-between;gap:8px;pointer-events:none}
+h1{font-size:clamp(17px,4.8vw,24px);margin:0;line-height:1}.sub{font-size:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:4px}.badge{flex:0 0 auto;padding:7px 8px;border:1px solid #ffffff25;border-radius:999px;font:800 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--yellow);background:#06111fba;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.badge.ok{color:var(--green);border-color:#60eca055}.badge.bad{color:var(--red);border-color:#ff617a55}
+.card{background:#071827a8;border:1px solid #ffffff18;border-radius:15px;box-shadow:0 10px 32px #0005;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.control-card{position:absolute;inset:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:none}.control-title,.safety{display:none}
+.pad{position:absolute;inset:0;z-index:0;width:100%;height:100%;margin:0;border:0;border-radius:0;background:radial-gradient(circle at 50% var(--axis-y),#123b55 0,#081b2b 32%,#06111f 77%);box-shadow:none;touch-action:none;cursor:default;outline:none;pointer-events:auto}.pad:focus-visible{box-shadow:inset 0 0 0 2px #38d8ff55}.pad.dragging{cursor:grabbing}.axis{position:absolute;left:calc(env(safe-area-inset-left) + 42px);right:calc(env(safe-area-inset-right) + 42px);top:var(--axis-y);height:5px;transform:translateY(-50%);background:linear-gradient(90deg,var(--red),#6d8290 50%,var(--green));border-radius:5px;box-shadow:0 0 18px #38d8ff32}.zero{position:absolute;left:50%;top:calc(var(--axis-y) - 76px);width:2px;height:152px;background:#ffffff38}.endmark{position:absolute;top:calc(var(--axis-y) - 46px);font:900 12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#b6cbd7}.endmark.left{left:calc(env(safe-area-inset-left) + 14px)}.endmark.right{right:calc(env(safe-area-inset-right) + 14px)}.knob{position:absolute;left:50%;top:var(--axis-y);width:clamp(88px,23vw,112px);height:clamp(88px,23vw,112px);border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 36% 30%,#fff,#bdefff 38%,#38bde4 72%,#147898);border:4px solid #eaffff;box-shadow:0 10px 25px #000a,0 0 28px #38d8ff55;display:grid;place-items:center;color:#082033;font:900 14px ui-monospace,SFMono-Regular,Consolas,monospace;will-change:left,transform}.pad.locked .axis,.pad.locked .zero,.pad.locked .endmark,.pad.locked .knob{opacity:.34}.pad.locked .knob{box-shadow:0 8px 20px #0009}
+.setpoint{position:absolute;z-index:4;left:50%;top:calc(var(--axis-y) + 62px);transform:translateX(-50%);margin:0;padding:6px 9px;border-radius:999px;background:#06111fc7;color:var(--yellow);font:900 13px ui-monospace,SFMono-Regular,Consolas,monospace;text-align:center;white-space:nowrap;pointer-events:none}.fixed-speed{position:absolute;z-index:4;left:50%;top:calc(var(--axis-y) + 97px);transform:translateX(-50%);width:max-content;max-width:70vw;padding:5px 8px;border:1px solid #38d8ff3d;border-radius:999px;background:#061522bd;color:var(--cyan);font:900 9px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.05em;text-align:center;pointer-events:none}
+.buttons{position:absolute;z-index:5;right:calc(env(safe-area-inset-right) + 10px);bottom:calc(env(safe-area-inset-bottom) + 10px);width:138px;display:grid;grid-template-columns:1fr;gap:8px;margin:0;pointer-events:auto}.btn{min-height:55px;border:0;border-radius:13px;font-weight:900;letter-spacing:.05em;color:#fff;box-shadow:0 7px 20px #0006}.arm{background:#16745c}.arm.on{background:var(--green);color:#042014;box-shadow:0 0 20px #60eca044}.stop{background:var(--red);box-shadow:0 6px 17px #ff617a42}.btn:active{transform:scale(.97)}.sensor-switch{grid-column:1/-1;min-height:42px;border:1px solid #60eca066;border-radius:12px;padding:6px 8px;background:#0b4338e8;color:var(--green);font:900 9px/1.15 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em;box-shadow:0 6px 18px #0005}.sensor-switch.off{border-color:#ffd16699;background:#5b4316ed;color:var(--yellow)}.sensor-switch:disabled{opacity:.48}.sensor-switch:active:not(:disabled){transform:scale(.97)}
+.gauge-card,.chart-card{position:absolute;z-index:3;padding:7px;pointer-events:none}.gauge-card *,.chart-card *{pointer-events:none}.gauge-card{top:calc(env(safe-area-inset-top) + 50px);left:calc(env(safe-area-inset-left) + 8px);width:min(61vw,260px)}.gauge{position:relative;margin:auto;width:100%;aspect-ratio:320/205}.gauge svg{display:block;width:100%;height:100%}.arc{fill:none;stroke:#1a394e;stroke-width:20;stroke-linecap:round}.arc-live{fill:none;stroke:url(#arcGradient);stroke-width:7;stroke-linecap:round}.tick{stroke:#6c8ea3;stroke-width:2}.tick.major{stroke:#dff8ff;stroke-width:4}.gauge-label{fill:#99b6c7;font:700 13px ui-monospace,SFMono-Regular,Consolas,monospace;text-anchor:middle}.needle-actual{stroke:var(--cyan);stroke-width:7;stroke-linecap:round;filter:drop-shadow(0 0 6px #38d8ffaa)}.needle-target{stroke:var(--yellow);stroke-width:4;stroke-linecap:round;stroke-dasharray:7 6}.hub{fill:#e9fbff;stroke:var(--cyan);stroke-width:4}.readout{position:absolute;left:50%;bottom:0;transform:translateX(-50%);text-align:center;white-space:nowrap}.actual{font:900 clamp(31px,10vw,54px)/.92 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--cyan);text-shadow:0 0 16px #38d8ff55}.actual small{font-size:.35em;color:var(--muted)}.target{margin-top:4px;color:var(--yellow);font:800 10px ui-monospace,SFMono-Regular,Consolas,monospace}
+.statebar{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px}.mini{min-width:0;background:#061522b8;border:1px solid #ffffff12;border-radius:8px;padding:5px 3px;text-align:center}.mini-label{font-size:7px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.mini-value{font:800 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mini-value.warn{color:var(--yellow)}
+.chart-card{left:calc(env(safe-area-inset-left) + 8px);bottom:calc(env(safe-area-inset-bottom) + 9px);width:min(57vw,250px)}.chart-head{display:flex;justify-content:space-between;gap:5px;align-items:center;margin-bottom:4px;font-size:10px}.legend{font:700 7px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin:0 2px 0 5px}.dot:first-child{margin-left:0}.dot.actual-dot{background:var(--cyan)}.dot.target-dot{background:var(--yellow)}canvas{display:block;width:100%;height:62px;background:#06152280;border:1px solid #ffffff12;border-radius:8px}.fault{display:none;margin-top:5px;padding:6px 7px;border-radius:8px;background:#5e1b2ad9;color:#fff;font-size:9px;font-weight:800;line-height:1.25}.fault.show{display:block}.fault.notice{background:#5b4316e6;color:#fff4cf}.diaglink{display:none}
+@media(max-height:700px) and (orientation:portrait){:root{--axis-y:53%}.gauge-card{width:min(55vw,225px)}.chart-card{width:min(55vw,225px)}canvas{height:48px}.actual{font-size:30px}.fixed-speed{top:calc(var(--axis-y) + 92px)}}
+@media(orientation:landscape){:root{--axis-y:54%}header{top:calc(env(safe-area-inset-top) + 5px)}.gauge-card{top:calc(env(safe-area-inset-top) + 42px);width:min(32vw,270px)}.chart-card{top:calc(env(safe-area-inset-top) + 45px);right:calc(env(safe-area-inset-right) + 8px);left:auto;bottom:auto;width:min(31vw,270px)}canvas{height:56px}.buttons{width:min(30vw,270px);grid-template-columns:1fr 1fr}.btn{min-height:50px}.setpoint{top:calc(var(--axis-y) + 57px)}.fixed-speed{top:calc(var(--axis-y) + 88px)}}
 </style>
 </head>
 <body>
 <main class="app">
-<header><div><h1>Direcci&oacute;n &middot; Nueva Pata</h1><div class="sub">Joystick iPhone &middot; rueda -90&deg; a +90&deg;</div></div><div id="link" class="badge">CONECTANDO</div></header>
+<header><div><h1>Direcci&oacute;n &middot; Nueva Pata</h1><div class="sub">Deslice en toda la pantalla &middot; suelte para 0&deg;</div></div><div id="link" class="badge" role="status" aria-live="polite">CONECTANDO</div></header>
 
 <section class="card gauge-card">
   <div class="gauge" aria-label="&Aacute;ngulo real de la rueda">
@@ -417,17 +456,17 @@ h1{font-size:clamp(21px,5.6vw,30px);margin:0;line-height:1.05}.sub{font-size:11p
     <div class="mini"><div class="mini-label">Error</div><div id="error" class="mini-value">---&deg;</div></div>
     <div class="mini"><div class="mini-label">PWM GPIO14</div><div id="servo" class="mini-value">1500 us</div></div>
   </div>
-  <div id="fault" class="fault"></div>
+  <div id="fault" class="fault" role="alert"></div>
 </section>
 
 <section class="card control-card">
   <div class="control-title"><strong>Control eje X</strong><span class="hint">Suelte para volver a 0&deg;</span></div>
-  <div id="pad" class="pad locked" role="slider" tabindex="0" aria-label="Objetivo de direcci&oacute;n" aria-valuemin="-90" aria-valuemax="90" aria-valuenow="0">
+  <div id="pad" class="pad locked" role="slider" tabindex="0" aria-label="Objetivo de direcci&oacute;n" aria-orientation="horizontal" aria-valuemin="-90" aria-valuemax="90" aria-valuenow="0">
     <div class="axis"></div><div class="zero"></div><span class="endmark left">-90&deg;</span><span class="endmark right">+90&deg;</span><div id="knob" class="knob"><span id="knobValue">0&deg;</span></div>
   </div>
   <div id="setpoint" class="setpoint">X 0% &middot; OBJETIVO 0.0&deg;</div>
   <div class="fixed-speed">VELOCIDAD FIJA &middot; M&Aacute;XIMA CALIBRADA</div>
-  <div class="buttons"><button id="arm" class="btn arm" type="button">ARMAR</button><button id="stop" class="btn stop" type="button">PARAR</button></div>
+  <div class="buttons"><button id="arm" class="btn arm" type="button">ARMAR</button><button id="stop" class="btn stop" type="button">PARAR</button><button id="sensorAlarms" class="sensor-switch" type="button" role="switch" aria-checked="true">ALARMAS AS5600 &middot; ON</button></div>
   <div class="safety"><b>La rueda sigue el objetivo realimentado por el AS5600.</b><br>PARAR desarma y lleva GPIO14 inmediatamente a neutro.</div>
 </section>
 
@@ -446,37 +485,42 @@ h1{font-size:clamp(21px,5.6vw,30px);margin:0;line-height:1.05}.sub{font-size:11p
 <script>
 const $=id=>document.getElementById(id),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),FIXED_SPEED_PCT=100;
 const CLIENT_SESSION=(()=>{try{const v=new Uint32Array(1);crypto.getRandomValues(v);return(v[0]>>>1)||1}catch(e){return Math.floor(Math.random()*2147483646)+1}})();
-const pad=$('pad'),knob=$('knob'),armButton=$('arm'),stopButton=$('stop'),canvas=$('trend'),ctx=canvas.getContext('2d');
-let armed=false,armPending=false,releaseRequired=false,joyX=0,dragging=false,postBusy=false,postPending=false,activePost=null,postToken=0,failures=0,armTransitionUntil=0;
+const pad=$('pad'),axis=pad.querySelector('.axis'),knob=$('knob'),armButton=$('arm'),stopButton=$('stop'),sensorAlarmsButton=$('sensorAlarms'),canvas=$('trend'),ctx=canvas.getContext('2d');
+let armed=false,armPending=false,releaseRequired=false,sensorAlarmsEnabled=true,sensorSettingsBusy=false,joyX=0,dragging=false,activePointerId=null,postBusy=false,postPending=false,activePost=null,postToken=0,failures=0,armTransitionUntil=0;
 let history=[],lastStatus=null;
 
 function translatedState(state){return({DISARMED:'DESARMADO',ACTIVE:'MOVIENDO',AT_TARGET:'EN OBJETIVO',SPEED_ZERO:'VELOCIDAD CERO',REVERSAL_SETTLE:'CAMBIO SENTIDO',SENSOR_STALE:'MUESTRA ATRASADA',SENSOR_FAULT:'FALLO ENCODER',WATCHDOG:'SIN MANDO',OTA_ABORTED:'ACTUALIZANDO',MANUAL_STOP:'PARADA MANUAL'})[state]||state||'ESPERA'}
 function setLink(text,kind=''){$('link').textContent=text;$('link').className='badge'+(kind?' '+kind:'')}
 function setKnob(){
-  const max=Math.max(1,pad.clientWidth/2-49),dx=max*joyX/100;
-  knob.style.transform=`translate(-50%,-50%) translateX(${dx}px)`;
+  const p=pad.getBoundingClientRect(),a=axis.getBoundingClientRect();
+  knob.style.left=`${a.left-p.left+(joyX+100)*a.width/200}px`;
+  knob.style.transform='translate(-50%,-50%)';
   const deg=joyX*.9;$('knobValue').textContent=(deg>0?'+':'')+deg.toFixed(0)+'\u00b0';
   $('setpoint').textContent=`X ${joyX>0?'+':''}${joyX}% · OBJETIVO ${deg>0?'+':''}${deg.toFixed(1)}°`;
   pad.setAttribute('aria-valuenow',deg.toFixed(1));
+  pad.setAttribute('aria-valuetext',`${deg.toFixed(1)} grados`);
 }
-function setXFromPointer(clientX){const r=pad.getBoundingClientRect(),max=Math.max(1,r.width/2-49);joyX=Math.round(clamp((clientX-(r.left+r.width/2))/max,-1,1)*100);setKnob()}
-function releaseJoystick(send=true){dragging=false;pad.classList.remove('dragging');joyX=0;setKnob();if(send)sendCommand()}
+function setXFromPointer(clientX){const a=axis.getBoundingClientRect();joyX=Math.round(clamp((clientX-a.left)/Math.max(1,a.width),0,1)*200-100);setKnob()}
+function releaseJoystick(send=true){dragging=false;activePointerId=null;pad.classList.remove('dragging');joyX=0;setKnob();if(send)sendCommand()}
 
-pad.addEventListener('pointerdown',e=>{if(!armed||armPending)return;e.preventDefault();dragging=true;pad.classList.add('dragging');pad.setPointerCapture(e.pointerId);setXFromPointer(e.clientX);sendCommand()});
-pad.addEventListener('pointermove',e=>{if(!dragging||!armed||armPending)return;e.preventDefault();setXFromPointer(e.clientX)});
-pad.addEventListener('pointerup',e=>{if(dragging){e.preventDefault();releaseJoystick()}});
-pad.addEventListener('pointercancel',()=>releaseJoystick());
-pad.addEventListener('lostpointercapture',()=>{if(dragging)releaseJoystick()});
+pad.addEventListener('pointerdown',e=>{if(!armed||armPending||activePointerId!==null)return;e.preventDefault();activePointerId=e.pointerId;dragging=true;pad.classList.add('dragging');pad.setPointerCapture(e.pointerId);setXFromPointer(e.clientX);sendCommand()});
+pad.addEventListener('pointermove',e=>{if(!dragging||e.pointerId!==activePointerId||!armed||armPending)return;e.preventDefault();setXFromPointer(e.clientX)});
+pad.addEventListener('pointerup',e=>{if(dragging&&e.pointerId===activePointerId){e.preventDefault();releaseJoystick()}});
+pad.addEventListener('pointercancel',e=>{if(e.pointerId===activePointerId)releaseJoystick()});
+pad.addEventListener('lostpointercapture',e=>{if(dragging&&e.pointerId===activePointerId)releaseJoystick()});
 pad.addEventListener('keydown',e=>{if(!armed||armPending)return;if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();joyX=clamp(joyX+(e.key==='ArrowRight'?5:-5),-100,100);setKnob();sendCommand()}else if(e.key===' '||e.key==='Home'){e.preventDefault();releaseJoystick()}});
 
 armButton.addEventListener('click',()=>{
+  if(sensorSettingsBusy)return;
   joyX=0;setKnob();
   if(releaseRequired){armed=false;armPending=false;armTransitionUntil=0;paintArmed();sendCommand(true);return}
   armed=!armed;armPending=armed;armTransitionUntil=Date.now()+700;paintArmed();
   if(armed)sendCommand(true,true);else stopJoystick(false)
 });
 stopButton.addEventListener('click',()=>stopJoystick(true));
-function paintArmed(){armButton.textContent=armPending?'ARMANDO...':(armed?'ARMADO':(releaseRequired?'RECONOCER FALLO':'ARMAR'));armButton.disabled=armPending;armButton.classList.toggle('on',armed&&!armPending);pad.classList.toggle('locked',!armed||armPending);if((!armed||armPending)&&dragging)releaseJoystick(false)}
+sensorAlarmsButton.addEventListener('click',()=>{if(armed||armPending||sensorSettingsBusy||postBusy)return;const next=!sensorAlarmsEnabled;if(!next&&!confirm('MODO DE BANCO: se ignorarán MD/ML/MH del AS5600. La pérdida real de I2C seguirá deteniendo la dirección. ¿Desactivar alarmas magnéticas?'))return;setSensorAlarms(next)});
+function paintSensorAlarms(){sensorAlarmsButton.textContent=sensorSettingsBusy?'CAMBIANDO...':(sensorAlarmsEnabled?'ALARMAS AS5600 · ON':'MODO PRUEBA · OFF');sensorAlarmsButton.classList.toggle('off',!sensorAlarmsEnabled);sensorAlarmsButton.disabled=armed||armPending||sensorSettingsBusy||postBusy;sensorAlarmsButton.setAttribute('aria-checked',sensorAlarmsEnabled?'true':'false')}
+function paintArmed(){armButton.textContent=armPending?'ARMANDO...':(armed?'ARMADO':(releaseRequired?'RECONOCER FALLO':'ARMAR'));armButton.disabled=armPending||sensorSettingsBusy;armButton.setAttribute('aria-pressed',armed&&!armPending?'true':'false');armButton.classList.toggle('on',armed&&!armPending);pad.classList.toggle('locked',!armed||armPending);if((!armed||armPending)&&dragging)releaseJoystick(false);paintSensorAlarms()}
 
 async function sendCommand(priority=false,claimControl=false){
   if(priority&&activePost){postToken++;activePost.abort();activePost=null;postBusy=false;postPending=false}
@@ -491,6 +535,11 @@ async function stopJoystick(forceStop=false){
   const ctl=new AbortController(),token=++postToken;activePost=ctl;postBusy=true;const timer=setTimeout(()=>ctl.abort(),250);
   try{const r=await fetch(`/joystick/stop?client=${CLIENT_SESSION}&force=${forceStop?1:0}&_=${Date.now()}`,{method:'POST',cache:'no-store',signal:ctl.signal});const d=await r.json();showStatus(d);if(!r.ok)throw Error('HTTP '+r.status)}catch(e){if(token===postToken&&++failures>2)setLink('SIN CONEXIÓN','bad')}finally{clearTimeout(timer);if(token!==postToken)return;activePost=null;postBusy=false;postPending=false}
 }
+async function setSensorAlarms(enabled){
+  sensorSettingsBusy=true;paintArmed();
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),900);
+  try{const r=await fetch(`/joystick/sensor-alarms?enabled=${enabled?1:0}&client=${CLIENT_SESSION}&_=${Date.now()}`,{method:'POST',cache:'no-store',signal:ctl.signal});const d=await r.json();showStatus(d);if(!r.ok)throw Error('HTTP '+r.status)}catch(e){setLink('NO SE PUDO CAMBIAR','bad')}finally{clearTimeout(timer);sensorSettingsBusy=false;paintArmed()}
+}
 setInterval(()=>{if(armed&&!armPending)sendCommand()},180);
 
 function setNeedles(actual,target){$('actualNeedle').setAttribute('transform',`rotate(${clamp(actual,-100,100)} 160 160)`);$('targetNeedle').setAttribute('transform',`rotate(${clamp(target,-90,90)} 160 160)`)}
@@ -502,18 +551,19 @@ function drawChart(){
 }
 
 function showStatus(d){
-  lastStatus=d;const actual=Number(d.angle_deg),target=Number(d.target_deg),error=Number(d.error_deg),valid=!!d.sensor_valid;
+  lastStatus=d;const actual=Number(d.angle_deg),target=Number(d.target_deg),error=Number(d.error_deg),valid=!!d.sensor_valid,hardValid=!!d.i2c_fresh;
   releaseRequired=!!d.arm_release_required;
+  if(d.sensor_alarms_enabled!==undefined)sensorAlarmsEnabled=!!d.sensor_alarms_enabled;
   if(Number.isFinite(actual)){$('actualAngle').innerHTML=`${actual>0?'+':''}${actual.toFixed(1)}<small>°</small>`}else $('actualAngle').innerHTML='---<small>°</small>';
   $('targetAngle').textContent=`OBJETIVO ${target>0?'+':''}${Number.isFinite(target)?target.toFixed(1):'---'}°`;
   $('error').textContent=Number.isFinite(error)?`${error>0?'+':''}${error.toFixed(1)}°`:'---°';$('servo').textContent=`${d.servo_us||'---'} us`;
   $('state').textContent=translatedState(d.state);$('state').className='mini-value'+(['SENSOR_STALE','SENSOR_FAULT','WATCHDOG','OTA_ABORTED'].includes(d.state)?' warn':'');
-  $('corrected').textContent=Number.isFinite(Number(d.corrected_angle))?Number(d.corrected_angle).toFixed(1)+'°':'---°';$('commandAge').textContent=(d.command_age_ms??'---')+' ms';$('sampleAge').textContent=(d.sample_age_ms??'---')+' ms';
+  const shownCorrected=Number(d.display_corrected_angle);$('corrected').textContent=Number.isFinite(shownCorrected)?shownCorrected.toFixed(1)+'°':'---°';$('commandAge').textContent=(d.command_age_ms??'---')+' ms';$('sampleAge').textContent=(d.sample_age_ms??'---')+' ms';
   if(Number.isFinite(actual)&&Number.isFinite(target)){setNeedles(actual,target);pushHistory(actual,target)}
-  let fault='';if(releaseRequired)fault='Parada de seguridad enclavada. Pulse RECONOCER FALLO antes de volver a armar.';else if(!valid)fault='AS5600 sin lectura válida: dirección detenida.';else if(d.magnet_weak)fault='Aviso: el AS5600 reporta campo magnético débil.';$('fault').textContent=fault;$('fault').classList.toggle('show',!!fault);
+  const filterWindow=Number(d.filter_window||5);let fault='',notice=false;if(releaseRequired)fault='Parada de seguridad enclavada. Pulse RECONOCER FALLO antes de volver a armar.';else if(!hardValid)fault='Sin lecturas I2C recientes: dirección detenida.';else if(Number(d.sample_age_ms)>Number(d.sensor_neutral_ms||100))fault='Lectura I2C intermitente o atrasada: dirección detenida.';else if(d.magnetic_rejected)fault='Lectura presente, pero MD no está activo. Puede usar MODO PRUEBA en banco.';else if(d.reference_recovery)fault=`Revalidando referencia AS5600 (${d.reference_candidate_samples||0}/${5}).`;else if(!valid)fault=Number(d.filter_samples)<filterWindow?`Llenando el promedio de ${filterWindow} lecturas: dirección detenida.`:`Ventana AS5600 no coherente (${d.filter_inliers||0}/${filterWindow}, ${d.filter_span_ms||0} ms): dirección detenida.`;else if(!sensorAlarmsEnabled){fault='MODO PRUEBA: se ignoran MD/ML/MH; el corte por pérdida I2C sigue activo.';notice=true}else if(d.magnet_weak){fault='Aviso: el AS5600 reporta campo magnético débil.';notice=true}else if(d.magnet_strong){fault='Aviso: el AS5600 reporta campo magnético fuerte.';notice=true}const faultNode=$('fault'),faultClass='fault'+(fault?' show':'')+(notice?' notice':'');if(faultNode.textContent!==fault)faultNode.textContent=fault;if(faultNode.className!==faultClass)faultNode.className=faultClass;
   if(releaseRequired){armed=false;armPending=false;joyX=0;armTransitionUntil=0;postPending=false;setKnob()}else if(Date.now()>armTransitionUntil&&armed&&!d.armed){armed=false;armPending=false;joyX=0;setKnob()}
   paintArmed();
-  if(releaseRequired)setLink('PARADA ENCLAVADA','bad');else if(valid){setLink(d.magnet_weak?'EN LÍNEA · IMÁN DÉBIL':'EN LÍNEA','ok')}else setLink('FALLO ENCODER','bad');failures=0;
+  if(releaseRequired)setLink('PARADA ENCLAVADA','bad');else if(valid){if(!sensorAlarmsEnabled)setLink('EN LÍNEA · ALARMAS OFF');else setLink(d.magnet_weak?'EN LÍNEA · IMÁN DÉBIL':'EN LÍNEA','ok')}else setLink('FALLO ENCODER','bad');failures=0;
 }
 async function pollStatus(){
   if(armed){setTimeout(pollStatus,500);return}
@@ -521,8 +571,10 @@ async function pollStatus(){
   try{const r=await fetch('/joystick/status.json?_='+Date.now(),{cache:'no-store',signal:ctl.signal});if(!r.ok)throw Error('HTTP');showStatus(await r.json())}catch(e){if(++failures>2)setLink('SIN CONEXIÓN','bad')}finally{clearTimeout(timer);setTimeout(pollStatus,500)}
 }
 
-function safePageExit(){if(!armed&&!armPending&&!postBusy)return;armed=false;armPending=false;releaseRequired=true;joyX=0;if(activePost){postToken++;activePost.abort();activePost=null;postBusy=false;postPending=false}const url=`/joystick/stop?client=${CLIENT_SESSION}&force=0`;if(navigator.sendBeacon)navigator.sendBeacon(url,new Blob([],{type:'text/plain'}));else fetch(url,{method:'POST',keepalive:true}).catch(()=>{})}
-addEventListener('pagehide',safePageExit);addEventListener('resize',()=>{setKnob();drawChart()});
+function safePageExit(){if(!armed&&!armPending&&!postBusy)return;armed=false;armPending=false;releaseRequired=true;joyX=0;dragging=false;activePointerId=null;if(activePost){postToken++;activePost.abort();activePost=null;postBusy=false;postPending=false}const url=`/joystick/stop?client=${CLIENT_SESSION}&force=0`;if(navigator.sendBeacon)navigator.sendBeacon(url,new Blob([],{type:'text/plain'}));else fetch(url,{method:'POST',keepalive:true}).catch(()=>{})}
+function relayout(){setKnob();drawChart()}
+addEventListener('pagehide',safePageExit);addEventListener('resize',relayout);
+addEventListener('orientationchange',()=>{if(dragging)releaseJoystick();setTimeout(relayout,120)});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)safePageExit()});
 setKnob();paintArmed();drawChart();pollStatus();
 </script>
@@ -660,7 +712,7 @@ uint16_t positionDrivePulseUs(float errorDeg) {
   if (magnitude < POSITION_FINE_ZONE_DEG) {
     // La prueba corta midio zonas muertas distintas: 110 us hacia adelante
     // y al menos 157 us en regreso. Se usan 180 us en regreso para vencer el
-    // juego; la lectura a 25 Hz corta el pulso en menos de 40 ms al llegar.
+    // juego; la lectura a 20 Hz corta el pulso en menos de 50 ms al llegar.
     return errorDeg > 0.0f
         ? uint16_t(SERVO_NEUTRAL_US - POSITION_FINE_FORWARD_OFFSET_US)
         : uint16_t(SERVO_NEUTRAL_US + POSITION_FINE_RETURN_OFFSET_US);
@@ -703,7 +755,7 @@ void writeServoPulseLocked(uint16_t pulseUs) {
 }
 
 ServoTestState copyServoTestState() {
-  ServoTestState copy = servoTest;
+  ServoTestState copy = {};
   if (!servoStateMutex) return copy;
   if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) == pdTRUE) {
     copy = servoTest;
@@ -713,7 +765,7 @@ ServoTestState copyServoTestState() {
 }
 
 LinearityTestState copyLinearityTestState() {
-  LinearityTestState copy = linearityTest;
+  LinearityTestState copy = {};
   if (!servoStateMutex) return copy;
   if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) == pdTRUE) {
     copy = linearityTest;
@@ -723,7 +775,7 @@ LinearityTestState copyLinearityTestState() {
 }
 
 PositionSequenceState copyPositionSequenceState() {
-  PositionSequenceState copy = positionSequence;
+  PositionSequenceState copy = {};
   if (!servoStateMutex) return copy;
   if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) == pdTRUE) {
     copy = positionSequence;
@@ -733,13 +785,24 @@ PositionSequenceState copyPositionSequenceState() {
 }
 
 JoystickSteeringState copyJoystickSteeringState() {
-  JoystickSteeringState copy = joystickSteering;
+  JoystickSteeringState copy = {};
   if (!servoStateMutex) return copy;
   if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) == pdTRUE) {
     copy = joystickSteering;
     xSemaphoreGive(servoStateMutex);
   }
   return copy;
+}
+
+// Debe llamarse con servoStateMutex tomado. Estos contadores pertenecen a la
+// validacion de la referencia del encoder, no a la readquisicion del objetivo.
+void clearJoystickReferenceRecoveryLocked() {
+  joystickSteering.referenceRecoveryActive = false;
+  joystickSteering.referenceCandidateSamples = 0;
+  joystickSteering.armedOutlierSamples = 0;
+  joystickSteering.armedReturnSamples = 0;
+  joystickSteering.referenceCandidateAnchorDeg = 0.0f;
+  joystickSteering.armedReturnAnchorDeg = 0.0f;
 }
 
 // Debe llamarse con servoStateMutex tomado. Un fallo queda enclavado para
@@ -819,6 +882,7 @@ void stopJoystickSteering(JoystickSteeringMode reason,
     joystickSteering.driveInhibitUntilMs = 0;
     joystickSteering.stableSamples = 0;
     joystickSteering.reacquireSamples = 0;
+    clearJoystickReferenceRecoveryLocked();
     writeServoPulseLocked(SERVO_NEUTRAL_US);
   }
   xSemaphoreGive(servoStateMutex);
@@ -839,6 +903,7 @@ void tripJoystickSafetyLocked(JoystickSteeringMode reason) {
   joystickSteering.driveInhibitUntilMs = 0;
   joystickSteering.stableSamples = 0;
   joystickSteering.reacquireSamples = 0;
+  clearJoystickReferenceRecoveryLocked();
   latchJoystickSafetyLocked(reason);
   writeServoPulseLocked(SERVO_NEUTRAL_US);
 }
@@ -1081,8 +1146,38 @@ void processPositionSequenceSample(uint32_t sampleMs, bool i2cValid,
   xSemaphoreGive(servoStateMutex);
 }
 
+float signedCircularDelta(float currentDeg, float referenceDeg) {
+  float deltaDeg = currentDeg - referenceDeg;
+  if (deltaDeg > 180.0f) deltaDeg -= 360.0f;
+  if (deltaDeg < -180.0f) deltaDeg += 360.0f;
+  return deltaDeg;
+}
+
+// La referencia solo se siembra con el servo desarmado o al arrancar. El
+// El promedio recibido aqui ya contiene cinco lecturas corregidas consecutivas.
+void seedJoystickReferenceLocked(float correctedCyclicDeg, uint32_t sampleMs,
+                                 bool countAsRebase) {
+  joystickSteering.unwrapReady = true;
+  joystickSteering.lastCorrectedCyclicDeg = correctedCyclicDeg;
+  joystickSteering.unwrappedCorrectedDeg = correctedCyclicDeg;
+  joystickSteering.zeroAbsoluteDeg =
+      roundf(correctedCyclicDeg / 360.0f) * 360.0f;
+  joystickSteering.logicalAngleDeg =
+      correctedCyclicDeg - joystickSteering.zeroAbsoluteDeg;
+  joystickSteering.targetAbsoluteDeg = joystickSteering.zeroAbsoluteDeg +
+                                       joystickSteering.targetDeg;
+  joystickSteering.errorDeg = joystickSteering.targetAbsoluteDeg -
+                              joystickSteering.unwrappedCorrectedDeg;
+  joystickSteering.lastAcceptedMs = sampleMs;
+  joystickSteering.acceptedSamples++;
+  if (countAsRebase && joystickSteering.referenceRebases < UINT32_MAX)
+    joystickSteering.referenceRebases++;
+  clearJoystickReferenceRecoveryLocked();
+}
+
 void processJoystickSteeringSample(uint32_t sampleMs, bool i2cValid,
-                                   uint16_t rawAngle, uint8_t as5600Status) {
+                                   bool filteredValid, float correctedCyclicDeg,
+                                   uint8_t as5600Status) {
   if (!servoStateMutex) return;
   if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) != pdTRUE) return;
   const uint32_t safetyNow = millis();
@@ -1091,11 +1186,38 @@ void processJoystickSteeringSample(uint32_t sampleMs, bool i2cValid,
     return;
   }
 
-  // MD es obligatorio para mover. ML se informa, pero se admite porque es la
-  // condicion debil conocida durante toda la calibracion validada.
-  if (!i2cValid || !(as5600Status & 0x20)) {
+  // En modo estricto MD es obligatorio. El interruptor de banco puede omitir
+  // MD/ML/MH, pero nunca convierte una lectura I2C fallida en una muestra.
+  const bool magneticStatusAccepted =
+      !joystickSteering.sensorAlarmsEnabled || (as5600Status & 0x20);
+  if (!i2cValid || !magneticStatusAccepted) {
     joystickSteering.invalidSamples++;
+    joystickSteering.referenceCandidateSamples = 0;
+    joystickSteering.armedReturnSamples = 0;
+    if (!joystickSteering.armed)
+      joystickSteering.referenceRecoveryActive = false;
     enforceJoystickMissingSensorLocked(safetyNow);
+    xSemaphoreGive(servoStateMutex);
+    return;
+  }
+
+  // Una transaccion I2C puede ser correcta y aun producir una ventana poco
+  // densa o incoherente. En ese caso el neutro es inmediato; no se refresca
+  // lastAcceptedMs con el promedio anterior.
+  if (!filteredValid) {
+    joystickSteering.invalidSamples++;
+    joystickSteering.referenceCandidateSamples = 0;
+    joystickSteering.armedReturnSamples = 0;
+    if (joystickSteering.armed) {
+      joystickSteering.referenceRecoveryActive = true;
+      joystickSteering.mode = JOYSTICK_SENSOR_STALE;
+      joystickSteering.stableSamples = 0;
+      joystickSteering.reacquireSamples = 0;
+      writeServoPulseLocked(SERVO_NEUTRAL_US);
+      enforceJoystickMissingSensorLocked(safetyNow);
+    } else {
+      joystickSteering.referenceRecoveryActive = false;
+    }
     xSemaphoreGive(servoStateMutex);
     return;
   }
@@ -1118,36 +1240,88 @@ void processJoystickSteeringSample(uint32_t sampleMs, bool i2cValid,
     writeServoPulseLocked(SERVO_NEUTRAL_US);
   }
 
-  const float correctedCyclicDeg = as5600CorrectedAngleDeg(rawAngle);
   if (!joystickSteering.unwrapReady) {
-    joystickSteering.unwrapReady = true;
-    joystickSteering.lastCorrectedCyclicDeg = correctedCyclicDeg;
-    joystickSteering.unwrappedCorrectedDeg = correctedCyclicDeg;
-    joystickSteering.zeroAbsoluteDeg =
-        roundf(correctedCyclicDeg / 360.0f) * 360.0f;
+    seedJoystickReferenceLocked(correctedCyclicDeg, sampleMs, false);
   } else {
-    float deltaDeg = correctedCyclicDeg -
-                     joystickSteering.lastCorrectedCyclicDeg;
-    if (deltaDeg > 180.0f) deltaDeg -= 360.0f;
-    if (deltaDeg < -180.0f) deltaDeg += 360.0f;
+    const float deltaDeg = signedCircularDelta(
+        correctedCyclicDeg, joystickSteering.lastCorrectedCyclicDeg);
     if (fabsf(deltaDeg) > JOYSTICK_MAX_SLOT_DELTA_DEG) {
       joystickSteering.glitches++;
       joystickSteering.invalidSamples++;
-      enforceJoystickMissingSensorLocked(millis());
+      joystickSteering.referenceRecoveryActive = true;
+
+      if (joystickSteering.armed) {
+        joystickSteering.armedReturnSamples = 0;
+        if (joystickSteering.armedOutlierSamples < UINT8_MAX)
+          joystickSteering.armedOutlierSamples++;
+        joystickSteering.mode = JOYSTICK_SENSOR_STALE;
+        joystickSteering.stableSamples = 0;
+        joystickSteering.reacquireSamples = 0;
+        writeServoPulseLocked(SERVO_NEUTRAL_US);
+        if (joystickSteering.armedOutlierSamples >=
+            JOYSTICK_ARMED_GLITCH_TRIP_SAMPLES)
+          tripJoystickSafetyLocked(JOYSTICK_SENSOR_FAULT);
+        else
+          enforceJoystickMissingSensorLocked(safetyNow);
+      } else {
+        // Desarmado se permite adoptar una posicion nueva, pero solo si varios
+        // promedios consecutivos forman un grupo compacto alrededor del ancla.
+        if (!joystickSteering.referenceCandidateSamples ||
+            fabsf(signedCircularDelta(
+                correctedCyclicDeg,
+                joystickSteering.referenceCandidateAnchorDeg)) >
+                JOYSTICK_REFERENCE_CLUSTER_DEG) {
+          joystickSteering.referenceCandidateAnchorDeg = correctedCyclicDeg;
+          joystickSteering.referenceCandidateSamples = 1;
+        } else if (joystickSteering.referenceCandidateSamples < UINT8_MAX) {
+          joystickSteering.referenceCandidateSamples++;
+        }
+        if (joystickSteering.referenceCandidateSamples >=
+            JOYSTICK_REFERENCE_CONFIRM_SAMPLES)
+          seedJoystickReferenceLocked(correctedCyclicDeg, sampleMs, true);
+      }
       xSemaphoreGive(servoStateMutex);
       return;
     }
+
+    if (joystickSteering.armed &&
+        joystickSteering.referenceRecoveryActive) {
+      // Tras un salto aislado no se reanuda PWM con una unica muestra que
+      // regrese: se exigen dos lecturas filtradas coherentes con la referencia.
+      if (!joystickSteering.armedReturnSamples ||
+          fabsf(signedCircularDelta(
+              correctedCyclicDeg,
+              joystickSteering.armedReturnAnchorDeg)) >
+              JOYSTICK_REFERENCE_CLUSTER_DEG) {
+        joystickSteering.armedReturnAnchorDeg = correctedCyclicDeg;
+        joystickSteering.armedReturnSamples = 1;
+      } else if (joystickSteering.armedReturnSamples < UINT8_MAX) {
+        joystickSteering.armedReturnSamples++;
+      }
+      joystickSteering.mode = JOYSTICK_SENSOR_STALE;
+      writeServoPulseLocked(SERVO_NEUTRAL_US);
+      if (joystickSteering.armedReturnSamples <
+          JOYSTICK_ARMED_RETURN_SAMPLES) {
+        xSemaphoreGive(servoStateMutex);
+        return;
+      }
+      clearJoystickReferenceRecoveryLocked();
+    } else if (!joystickSteering.armed &&
+               joystickSteering.referenceRecoveryActive) {
+      clearJoystickReferenceRecoveryLocked();
+    }
+
     joystickSteering.unwrappedCorrectedDeg += deltaDeg;
     joystickSteering.lastCorrectedCyclicDeg = correctedCyclicDeg;
+    joystickSteering.acceptedSamples++;
+    joystickSteering.lastAcceptedMs = sampleMs;
   }
 
-  joystickSteering.acceptedSamples++;
-  joystickSteering.lastAcceptedMs = sampleMs;
   joystickSteering.logicalAngleDeg =
       joystickSteering.unwrappedCorrectedDeg -
       joystickSteering.zeroAbsoluteDeg;
   // La primera lectura buena despues de una pausa solo rearma la referencia;
-  // se exige otra muestra valida (40 ms) antes de volver a aplicar PWM.
+  // se exige otra muestra valida (50 ms) antes de volver a aplicar PWM.
   if (recoveringFromStale && joystickSteering.armed) {
     xSemaphoreGive(servoStateMutex);
     return;
@@ -1192,7 +1366,7 @@ void processJoystickSteeringSample(uint32_t sampleMs, bool i2cValid,
   }
 
   // Se corta el PWM en la primera muestra dentro de banda, pero solo se
-  // declara AT_TARGET tras las 5 muestras consecutivas ya probadas (200 ms).
+  // declara AT_TARGET tras 5 muestras consecutivas (250 ms a 20 Hz).
   if (positionInArrivalBand(joystickSteering.errorDeg)) {
     if (joystickSteering.stableSamples < UINT8_MAX)
       joystickSteering.stableSamples++;
@@ -1273,6 +1447,7 @@ bool commandJoystickSteering(int16_t x, uint8_t requestedSpeedPct, bool arm,
     joystickSteering.driveInhibitUntilMs = 0;
     joystickSteering.stableSamples = 0;
     joystickSteering.reacquireSamples = 0;
+    clearJoystickReferenceRecoveryLocked();
     // Una pagina abierta y desarmada puede seguir enviando keep-alives. No
     // debe neutralizar una prueba diagnostica que use el mismo GPIO14.
     if (wasArmed) writeServoPulseLocked(SERVO_NEUTRAL_US);
@@ -1311,15 +1486,17 @@ bool commandJoystickSteering(int16_t x, uint8_t requestedSpeedPct, bool arm,
     message = "CONTROL_OWNED_BY_OTHER_CLIENT";
     return false;
   }
-  // Para el primer armado se exige MD y una lectura reciente. Ya en marcha,
-  // una perdida instantanea se filtra por lastAcceptedMs: neutro a 100 ms y
-  // latch SENSOR_FAULT a 400 ms, sin convertir una sola muestra en un trip.
+  // El primer armado exige el promedio de cinco lecturas reciente. MD solo es
+  // obligatorio con las alarmas AS5600 activas; la frescura I2C nunca se omite.
+  const bool magneticStatusAccepted =
+      !joystickSteering.sensorAlarmsEnabled || (sensor.status & 0x20);
   if (newlyArmed &&
-      (!sensor.valid || !(sensor.status & 0x20) || !sensor.lastGoodMs ||
+      (!sensor.filterReady || !magneticStatusAccepted || !sensor.lastGoodMs ||
       uint32_t(now - sensor.lastGoodMs) > JOYSTICK_SENSOR_TIMEOUT_MS ||
       !joystickSteering.unwrapReady || !joystickSteering.lastAcceptedMs ||
+      joystickSteering.referenceRecoveryActive ||
       uint32_t(now - joystickSteering.lastAcceptedMs) >
-          JOYSTICK_SENSOR_TIMEOUT_MS)) {
+          JOYSTICK_SENSOR_NEUTRAL_MS)) {
     writeServoPulseLocked(SERVO_NEUTRAL_US);
     joystickSteering.armed = false;
     joystickSteering.mode = JOYSTICK_SENSOR_FAULT;
@@ -1343,6 +1520,7 @@ bool commandJoystickSteering(int16_t x, uint8_t requestedSpeedPct, bool arm,
     joystickSteering.driveInhibitUntilMs = 0;
     joystickSteering.stableSamples = 0;
     joystickSteering.reacquireSamples = 0;
+    clearJoystickReferenceRecoveryLocked();
     joystickSteering.ownerIpKey = clientIpKey;
     joystickSteering.ownerSessionKey = clientSessionKey;
   }
@@ -1382,7 +1560,51 @@ bool commandJoystickSteering(int16_t x, uint8_t requestedSpeedPct, bool arm,
   return true;
 }
 
+bool setJoystickSensorAlarmsEnabled(bool enabled, String &message) {
+  if (!servoStateMutex) {
+    message = "SERVO_STATE_UNAVAILABLE";
+    return false;
+  }
+  if (otaInProgress) {
+    message = "OTA_IN_PROGRESS";
+    return false;
+  }
+  if (xSemaphoreTake(servoStateMutex, portMAX_DELAY) != pdTRUE) {
+    message = "SERVO_STATE_UNAVAILABLE";
+    return false;
+  }
+  if (joystickSteering.armed || servoTest.active || linearityTest.active ||
+      positionSequence.active) {
+    xSemaphoreGive(servoStateMutex);
+    message = "DISARM_BEFORE_SENSOR_SETTINGS";
+    return false;
+  }
+
+  if (joystickSteering.sensorAlarmsEnabled != enabled) {
+    joystickSteering.sensorAlarmsEnabled = enabled;
+    // El cambio de criterio nunca hereda una referencia antigua. El filtro de
+    // cinco muestras vuelve a sembrarla con GPIO14 en neutro.
+    joystickSteering.unwrapReady = false;
+    joystickSteering.lastAcceptedMs = 0;
+    joystickSteering.mode = JOYSTICK_DISARMED;
+    joystickSteering.x = 0;
+    joystickSteering.targetDeg = 0.0f;
+    joystickSteering.driveInhibitUntilMs = 0;
+    joystickSteering.stableSamples = 0;
+    joystickSteering.reacquireSamples = 0;
+    clearJoystickReferenceRecoveryLocked();
+    writeServoPulseLocked(SERVO_NEUTRAL_US);
+  }
+  xSemaphoreGive(servoStateMutex);
+  message = enabled ? "AS5600_ALARMS_ENABLED" : "AS5600_ALARMS_DISABLED";
+  return true;
+}
+
 bool startServoTest(String &message) {
+  if (!REMOTE_DIAGNOSTIC_MOTION_ENABLED) {
+    message = "REMOTE_DIAGNOSTIC_MOTION_DISABLED";
+    return false;
+  }
   const As5600Snapshot sensor = copySnapshot();
   const uint32_t now = millis();
   if (!servoPwmReady || !servoStateMutex) {
@@ -1439,6 +1661,10 @@ bool startServoTest(String &message) {
 }
 
 bool startLinearityTest(String &message) {
+  if (!REMOTE_DIAGNOSTIC_MOTION_ENABLED) {
+    message = "REMOTE_DIAGNOSTIC_MOTION_DISABLED";
+    return false;
+  }
   const As5600Snapshot sensor = copySnapshot();
   const uint32_t now = millis();
   if (!servoPwmReady || !servoStateMutex) {
@@ -1492,6 +1718,10 @@ bool startLinearityTest(String &message) {
 }
 
 bool startPositionSequence(String &message, bool fineProbe) {
+  if (!REMOTE_DIAGNOSTIC_MOTION_ENABLED) {
+    message = "REMOTE_DIAGNOSTIC_MOTION_DISABLED";
+    return false;
+  }
   const As5600Snapshot sensor = copySnapshot();
   const uint32_t now = millis();
   if (!servoPwmReady || !servoStateMutex) {
@@ -1929,7 +2159,6 @@ bool softI2cWriteByte(uint8_t value, bool &acknowledged,
     if (!releaseScl(errorCode, I2C_ERROR_SCL_EDGE_TIMEOUT)) return false;
     softI2cDelay();
     if (!setSoftI2cLine(sclGpio(), 0, errorCode)) return false;
-    softI2cDelay();
   }
 
   // El noveno pulso pertenece al esclavo: SDA baja significa ACK.
@@ -1939,7 +2168,6 @@ bool softI2cWriteByte(uint8_t value, bool &acknowledged,
   softI2cDelay();
   acknowledged = !gpio_get_level(sdaGpio());
   if (!setSoftI2cLine(sclGpio(), 0, errorCode)) return false;
-  softI2cDelay();
   return true;
 }
 
@@ -1953,7 +2181,6 @@ bool softI2cReadByte(uint8_t &value, bool acknowledgeMore,
     softI2cDelay();
     value = uint8_t((value << 1) | gpio_get_level(sdaGpio()));
     if (!setSoftI2cLine(sclGpio(), 0, errorCode)) return false;
-    softI2cDelay();
   }
 
   // ACK para pedir otro byte; NACK para indicar el ultimo byte.
@@ -1964,7 +2191,6 @@ bool softI2cReadByte(uint8_t &value, bool acknowledgeMore,
   softI2cDelay();
   if (!setSoftI2cLine(sclGpio(), 0, errorCode)) return false;
   if (!setSoftI2cLine(sdaGpio(), 1, errorCode)) return false;
-  softI2cDelay();
   return true;
 }
 
@@ -2084,9 +2310,40 @@ float quantizeDisplayAngle(float angleDeg) {
                         DISPLAY_QUANTUM_DEG);
 }
 
-bool circularMean(float sumSin, float sumCos, float &meanAngleDeg) {
-  if (fabsf(sumSin) < 1.0e-6f && fabsf(sumCos) < 1.0e-6f) return false;
-  meanAngleDeg = normalizeAngle(atan2f(sumSin, sumCos) * RAD_TO_DEG);
+bool robustCircularMean(const float *anglesDeg, uint8_t count,
+                        float &meanAngleDeg, uint8_t &inlierCount) {
+  if (!anglesDeg || !count || count > FILTER_SAMPLE_COUNT) return false;
+
+  // Se desenvuelven localmente alrededor de la primera muestra. Como el grupo
+  // fisico ocupa pocos grados, una mediana lineal ya es circularmente correcta
+  // aun cuando el conjunto cruza 359 -> 0.
+  float unwrapped[FILTER_SAMPLE_COUNT] = {};
+  float sorted[FILTER_SAMPLE_COUNT] = {};
+  const float anchorDeg = anglesDeg[0];
+  for (uint8_t index = 0; index < count; ++index) {
+    unwrapped[index] = anchorDeg +
+        signedCircularDelta(anglesDeg[index], anchorDeg);
+    sorted[index] = unwrapped[index];
+    for (uint8_t position = index; position > 0 &&
+         sorted[position] < sorted[position - 1]; --position) {
+      const float temporary = sorted[position - 1];
+      sorted[position - 1] = sorted[position];
+      sorted[position] = temporary;
+    }
+  }
+
+  const float medianDeg = count & 1
+      ? sorted[count / 2]
+      : 0.5f * (sorted[count / 2 - 1] + sorted[count / 2]);
+  float sumDeg = 0.0f;
+  inlierCount = 0;
+  for (uint8_t index = 0; index < count; ++index) {
+    if (fabsf(unwrapped[index] - medianDeg) > FILTER_OUTLIER_DEG) continue;
+    sumDeg += unwrapped[index];
+    inlierCount++;
+  }
+  if (inlierCount < FILTER_MIN_INLIER_COUNT) return false;
+  meanAngleDeg = normalizeAngle(sumDeg / inlierCount);
   return true;
 }
 
@@ -2098,7 +2355,7 @@ void i2cTask(void *) {
   state.lastError = beginError;
   if (state.busStarted) {
     // AGC y magnitud se toman una vez al iniciar. La advertencia MD/ML/MH
-    // sigue actualizándose cada 40 ms con el registro STATUS; sacar esta
+    // sigue actualizándose cada 50 ms con el registro STATUS; sacar esta
     // segunda transacción de la ruta periódica mantiene exacta la ventana.
     uint8_t diagnostics[3] = {};
     uint16_t diagnosticsError = I2C_OK;
@@ -2114,25 +2371,28 @@ void i2cTask(void *) {
   publishSnapshot(state);
 
   TickType_t lastWake = xTaskGetTickCount();
-  uint8_t cycleSlots = 0;
-  uint8_t validCycleSamples = 0;
-  float cycleSin = 0.0f;
-  float cycleCos = 0.0f;
+  float filterAngles[FILTER_SAMPLE_COUNT] = {};
+  uint32_t filterSampleTimes[FILTER_SAMPLE_COUNT] = {};
+  uint8_t filterWriteIndex = 0;
+  uint8_t filterCount = 0;
+  uint8_t diagnosticDivider = 0;
 
   for (;;) {
     if (xTaskDelayUntil(&lastWake,
                         pdMS_TO_TICKS(FILTER_SAMPLE_PERIOD_MS)) == pdFALSE) {
       state.scheduleOverruns++;
       // No se permiten muestras de "recuperacion" pegadas: el siguiente
-      // slot vuelve a quedar exactamente 40 ms despues del instante actual.
+      // slot vuelve a quedar exactamente 50 ms despues del instante actual.
       lastWake = xTaskGetTickCount();
     }
     if (otaInProgress || !state.busStarted) {
-      cycleSlots = 0;
-      validCycleSamples = 0;
-      cycleSin = 0.0f;
-      cycleCos = 0.0f;
+      filterWriteIndex = 0;
+      filterCount = 0;
+      diagnosticDivider = 0;
+      state.filterReady = false;
       state.filterSamples = 0;
+      state.filterInliers = 0;
+      state.filterSpanMs = 0;
       publishSnapshot(state);
       delay(50);
       lastWake = xTaskGetTickCount();
@@ -2155,35 +2415,38 @@ void i2cTask(void *) {
       state.angleDeg = 360.0f * state.rawAngle / 4096.0f;
       state.correctedAngleDeg = as5600CorrectedAngleDeg(state.rawAngle);
       state.successes++;
+
+      // Una pausa larga invalida el historial: no se mezclan posiciones
+      // anteriores a la desconexion con las lecturas recuperadas.
+      if (state.lastGoodMs &&
+          uint32_t(state.lastSampleMs - state.lastGoodMs) >
+              JOYSTICK_SENSOR_TIMEOUT_MS) {
+        filterWriteIndex = 0;
+        filterCount = 0;
+        state.filterReady = false;
+        state.filterInliers = 0;
+        state.filterSpanMs = 0;
+      }
       state.lastGoodMs = state.lastSampleMs;
-      // La LUT se usa solo para el valor visual. El raw, el unwrap, los
-      // umbrales de glitches y la prueba 7+7 permanecen en cuentas originales.
-      cycleSin += sinf(state.correctedAngleDeg * DEG_TO_RAD);
-      cycleCos += cosf(state.correctedAngleDeg * DEG_TO_RAD);
-      ++validCycleSamples;
-    }
 
-    // Se guarda cada intento del slot de 40 ms. Los fallidos quedan con
-    // rawAngle=65535 y valid=0, para que el CSV conserve tambien los huecos.
-    recordServoTestSample(state.lastSampleMs, state.valid, state.rawAngle);
-    processLinearitySample(state.lastSampleMs, state.valid, state.rawAngle,
-                           state.status);
-    processPositionSequenceSample(state.lastSampleMs, state.valid,
-                                  state.rawAngle);
-    processJoystickSteeringSample(state.lastSampleMs, state.valid,
-                                  state.rawAngle, state.status);
-    if (!state.lastGoodMs ||
-        uint32_t(state.lastSampleMs - state.lastGoodMs) >
-            SERVO_SENSOR_TIMEOUT_MS) {
-      stopServoTest(SERVO_TEST_SENSOR_TIMEOUT, true);
-    }
+      // Ventana circular deslizante: siempre son las cinco ultimas lecturas
+      // I2C validas corregidas por la LUT, incluso al cruzar 359 -> 0 grados.
+      filterAngles[filterWriteIndex] = state.correctedAngleDeg;
+      filterSampleTimes[filterWriteIndex] = state.lastSampleMs;
+      filterWriteIndex = (filterWriteIndex + 1) % FILTER_SAMPLE_COUNT;
+      if (filterCount < FILTER_SAMPLE_COUNT) filterCount++;
+      state.filterSamples = filterCount;
 
-    ++cycleSlots;
-    state.filterSamples = validCycleSamples;
-    if (cycleSlots == FILTER_SAMPLE_COUNT) {
-      if (validCycleSamples == FILTER_SAMPLE_COUNT) {
+      if (filterCount == FILTER_SAMPLE_COUNT) {
+        // Con la ventana llena, writeIndex apunta a la muestra mas antigua.
+        state.filterSpanMs = uint32_t(
+            state.lastSampleMs - filterSampleTimes[filterWriteIndex]);
         float meanAngle = 0.0f;
-        if (circularMean(cycleSin, cycleCos, meanAngle)) {
+        uint8_t inlierCount = 0;
+        if (state.filterSpanMs <= FILTER_MAX_SPAN_MS &&
+            robustCircularMean(filterAngles, FILTER_SAMPLE_COUNT, meanAngle,
+                               inlierCount)) {
+          state.filterInliers = inlierCount;
           state.meanAngleDeg = meanAngle;
           if (!state.filterReady) {
             state.filterDeltaDeg = 0.0f;
@@ -2198,13 +2461,41 @@ void i2cTask(void *) {
               state.displayUpdates++;
             }
           }
+        } else {
+          state.filterInliers = inlierCount;
+          state.filterReady = false;
         }
       }
+    }
 
-      cycleSlots = 0;
-      validCycleSamples = 0;
-      cycleSin = 0.0f;
-      cycleCos = 0.0f;
+    // Diagnosticos y joystick reciben cada promedio nuevo a 20 Hz. Las rutas
+    // de movimiento diagnostico continúan deshabilitadas en este firmware.
+    if (++diagnosticDivider >= 1) {
+      diagnosticDivider = 0;
+      recordServoTestSample(state.lastSampleMs, state.valid, state.rawAngle);
+      processLinearitySample(state.lastSampleMs, state.valid, state.rawAngle,
+                             state.status);
+      processPositionSequenceSample(state.lastSampleMs, state.valid,
+                                    state.rawAngle);
+    }
+    processJoystickSteeringSample(
+        state.lastSampleMs, state.valid, state.filterReady,
+        state.meanAngleDeg, state.status);
+    if (!state.lastGoodMs ||
+        uint32_t(state.lastSampleMs - state.lastGoodMs) >
+            SERVO_SENSOR_TIMEOUT_MS) {
+      stopServoTest(SERVO_TEST_SENSOR_TIMEOUT, true);
+    }
+
+    if (!state.valid && state.lastGoodMs &&
+        uint32_t(state.lastSampleMs - state.lastGoodMs) >
+            JOYSTICK_SENSOR_TIMEOUT_MS) {
+      filterWriteIndex = 0;
+      filterCount = 0;
+      state.filterReady = false;
+      state.filterSamples = 0;
+      state.filterInliers = 0;
+      state.filterSpanMs = 0;
     }
     publishSnapshot(state);
   }
@@ -2379,8 +2670,8 @@ void streamLinearityLogCsv() {
              "%lu,%d,%.4f,%.4f,%u,%s,%u,%u,%u,%u,%.4f,%.4f\n",
              static_cast<unsigned long>(sample.elapsedMs),
              i2cValid ? int(sample.rawAngle) : -1, angleDeg,
-             correctedAngleDeg,
-             static_cast<unsigned>(linearityPhasePulseUs(phase)),
+              correctedAngleDeg,
+              static_cast<unsigned>(linearityPhasePulseUs(phase)),
              linearityTestPhaseName(phase), i2cValid ? 1U : 0U,
              accepted ? 1U : 0U, glitch ? 1U : 0U,
              static_cast<unsigned>(sample.flags & 0x38),
@@ -2428,9 +2719,15 @@ String statusText() {
       : 0;
   IPAddress ip = WiFi.status() == WL_CONNECTED ? WiFi.localIP()
                                                 : WiFi.softAPIP();
-  String out = "FW:AS5600_JOYSTICK_STEERING_1.4.1";
+  String out = "FW:AS5600_JOYSTICK_STEERING_1.6.2";
   out += "\nIP:" + ip.toString();
   out += "\nWIFI:" + String(WiFi.status() == WL_CONNECTED ? "STA" : "AP");
+  out += "\nSTA_IP:" + WiFi.localIP().toString();
+  out += "\nAP_SSID:" + String(NUEVA_PATA_AP_SSID);
+  out += " AP_IP:" + WiFi.softAPIP().toString();
+  out += " AP_READY:" + String(softApReady ? 1 : 0);
+  out += " DNS_READY:" + String(captiveDnsReady ? 1 : 0);
+  out += " AP_CLIENTS:" + String(WiFi.softAPgetStationNum());
   out += "\nI2C_SDA:5 I2C_SCL:7 I2C_HZ:" + String(AS5600_CLOCK_HZ);
   out += " MODE:SOFTWARE";
   out += "\nI2C_STARTED:" + String(s.busStarted ? 1 : 0);
@@ -2445,6 +2742,11 @@ String statusText() {
   out += " DELTA:" + String(s.filterDeltaDeg, 2);
   out += "\nFILTER_READY:" + String(s.filterReady ? 1 : 0);
   out += " FILTER_SAMPLES:" + String(s.filterSamples);
+  out += "/" + String(FILTER_SAMPLE_COUNT);
+  out += " INLIERS:" + String(s.filterInliers);
+  out += " SPAN_MS:" + String(s.filterSpanMs);
+  out += "/" + String(FILTER_MAX_SPAN_MS);
+  out += " FILTER_PERIOD_MS:" + String(FILTER_SAMPLE_PERIOD_MS);
   out += " DISPLAY_UPDATES:" + String(s.displayUpdates);
   out += "\nSTATUS:0x" + String(s.status, HEX);
   out += " MD:" + String((s.status & 0x20) ? 1 : 0);
@@ -2502,6 +2804,11 @@ String statusText() {
   out += " SAFETY_TRIPS:" + String(joystick.safetyTrips);
   out += " LAST_TRIP:" +
          String(joystickSteeringModeName(joystick.lastTripReason));
+  out += " AS5600_ALARMS:" +
+         String(joystick.sensorAlarmsEnabled ? "ON" : "OFF");
+  out += " REF_RECOVERY:" +
+         String(joystick.referenceRecoveryActive ? 1 : 0);
+  out += " REF_REBASES:" + String(joystick.referenceRebases);
   out += " X:" + String(joystick.x);
   out += " SPEED_PCT:" + String(joystick.speedPct);
   out += "\nSTEERING_ANGLE_DEG:" + String(joystick.logicalAngleDeg, 3);
@@ -2534,27 +2841,46 @@ String joystickStatusJson() {
   const uint32_t now = millis();
   const uint32_t sampleAge = control.lastAcceptedMs
       ? uint32_t(now - control.lastAcceptedMs) : UINT32_MAX;
+  const uint32_t i2cAge = sensor.lastGoodMs
+      ? uint32_t(now - sensor.lastGoodMs) : UINT32_MAX;
   const uint32_t commandAge = control.lastCommandMs
       ? uint32_t(now - control.lastCommandMs) : UINT32_MAX;
-  const bool sensorValid = sensor.valid && (sensor.status & 0x20) &&
-      control.unwrapReady &&
-      sampleAge <= JOYSTICK_SENSOR_TIMEOUT_MS;
-  char json[1280];
+  const bool i2cFresh = sensor.lastGoodMs &&
+      i2cAge <= JOYSTICK_SENSOR_TIMEOUT_MS;
+  const bool magneticStatusAccepted = !control.sensorAlarmsEnabled ||
+      (sensor.status & 0x20);
+  const bool sensorValid = i2cFresh && sensor.filterReady &&
+      magneticStatusAccepted && control.unwrapReady &&
+      !control.referenceRecoveryActive &&
+      sampleAge <= JOYSTICK_SENSOR_NEUTRAL_MS;
+  char json[2048];
   snprintf(
       json, sizeof(json),
-      "{\"fw\":\"AS5600_JOYSTICK_STEERING_1.4.1\"," 
-      "\"armed\":%u,\"state\":\"%s\"," 
-      "\"arm_release_required\":%u,\"last_trip\":\"%s\"," 
+      "{\"fw\":\"AS5600_JOYSTICK_STEERING_1.6.2\","
+      "\"armed\":%u,\"state\":\"%s\","
+      "\"arm_release_required\":%u,\"last_trip\":\"%s\","
       "\"safety_trips\":%lu,\"x\":%d,\"speed_pct\":%u,"
       "\"angle_deg\":%.4f,\"target_deg\":%.4f,\"error_deg\":%.4f,"
-      "\"corrected_angle\":%.4f,\"unwrapped_corrected_deg\":%.4f,"
-      "\"zero_absolute_deg\":%.4f,\"servo_us\":%u,"
+      "\"corrected_angle\":%.4f,\"filtered_corrected_angle\":%.4f,"
+      "\"display_corrected_angle\":%.1f,"
+      "\"unwrapped_corrected_deg\":%.4f,\"zero_absolute_deg\":%.4f,"
+      "\"servo_us\":%u,"
       "\"stable_samples\":%u,\"stable_required\":%u,"
       "\"reacquire_samples\":%u,\"reacquire_required\":%u,"
       "\"sensor_valid\":%u,\"sample_age_ms\":%lu,"
+      "\"i2c_latest_valid\":%u,\"i2c_fresh\":%u,\"i2c_age_ms\":%lu,"
+      "\"filter_ready\":%u,\"filter_samples\":%u,\"filter_window\":%u,"
+      "\"filter_inliers\":%u,\"filter_span_ms\":%lu,"
+      "\"filter_max_span_ms\":%lu,"
       "\"command_age_ms\":%lu,\"md\":%u,\"ml\":%u,\"mh\":%u,"
-      "\"magnet_weak\":%u,\"accepted\":%lu,\"invalid\":%lu,"
+      "\"magnet_weak\":%u,\"magnet_strong\":%u,"
+      "\"sensor_alarms_enabled\":%u,"
+      "\"magnetic_status_accepted\":%u,\"magnetic_rejected\":%u,"
+      "\"reference_recovery\":%u,\"reference_candidate_samples\":%u,"
+      "\"armed_outlier_samples\":%u,\"reference_rebases\":%lu,"
+      "\"accepted\":%lu,\"invalid\":%lu,"
       "\"glitches\":%lu,\"angle_limit_deg\":%.1f,"
+      "\"sensor_neutral_ms\":%lu,\"sensor_timeout_ms\":%lu,"
       "\"command_timeout_ms\":%lu,\"rs485\":\"NOT_INITIALIZED\"}",
       control.armed ? 1U : 0U, joystickSteeringModeName(control.mode),
       control.armReleaseRequired ? 1U : 0U,
@@ -2562,30 +2888,60 @@ String joystickStatusJson() {
       static_cast<unsigned long>(control.safetyTrips),
       static_cast<int>(control.x), static_cast<unsigned>(control.speedPct),
       control.logicalAngleDeg, control.targetDeg, control.errorDeg,
-      sensor.correctedAngleDeg, control.unwrappedCorrectedDeg,
-      control.zeroAbsoluteDeg, static_cast<unsigned>(control.pulseUs),
+      sensor.correctedAngleDeg, sensor.meanAngleDeg, sensor.displayAngleDeg,
+      control.unwrappedCorrectedDeg, control.zeroAbsoluteDeg,
+      static_cast<unsigned>(control.pulseUs),
       static_cast<unsigned>(control.stableSamples),
       static_cast<unsigned>(POSITION_STABLE_SAMPLES),
       static_cast<unsigned>(control.reacquireSamples),
       static_cast<unsigned>(POSITION_REACQUIRE_SAMPLES),
       sensorValid ? 1U : 0U, static_cast<unsigned long>(sampleAge),
+      sensor.valid ? 1U : 0U, i2cFresh ? 1U : 0U,
+      static_cast<unsigned long>(i2cAge), sensor.filterReady ? 1U : 0U,
+      static_cast<unsigned>(sensor.filterSamples),
+      static_cast<unsigned>(FILTER_SAMPLE_COUNT),
+      static_cast<unsigned>(sensor.filterInliers),
+      static_cast<unsigned long>(sensor.filterSpanMs),
+      static_cast<unsigned long>(FILTER_MAX_SPAN_MS),
       static_cast<unsigned long>(commandAge),
       (sensor.status & 0x20) ? 1U : 0U,
       (sensor.status & 0x10) ? 1U : 0U,
       (sensor.status & 0x08) ? 1U : 0U,
       (sensor.status & 0x10) ? 1U : 0U,
+      (sensor.status & 0x08) ? 1U : 0U,
+      control.sensorAlarmsEnabled ? 1U : 0U,
+      magneticStatusAccepted ? 1U : 0U,
+      (control.sensorAlarmsEnabled && !(sensor.status & 0x20)) ? 1U : 0U,
+      control.referenceRecoveryActive ? 1U : 0U,
+      static_cast<unsigned>(control.referenceCandidateSamples),
+      static_cast<unsigned>(control.armedOutlierSamples),
+      static_cast<unsigned long>(control.referenceRebases),
       static_cast<unsigned long>(control.acceptedSamples),
       static_cast<unsigned long>(control.invalidSamples),
       static_cast<unsigned long>(control.glitches), JOYSTICK_MAX_ANGLE_DEG,
+      static_cast<unsigned long>(JOYSTICK_SENSOR_NEUTRAL_MS),
+      static_cast<unsigned long>(JOYSTICK_SENSOR_TIMEOUT_MS),
       static_cast<unsigned long>(JOYSTICK_COMMAND_TIMEOUT_MS));
   return String(json);
 }
 
 void setupWeb() {
-  server.on("/", [] {
+  const auto serveJoystickPortal = [] {
     server.sendHeader("Cache-Control", "no-store, max-age=0");
+    server.sendHeader("Captive-Portal", "http://192.168.4.1/");
     server.send_P(200, "text/html; charset=utf-8", TELEMETRY_HTML);
-  });
+  };
+  server.on("/", HTTP_GET, serveJoystickPortal);
+  // Rutas consultadas por iOS, Android y Windows al detectar una red sin
+  // Internet. Entregar la interfaz (en vez del resultado de conectividad)
+  // abre el asistente cautivo y mantiene todas las llamadas con rutas relativas.
+  server.on("/hotspot-detect.html", HTTP_GET, serveJoystickPortal);
+  server.on("/library/test/success.html", HTTP_GET, serveJoystickPortal);
+  server.on("/generate_204", HTTP_GET, serveJoystickPortal);
+  server.on("/gen_204", HTTP_GET, serveJoystickPortal);
+  server.on("/connecttest.txt", HTTP_GET, serveJoystickPortal);
+  server.on("/ncsi.txt", HTTP_GET, serveJoystickPortal);
+  server.on("/redirect", HTTP_GET, serveJoystickPortal);
   server.on("/telemetry", [] {
     server.sendHeader("Cache-Control", "no-store, max-age=0");
     server.send_P(200, "text/html; charset=utf-8", DIAGNOSTIC_HTML);
@@ -2594,6 +2950,29 @@ void setupWeb() {
   server.on("/joystick/status.json", HTTP_GET, [] {
     server.sendHeader("Cache-Control", "no-store, max-age=0");
     server.send(200, "application/json", joystickStatusJson());
+  });
+  server.on("/joystick/sensor-alarms", HTTP_POST, [] {
+    if (!server.hasArg("enabled") || !server.hasArg("client")) {
+      server.send(400, "text/plain", "REQUIRED_ARGS:enabled,client");
+      return;
+    }
+    long enabled = 0;
+    long clientSession = 0;
+    if (!parseIntegerArgument(server.arg("enabled"), 0, 1, enabled) ||
+        !parseIntegerArgument(server.arg("client"), 1, INT32_MAX,
+                              clientSession)) {
+      server.send(400, "text/plain",
+                  "INVALID_ARGS:enabled[0,1],client[1,2147483647]");
+      return;
+    }
+    (void)clientSession;  // Identifica la pagina v2; el cambio exige desarmado.
+    String message;
+    const bool accepted =
+        setJoystickSensorAlarmsEnabled(enabled == 1, message);
+    server.sendHeader("Cache-Control", "no-store, max-age=0");
+    server.sendHeader("X-Joystick-Result", message);
+    server.send(accepted ? 200 : 409, "application/json",
+                joystickStatusJson());
   });
   server.on("/joystick/cmd", HTTP_POST, [] {
     if (!server.hasArg("x") || !server.hasArg("speed") ||
@@ -2705,11 +3084,15 @@ void setupWeb() {
     char json[1280];
     snprintf(
         json, sizeof(json),
-        "{\"started\":%u,\"valid\":%u,\"diag\":%u,\"angle\":%.1f,"
+        "{\"started\":%u,\"valid\":%u,\"diag\":%u,"
+        "\"i2c_hz\":%lu,\"sample_period_ms\":%lu,\"filter_window\":%u,"
+        "\"angle\":%.1f,"
         "\"raw\":%u,\"raw_angle\":%.3f,"
         "\"corrected_angle\":%.3f,\"mean_angle\":%.3f,"
         "\"filter_delta\":%.3f,\"filter_ready\":%u,"
-        "\"filter_samples\":%u,\"display_updates\":%lu,"
+        "\"filter_samples\":%u,\"filter_inliers\":%u,"
+        "\"filter_span_ms\":%lu,\"filter_max_span_ms\":%lu,"
+        "\"display_updates\":%lu,"
         "\"pct\":%.3f,\"status\":%u,\"md\":%u,"
         "\"ml\":%u,\"mh\":%u,\"agc\":%u,\"magnitude\":%u,"
         "\"last_error\":%u,\"samples\":%lu,\"successes\":%lu,"
@@ -2721,11 +3104,17 @@ void setupWeb() {
         "\"servo_log_samples\":%u,\"servo_log_dropped\":%lu,"
         "\"millis\":%lu}",
         s.busStarted ? 1U : 0U, s.valid ? 1U : 0U,
-        s.diagnosticsValid ? 1U : 0U, s.displayAngleDeg,
+        s.diagnosticsValid ? 1U : 0U,
+        static_cast<unsigned long>(AS5600_CLOCK_HZ),
+        static_cast<unsigned long>(FILTER_SAMPLE_PERIOD_MS),
+        static_cast<unsigned>(FILTER_SAMPLE_COUNT), s.displayAngleDeg,
         static_cast<unsigned>(s.rawAngle), s.angleDeg, s.correctedAngleDeg,
         s.meanAngleDeg,
         s.filterDeltaDeg, s.filterReady ? 1U : 0U,
         static_cast<unsigned>(s.filterSamples),
+        static_cast<unsigned>(s.filterInliers),
+        static_cast<unsigned long>(s.filterSpanMs),
+        static_cast<unsigned long>(FILTER_MAX_SPAN_MS),
         static_cast<unsigned long>(s.displayUpdates),
         100.0f * s.rawAngle / 4095.0f,
         static_cast<unsigned>(s.status), (s.status & 0x20) ? 1U : 0U,
@@ -2773,7 +3162,7 @@ void setupWeb() {
     char json[1152];
     snprintf(
         json, sizeof(json),
-        "{\"fw\":\"AS5600_JOYSTICK_STEERING_1.4.1\","
+        "{\"fw\":\"AS5600_JOYSTICK_STEERING_1.6.2\","
         "\"active\":%u,\"phase\":\"%s\",\"servo_us\":%u,"
         "\"corrected_angle\":%.4f,\"unwrapped_corrected_deg\":%.4f,"
         "\"logical_deg\":%.4f,\"home_absolute_deg\":%.4f,"
@@ -2850,7 +3239,7 @@ void setupWeb() {
     char json[768];
     snprintf(
         json, sizeof(json),
-        "{\"fw\":\"AS5600_LINEARITY_CORRECTED_1.0\","
+        "{\"fw\":\"AS5600_JOYSTICK_STEERING_1.6.2\","
         "\"active\":%u,\"phase\":\"%s\",\"servo_us\":%u,"
         "\"corrected_angle\":%.3f,"
         "\"elapsed_ms\":%lu,\"phase_elapsed_ms\":%lu,"
@@ -2948,6 +3337,13 @@ void setupWeb() {
     out += "\nSCL_LEVEL:" + String(gpio_get_level(GPIO_NUM_7));
     server.send(200, "text/plain", out);
   });
+  server.onNotFound([serveJoystickPortal] {
+    if (server.method() == HTTP_GET) {
+      serveJoystickPortal();
+      return;
+    }
+    server.send(404, "text/plain", "NOT_FOUND");
+  });
   server.begin();
 }
 
@@ -2960,13 +3356,20 @@ void setup() {
       xSemaphoreTake(servoStateMutex, portMAX_DELAY) == pdTRUE) {
     joystickSteering.mode = JOYSTICK_DISARMED;
     joystickSteering.speedPct = JOYSTICK_FIXED_SPEED_PCT;
+    // Siempre vuelve al modo estricto despues de un reinicio. El modo de banco
+    // debe seleccionarse de forma visible en cada sesion.
+    joystickSteering.sensorAlarmsEnabled = true;
     writeServoPulseLocked(SERVO_NEUTRAL_US);
     xSemaphoreGive(servoStateMutex);
   }
   delay(300);
 
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("NuevaPata", "nueva-pata");
+  WiFi.setSleep(false);
+  softApReady =
+      WiFi.softAPConfig(NUEVA_PATA_AP_IP, NUEVA_PATA_AP_GATEWAY,
+                        NUEVA_PATA_AP_SUBNET) &&
+      WiFi.softAP(NUEVA_PATA_AP_SSID, NUEVA_PATA_AP_PASSWORD);
   WiFi.setAutoReconnect(true);
   if (strlen(NUEVA_PATA_TALLER_SSID))
     WiFi.begin(NUEVA_PATA_TALLER_SSID, NUEVA_PATA_TALLER_PASSWORD);
@@ -2978,7 +3381,11 @@ void setup() {
     delay(100);
 
   setupWeb();
+  if (softApReady)
+    captiveDnsReady =
+        dnsServer.start(NUEVA_PATA_DNS_PORT, "*", NUEVA_PATA_AP_IP);
   ArduinoOTA.setHostname("ensayo-nueva-pata");
+  ArduinoOTA.setPassword(NUEVA_PATA_AP_PASSWORD);
   ArduinoOTA.onStart([] {
     otaInProgress = true;
     stopServoTest(SERVO_TEST_OTA_ABORTED, true);
@@ -2994,11 +3401,12 @@ void setup() {
   ArduinoOTA.begin();
 
   xTaskCreate(i2cTask, "as5600_i2c", 4096, nullptr, 1, nullptr);
-  Serial.println("READY AS5600 GPIO5/7 JOYSTICK STEERING 1.4.1");
+  Serial.println("READY AS5600 GPIO5/7 JOYSTICK STEERING 1.6.2");
 }
 
 void loop() {
   ArduinoOTA.handle();
+  if (captiveDnsReady) dnsServer.processNextRequest();
   server.handleClient();
   serviceJoystickSteering();
   serviceServoTest();

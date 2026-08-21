@@ -307,3 +307,97 @@ Validación física de la versión 1.4.1 a máxima velocidad:
   GPIO14 en 1500 us;
 - estado final `DISARMED`, GPIO14 en 1500 us, AS5600 con `MD=1`, aviso `ML=1`
   todavía presente y RS485 `NOT_INITIALIZED`.
+
+## Joystick iPhone por la red del ESP (1.5.0)
+
+El firmware activo es `AS5600_JOYSTICK_STEERING_1.5.0`. El ESP mantiene su
+conexión de taller por `M ZAPATA` en `http://192.168.1.184/` y, al mismo tiempo,
+expone este punto de acceso propio:
+
+```text
+Red Wi-Fi: NuevaPata
+Contraseña: nueva-pata
+Joystick: http://192.168.4.1/
+```
+
+La dirección del punto de acceso se fija explícitamente en `192.168.4.1`. Un
+DNS cautivo y las rutas de detección de iOS, Android y Windows entregan la
+página principal del joystick. En el iPhone puede aparecer automáticamente al
+unirse a la red; si no aparece, se abre directamente en Safari. Para conservar
+la mayor superficie posible también puede añadirse a la pantalla de inicio.
+
+La zona táctil horizontal ocupa toda la pantalla. El indicador circular, el
+historial, el valor real, el objetivo y el estado se dibujan como capas
+semitransparentes que no bloquean el gesto. Los botones ARMAR y PARAR siguen
+siendo controles independientes y respetan las zonas seguras del iPhone tanto
+en orientación vertical como horizontal. Al soltar el dedo, el objetivo vuelve
+a cero grados.
+
+La versión conserva la sesión exclusiva por pestaña, el watchdog de 650 ms, el
+enclavamiento de fallos y el neutro de 1500 us. La OTA queda protegida con la
+misma contraseña `nueva-pata`. Después de la instalación se comprobó por la red
+del taller: firmware 1.5.0, AP activo en `192.168.4.1`, DNS cautivo activo,
+estado `DISARMED`, GPIO14 en 1500 us y RS485 `NOT_INITIALIZED`. No se armó el
+servo porque el AS5600 no presentaba una muestra válida en esa verificación.
+
+## Firmware final AS5600 y dirección (1.6.2)
+
+El resultado consolidado queda en `AS5600_JOYSTICK_STEERING_1.6.2`. El AS5600
+se lee por I2C software con SDA en GPIO5 y SCL en GPIO7. El reloj del bus es de
+aproximadamente 20 kHz, pero la aplicación inicia una sola transacción cada
+50 ms: **20 lecturas de ángulo por segundo**, no 20.000.
+
+La medición usada por la dirección tiene estas propiedades:
+
+- ventana circular deslizante de las últimas 5 lecturas corregidas por la LUT;
+- separación nominal de 200 ms entre la lectura más antigua y la más reciente,
+  con máximo admisible de 240 ms;
+- centro circular robusto, con descarte de valores alejados más de 5 grados y
+  requisito mínimo de 4 de 5 muestras coherentes;
+- cruce correcto entre 359 y 0 grados y presentación visual en pasos de 0,5
+  grados, sin cuantizar internamente el valor continuo usado por el control;
+- reacquisición controlada de la referencia para que una muestra aislada no
+  pueda desplazar el cero ni reanudar el movimiento.
+
+El selector `ALARMAS AS5600 · ON / MODO PRUEBA · OFF` permite omitir durante un
+ensayo los indicadores magnéticos `MD/ML/MH`. Nunca omite errores I2C, muestras
+atrasadas, incoherencias angulares ni el watchdog. La salida se neutraliza a
+1500 us cuando la lectura aceptada supera 100 ms de edad; el fallo se enclava a
+500 ms y la pérdida del mando web se enclava a 650 ms. Los endpoints remotos de
+movimiento diagnóstico continúan deshabilitados.
+
+Validación real del 21 de agosto de 2026, con el AS5600 conectado:
+
+- firmware accesible en `http://192.168.1.184/` y mediante el AP `NuevaPata` en
+  `http://192.168.4.1/`;
+- 203 lecturas correctas en 10,141 s: **20,018 Hz efectivos**;
+- 0 errores I2C, 0 atrasos de planificación, filtro 5/5, 5 inliers y ventana de
+  200 ms;
+- AS5600 válido con `MD=1`; `ML=1` quedó visible como aviso de campo débil;
+- estado final `DISARMED`, GPIO14 en 1500 us y RS485 `NOT_INITIALIZED`.
+
+## Curva PWM final del S550 (2026-08-21)
+
+Con el S550 nuevamente acoplado, el AS5600 instalado después de la reducción
+108/15 = 7,2:1 y la pata elevada, se midió una sola pasada desde 1450 hasta
+500 us. Cada nivel tuvo rampa, 1 s de asentamiento y 3 s de meseta. La velocidad
+se obtuvo por regresión lineal del ángulo corregido y desenvuelto; la velocidad
+del S550 es inferida multiplicando la velocidad del eje AS5600 por 7,2, no una
+lectura directa con tacómetro sobre el motor.
+
+Resultados principales:
+
+- 1040 us: 4,671 rpm en la salida y 33,63 rpm inferidas en el S550;
+- 700 us: 8,477 rpm en la salida y 61,04 rpm inferidas en el S550;
+- 600 us: 8,890 rpm en la salida y 64,01 rpm inferidas en el S550;
+- máximo medido a 550 us: 8,983 rpm en la salida y 64,68 rpm inferidas;
+- 500 us: 8,927 rpm en la salida y 64,27 rpm inferidas, sin mejora frente a
+  550 us.
+
+La curva entra en saturación entre 700 y 600 us. Para este montaje se adopta
+**600 us como extremo práctico recomendado**, porque entrega casi toda la
+velocidad medida y conserva margen respecto del límite teórico de 500 us. El
+detalle completo queda en `artifacts/s550-pwm-sweep-summary-20260821.csv`, la
+gráfica en `artifacts/s550-pwm-sweep-curve-20260821.svg` y las muestras crudas
+en `artifacts/s550-pwm-sweep-20260821-135314.csv` y
+`artifacts/s550-pwm-sweep-partial-1450-1100-20260821-134945.csv`.

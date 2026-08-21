@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="650" viewBox="0 0 1100 650">
+<rect width="100%" height="100%" fill="#0b1220"/>
+<style>text{font-family:Segoe UI,Arial,sans-serif;fill:#dbeafe}.grid{stroke:#334155;stroke-width:1}.axis{stroke:#94a3b8;stroke-width:1.5}.curve{fill:none;stroke:#38bdf8;stroke-width:4}.dot{fill:#f8fafc;stroke:#0284c7;stroke-width:2}.manual{stroke:#fb7185;stroke-width:2;stroke-dasharray:9 7}.sat{fill:#fbbf24}</style>
+<text x="550" y="32" text-anchor="middle" font-size="24" font-weight="700">S550: velocidad medida vs PWM</text>
+<text x="550" y="54" text-anchor="middle" font-size="14" fill="#94a3b8">RPM inferida con reduccion externa 108/15 y AS5600 en el eje final</text>
+<line class="grid" x1="90" y1="565.0" x2="1055" y2="565.0"/>
+<text x="76" y="570.0" text-anchor="end" font-size="13">0</text>
+<line class="grid" x1="90" y1="492.9" x2="1055" y2="492.9"/>
+<text x="76" y="497.9" text-anchor="end" font-size="13">10</text>
+<line class="grid" x1="90" y1="420.7" x2="1055" y2="420.7"/>
+<text x="76" y="425.7" text-anchor="end" font-size="13">20</text>
+<line class="grid" x1="90" y1="348.6" x2="1055" y2="348.6"/>
+<text x="76" y="353.6" text-anchor="end" font-size="13">30</text>
+<line class="grid" x1="90" y1="276.4" x2="1055" y2="276.4"/>
+<text x="76" y="281.4" text-anchor="end" font-size="13">40</text>
+<line class="grid" x1="90" y1="204.3" x2="1055" y2="204.3"/>
+<text x="76" y="209.3" text-anchor="end" font-size="13">50</text>
+<line class="grid" x1="90" y1="132.1" x2="1055" y2="132.1"/>
+<text x="76" y="137.1" text-anchor="end" font-size="13">60</text>
+<line class="grid" x1="90" y1="60.0" x2="1055" y2="60.0"/>
+<text x="76" y="65.0" text-anchor="end" font-size="13">70</text>
+<line class="grid" x1="90.0" y1="60" x2="90.0" y2="565"/>
+<text x="90.0" y="590" text-anchor="middle" font-size="13">500</text>
+<line class="grid" x1="191.6" y1="60" x2="191.6" y2="565"/>
+<text x="191.6" y="590" text-anchor="middle" font-size="13">600</text>
+<line class="grid" x1="293.2" y1="60" x2="293.2" y2="565"/>
+<text x="293.2" y="590" text-anchor="middle" font-size="13">700</text>
+<line class="grid" x1="394.7" y1="60" x2="394.7" y2="565"/>
+<text x="394.7" y="590" text-anchor="middle" font-size="13">800</text>
+<line class="grid" x1="496.3" y1="60" x2="496.3" y2="565"/>
+<text x="496.3" y="590" text-anchor="middle" font-size="13">900</text>
+<line class="grid" x1="597.9" y1="60" x2="597.9" y2="565"/>
+<text x="597.9" y="590" text-anchor="middle" font-size="13">1000</text>
+<line class="grid" x1="699.5" y1="60" x2="699.5" y2="565"/>
+<text x="699.5" y="590" text-anchor="middle" font-size="13">1100</text>
+<line class="grid" x1="801.1" y1="60" x2="801.1" y2="565"/>
+<text x="801.1" y="590" text-anchor="middle" font-size="13">1200</text>
+<line class="grid" x1="902.6" y1="60" x2="902.6" y2="565"/>
+<text x="902.6" y="590" text-anchor="middle" font-size="13">1300</text>
+<line class="grid" x1="1004.2" y1="60" x2="1004.2" y2="565"/>
+<text x="1004.2" y="590" text-anchor="middle" font-size="13">1400</text>
+<line class="grid" x1="1055.0" y1="60" x2="1055.0" y2="565"/>
+<text x="1055.0" y="590" text-anchor="middle" font-size="13">1450</text>
+<line class="axis" x1="90" y1="565" x2="1055" y2="565"/>
+<line class="axis" x1="90" y1="60" x2="90" y2="565"/>
+<line class="manual" x1="90" y1="240.4" x2="1055" y2="240.4"/>
+<text x="1047" y="232.4" text-anchor="end" font-size="13" fill="#fb7185">Manual S550: 45 rpm</text>
+<polyline class="curve" points="90.0,101.3 140.8,98.4 191.6,103.2 293.2,124.7 394.7,166.9 496.3,218.8 597.9,295.1 638.5,322.4 699.5,369.9 750.3,399.8 801.1,424.9 851.8,457.0 902.6,482.9 953.4,509.8 1004.2,539.2 1055.0,564.5"/>
+<circle class="dot" cx="90.0" cy="101.3" r="5"/>
+<text x="90.0" y="89.3" text-anchor="middle" font-size="12">64.3</text>
+<circle class="dot" cx="140.8" cy="98.4" r="5"/>
+<text x="140.8" y="86.4" text-anchor="middle" font-size="12">64.7</text>
+<circle class="dot" cx="191.6" cy="103.2" r="5"/>
+<text x="191.6" y="91.2" text-anchor="middle" font-size="12">64.0</text>
+<circle class="dot" cx="293.2" cy="124.7" r="5"/>
+<text x="293.2" y="112.7" text-anchor="middle" font-size="12">61.0</text>
+<circle class="dot" cx="394.7" cy="166.9" r="5"/>
+<circle class="dot" cx="496.3" cy="218.8" r="5"/>
+<circle class="dot" cx="597.9" cy="295.1" r="5"/>
+<circle class="dot" cx="638.5" cy="322.4" r="5"/>
+<text x="638.5" y="310.4" text-anchor="middle" font-size="12">33.6</text>
+<circle class="dot" cx="699.5" cy="369.9" r="5"/>
+<circle class="dot" cx="750.3" cy="399.8" r="5"/>
+<circle class="dot" cx="801.1" cy="424.9" r="5"/>
+<circle class="dot" cx="851.8" cy="457.0" r="5"/>
+<circle class="dot" cx="902.6" cy="482.9" r="5"/>
+<circle class="dot" cx="953.4" cy="509.8" r="5"/>
+<circle class="dot" cx="1004.2" cy="539.2" r="5"/>
+<circle class="dot" cx="1055.0" cy="564.5" r="5"/>
+<text x="1055.0" y="552.5" text-anchor="middle" font-size="12">0.1</text>
+<circle class="sat" cx="140.8" cy="98.4" r="8"/>
+<text x="156.8" y="122.4" font-size="14" fill="#fbbf24">max 64.67721 rpm @ 550 us</text>
+<text x="572.5" y="625" text-anchor="middle" font-size="16">Pulso PWM (microsegundos, neutro = 1500)</text>
+<text x="24" y="312.5" text-anchor="middle" font-size="16" transform="rotate(-90 24 312.5)">RPM inferida del eje S550</text>
+</svg>
