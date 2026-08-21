@@ -376,29 +376,39 @@ Validación real del 21 de agosto de 2026, con el AS5600 conectado:
 - AS5600 válido con `MD=1`; `ML=1` quedó visible como aviso de campo débil;
 - estado final `DISARMED`, GPIO14 en 1500 us y RS485 `NOT_INITIALIZED`.
 
-## Curva PWM final del S550 (2026-08-21)
+## Curva PWM bidireccional final del S550 (2026-08-21)
 
-Con el S550 nuevamente acoplado, el AS5600 instalado después de la reducción
-108/15 = 7,2:1 y la pata elevada, se midió una sola pasada desde 1450 hasta
-500 us. Cada nivel tuvo rampa, 1 s de asentamiento y 3 s de meseta. La velocidad
-se obtuvo por regresión lineal del ángulo corregido y desenvuelto; la velocidad
-del S550 es inferida multiplicando la velocidad del eje AS5600 por 7,2, no una
-lectura directa con tacómetro sobre el motor.
+Con el S550 acoplado, el AS5600 instalado después de la reducción confirmada
+108/15 = 7,2:1 y la pata elevada, se midieron los dos sentidos desde 500 hasta
+2500 us. Cada nivel tuvo rampa de 0,6 s, 1 s de asentamiento y 3 s de meseta. La
+velocidad se obtuvo por regresión lineal del ángulo corregido y desenvuelto
+entre 0,25 y 2,80 s de cada meseta. Por ello, la velocidad del eje de salida es
+una medición directa del AS5600; la velocidad del S550 es una inferencia
+multiplicada por 7,2, no una lectura de tacómetro sobre el motor.
 
 Resultados principales:
 
-- 1040 us: 4,671 rpm en la salida y 33,63 rpm inferidas en el S550;
-- 700 us: 8,477 rpm en la salida y 61,04 rpm inferidas en el S550;
-- 600 us: 8,890 rpm en la salida y 64,01 rpm inferidas en el S550;
-- máximo medido a 550 us: 8,983 rpm en la salida y 64,68 rpm inferidas;
-- 500 us: 8,927 rpm en la salida y 64,27 rpm inferidas, sin mejora frente a
-  550 us.
+- sentido A, ángulo creciente: máximo de **+8,983 rpm en la salida** y
+  **+64,68 rpm S550 inferidas** a 550 us;
+- extremo A de 500 us: +8,927 rpm en la salida y +64,27 rpm S550;
+- sentido B, ángulo decreciente: máximo de **−8,913 rpm en la salida** y
+  **−64,17 rpm S550 inferidas** a 2450 us;
+- extremo B de 2500 us: −8,822 rpm en la salida y −63,52 rpm S550;
+- zona neutra observada aproximadamente entre 1450 y 1600 us: el movimiento
+  claro comenzó a 1400 us en A y a 1650 us en B.
 
-La curva entra en saturación entre 700 y 600 us. Para este montaje se adopta
-**600 us como extremo práctico recomendado**, porque entrega casi toda la
-velocidad medida y conserva margen respecto del límite teórico de 500 us. El
-detalle completo queda en `artifacts/s550-pwm-sweep-summary-20260821.csv`, la
-gráfica en `artifacts/s550-pwm-sweep-curve-20260821.svg` (también exportada a
-PNG) y las muestras crudas
-en `artifacts/s550-pwm-sweep-20260821-135314.csv` y
-`artifacts/s550-pwm-sweep-partial-1450-1100-20260821-134945.csv`.
+Los valores medidos conservan las variaciones reales del montaje: no se forzó
+una curva monótona ni una simetría artificial. En particular, el lado B muestra
+variación intermedia entre 2000 y 2300 us; antes de convertir esta tabla en una
+LUT definitiva conviene repetir el barrido en ida y regreso para cuantificar
+histéresis y dependencia de posición/carga.
+
+La tabla y la metodología quedan en
+`artifacts/S550_PWM_BIDIRECTIONAL_2026-08-21.md`; los datos consolidados, en
+`artifacts/s550-pwm-bidirectional-summary-20260821.csv`; y la gráfica final, en
+`artifacts/s550-pwm-bidirectional-20260821.svg` y su exportación PNG. Los
+registros crudos usados son los dos barridos originales del sentido A, el
+barrido válido hasta 2400 us del sentido B y la meseta completa separada de
+2450/2500 us. El firmware temporal de medición no forma parte del resultado
+consolidado: al terminar se restauró `AS5600_JOYSTICK_STEERING_1.6.2`, en estado
+`DISARMED` y con GPIO14 en 1500 us.

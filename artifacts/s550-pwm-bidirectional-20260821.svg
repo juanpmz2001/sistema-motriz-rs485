@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760">
+<rect width="100%" height="100%" fill="#0b1220"/>
+<style>text{font-family:Segoe UI,Arial,sans-serif;fill:#dbeafe}.grid{stroke:#26364d;stroke-width:1}.axis{stroke:#94a3b8;stroke-width:1.5}.a{fill:none;stroke:#38bdf8;stroke-width:4;stroke-linejoin:round}.b{fill:none;stroke:#fb923c;stroke-width:4;stroke-linejoin:round}.pa{fill:#e0f2fe;stroke:#0284c7;stroke-width:2}.pb{fill:#ffedd5;stroke:#ea580c;stroke-width:2}.manual{stroke:#f472b6;stroke-width:1.5;stroke-dasharray:8 7}</style>
+<text x="630" y="32" text-anchor="middle" font-size="25" font-weight="700">S550: mapa PWM–RPM bidireccional</text>
+<text x="630" y="55" text-anchor="middle" font-size="14" fill="#94a3b8">AS5600 en salida · reducción 108/15 = 7,2:1 · velocidad firmada</text>
+<rect x="603.3" y="90" width="80.3" height="560" fill="#64748b" opacity="0.13"/><text x="643.4" y="108" text-anchor="middle" font-size="12" fill="#cbd5e1">zona neutra observada</text>
+<line class="grid" x1="95" y1="650.0" x2="1165" y2="650.0"/><text x="83" y="655.0" text-anchor="end" font-size="12">-70</text><text x="1177" y="655.0" font-size="12">-9,7</text>
+<line class="grid" x1="95" y1="610.0" x2="1165" y2="610.0"/><text x="83" y="615.0" text-anchor="end" font-size="12">-60</text><text x="1177" y="615.0" font-size="12">-8,3</text>
+<line class="grid" x1="95" y1="570.0" x2="1165" y2="570.0"/><text x="83" y="575.0" text-anchor="end" font-size="12">-50</text><text x="1177" y="575.0" font-size="12">-6,9</text>
+<line class="grid" x1="95" y1="530.0" x2="1165" y2="530.0"/><text x="83" y="535.0" text-anchor="end" font-size="12">-40</text><text x="1177" y="535.0" font-size="12">-5,6</text>
+<line class="grid" x1="95" y1="490.0" x2="1165" y2="490.0"/><text x="83" y="495.0" text-anchor="end" font-size="12">-30</text><text x="1177" y="495.0" font-size="12">-4,2</text>
+<line class="grid" x1="95" y1="450.0" x2="1165" y2="450.0"/><text x="83" y="455.0" text-anchor="end" font-size="12">-20</text><text x="1177" y="455.0" font-size="12">-2,8</text>
+<line class="grid" x1="95" y1="410.0" x2="1165" y2="410.0"/><text x="83" y="415.0" text-anchor="end" font-size="12">-10</text><text x="1177" y="415.0" font-size="12">-1,4</text>
+<line class="grid" x1="95" y1="370.0" x2="1165" y2="370.0"/><text x="83" y="375.0" text-anchor="end" font-size="12">0</text><text x="1177" y="375.0" font-size="12">0,0</text>
+<line class="grid" x1="95" y1="330.0" x2="1165" y2="330.0"/><text x="83" y="335.0" text-anchor="end" font-size="12">10</text><text x="1177" y="335.0" font-size="12">1,4</text>
+<line class="grid" x1="95" y1="290.0" x2="1165" y2="290.0"/><text x="83" y="295.0" text-anchor="end" font-size="12">20</text><text x="1177" y="295.0" font-size="12">2,8</text>
+<line class="grid" x1="95" y1="250.0" x2="1165" y2="250.0"/><text x="83" y="255.0" text-anchor="end" font-size="12">30</text><text x="1177" y="255.0" font-size="12">4,2</text>
+<line class="grid" x1="95" y1="210.0" x2="1165" y2="210.0"/><text x="83" y="215.0" text-anchor="end" font-size="12">40</text><text x="1177" y="215.0" font-size="12">5,6</text>
+<line class="grid" x1="95" y1="170.0" x2="1165" y2="170.0"/><text x="83" y="175.0" text-anchor="end" font-size="12">50</text><text x="1177" y="175.0" font-size="12">6,9</text>
+<line class="grid" x1="95" y1="130.0" x2="1165" y2="130.0"/><text x="83" y="135.0" text-anchor="end" font-size="12">60</text><text x="1177" y="135.0" font-size="12">8,3</text>
+<line class="grid" x1="95" y1="90.0" x2="1165" y2="90.0"/><text x="83" y="95.0" text-anchor="end" font-size="12">70</text><text x="1177" y="95.0" font-size="12">9,7</text>
+<line class="grid" x1="95.0" y1="90" x2="95.0" y2="650"/><text x="95.0" y="675" text-anchor="middle" font-size="12">500</text>
+<line class="grid" x1="228.8" y1="90" x2="228.8" y2="650"/><text x="228.8" y="675" text-anchor="middle" font-size="12">750</text>
+<line class="grid" x1="362.5" y1="90" x2="362.5" y2="650"/><text x="362.5" y="675" text-anchor="middle" font-size="12">1000</text>
+<line class="grid" x1="496.3" y1="90" x2="496.3" y2="650"/><text x="496.3" y="675" text-anchor="middle" font-size="12">1250</text>
+<line class="grid" x1="630.0" y1="90" x2="630.0" y2="650"/><text x="630.0" y="675" text-anchor="middle" font-size="12">1500</text>
+<line class="grid" x1="763.8" y1="90" x2="763.8" y2="650"/><text x="763.8" y="675" text-anchor="middle" font-size="12">1750</text>
+<line class="grid" x1="897.5" y1="90" x2="897.5" y2="650"/><text x="897.5" y="675" text-anchor="middle" font-size="12">2000</text>
+<line class="grid" x1="1031.3" y1="90" x2="1031.3" y2="650"/><text x="1031.3" y="675" text-anchor="middle" font-size="12">2250</text>
+<line class="grid" x1="1165.0" y1="90" x2="1165.0" y2="650"/><text x="1165.0" y="675" text-anchor="middle" font-size="12">2500</text>
+<line class="axis" x1="95" y1="90" x2="95" y2="650"/><line class="axis" x1="1165" y1="90" x2="1165" y2="650"/><line class="axis" x1="95" y1="650" x2="1165" y2="650"/><line x1="630" y1="90" x2="630" y2="650" stroke="#f8fafc" stroke-width="2"/><text x="637" y="640" font-size="12">1500 us · neutro</text>
+<line class="manual" x1="95" y1="550.0" x2="1165" y2="550.0"/>
+<line class="manual" x1="95" y1="190.0" x2="1165" y2="190.0"/>
+<text x="1157" y="183.0" text-anchor="end" font-size="12" fill="#f9a8d4">manual: +45 rpm</text><text x="1157" y="567.0" text-anchor="end" font-size="12" fill="#f9a8d4">manual: −45 rpm</text>
+<polyline class="a" points="95.0,112.9 121.8,111.3 148.5,114.0 202.0,125.9 255.5,149.3 309.0,178.0 362.5,220.4 383.9,235.5 416.0,261.8 442.8,278.4 469.5,292.3 496.3,310.1 523.0,324.5 549.8,339.4 576.5,355.7 603.3,369.7 630.0,370.0"/><polyline class="b" points="630.0,370.0 656.8,370.3 683.5,370.0 710.3,391.2 726.3,400.9 737.0,404.5 763.8,419.0 790.5,437.3 817.3,456.6 844.0,467.9 876.1,490.3 897.5,509.9 951.0,494.3 1004.5,533.8 1058.0,534.7 1111.5,609.6 1138.3,626.7 1165.0,624.1"/>
+<circle class="pa" cx="603.3" cy="369.7" r="4.5"/>
+<circle class="pa" cx="576.5" cy="355.7" r="4.5"/>
+<circle class="pa" cx="549.8" cy="339.4" r="4.5"/>
+<circle class="pa" cx="523.0" cy="324.5" r="4.5"/>
+<circle class="pa" cx="496.3" cy="310.1" r="4.5"/>
+<circle class="pa" cx="469.5" cy="292.3" r="4.5"/>
+<circle class="pa" cx="442.8" cy="278.4" r="4.5"/>
+<circle class="pa" cx="416.0" cy="261.8" r="4.5"/>
+<circle class="pa" cx="383.9" cy="235.5" r="4.5"/>
+<circle class="pa" cx="362.5" cy="220.4" r="4.5"/>
+<circle class="pa" cx="309.0" cy="178.0" r="4.5"/>
+<circle class="pa" cx="255.5" cy="149.3" r="4.5"/>
+<circle class="pa" cx="202.0" cy="125.9" r="4.5"/>
+<circle class="pa" cx="148.5" cy="114.0" r="4.5"/>
+<circle class="pa" cx="121.8" cy="111.3" r="4.5"/>
+<circle class="pa" cx="95.0" cy="112.9" r="4.5"/>
+<circle class="pb" cx="656.8" cy="370.3" r="4.5"/>
+<circle class="pb" cx="683.5" cy="370.0" r="4.5"/>
+<circle class="pb" cx="710.3" cy="391.2" r="4.5"/>
+<circle class="pb" cx="726.3" cy="400.9" r="4.5"/>
+<circle class="pb" cx="737.0" cy="404.5" r="4.5"/>
+<circle class="pb" cx="763.8" cy="419.0" r="4.5"/>
+<circle class="pb" cx="790.5" cy="437.3" r="4.5"/>
+<circle class="pb" cx="817.3" cy="456.6" r="4.5"/>
+<circle class="pb" cx="844.0" cy="467.9" r="4.5"/>
+<circle class="pb" cx="876.1" cy="490.3" r="4.5"/>
+<circle class="pb" cx="897.5" cy="509.9" r="4.5"/>
+<circle class="pb" cx="951.0" cy="494.3" r="4.5"/>
+<circle class="pb" cx="1004.5" cy="533.8" r="4.5"/>
+<circle class="pb" cx="1058.0" cy="534.7" r="4.5"/>
+<circle class="pb" cx="1111.5" cy="609.6" r="4.5"/>
+<circle class="pb" cx="1138.3" cy="626.7" r="4.5"/>
+<circle class="pb" cx="1165.0" cy="624.1" r="4.5"/>
+<circle cx="630" cy="370" r="6" fill="#f8fafc"/>
+<line x1="121.8" y1="111.3" x2="205" y2="105" stroke="#7dd3fc" stroke-width="1.5"/><text x="211" y="109" font-size="13" fill="#7dd3fc">máx. A: +64,7 rpm @ 550 us</text>
+<line x1="1138.3" y1="626.7" x2="870" y2="604" stroke="#fdba74" stroke-width="1.5"/><text x="876" y="600" font-size="13" fill="#fdba74">máx. B: −64,2 rpm @ 2450 us</text>
+<text x="103" y="102.91232000000002" font-size="12">500: +64,3</text><text x="1157" y="642.0843892620594" text-anchor="end" font-size="12">2500: −63,5</text>
+<line x1="390" y1="70" x2="430" y2="70" class="a"/><text x="440" y="75" font-size="13">Sentido A: PWM &lt; 1500, ángulo creciente</text><line x1="700" y1="70" x2="740" y2="70" class="b"/><text x="750" y="75" font-size="13">Sentido B: PWM &gt; 1500, ángulo decreciente</text>
+<text x="630" y="706" text-anchor="middle" font-size="16">Pulso PWM (microsegundos)</text><text x="24" y="370" text-anchor="middle" font-size="16" transform="rotate(-90 24 370)">RPM inferidas del S550</text><text x="1252" y="370" text-anchor="middle" font-size="16" transform="rotate(90 1252 370)">RPM medidas en la salida</text><text x="630" y="738" text-anchor="middle" font-size="12" fill="#94a3b8">RPM S550 inferidas = RPM salida × 7,2 · los puntos conservan las variaciones reales del mecanismo</text></svg>
