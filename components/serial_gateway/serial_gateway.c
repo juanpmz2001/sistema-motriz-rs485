@@ -2721,7 +2721,8 @@ static void handle_svd48_bench_set_speed_pair(serial_gateway_handle_t handle,
 {
     uint16_t device_id = 0U;
     int16_t rpm = 0;
-    if (argc != 3 || !parse_u16_arg(argv[1], &device_id) ||
+    if (argc != 3 || !parse_u16_any_arg(argv[1], &device_id) ||
+        device_id == 0U ||
         !parse_i16_arg(argv[2], &rpm)) {
         print_locked(handle,
                      "ERR USAGE SVD48_BENCH_SET_SPEED_PAIR device_id rpm\n");
