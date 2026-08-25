@@ -34,7 +34,7 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
-| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` |
+| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -114,25 +114,33 @@ existing cached driver snapshot. It performs no immediate RS485 transaction:
 DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> STATUS:<n> RPM:<rpm> CURRENT_DA:<n> BUS_DV:<n> MOTOR_TEMP_DC:<n> MOS_TEMP_DC:<n> POS:<n> ERROR:0x<hex> ONLINE:<0|1> STALE:<0|1> HEALTH:<health> VALID_MASK:0x<hex> FAILED_MASK:0x<hex> STALE_MASK:0x<hex> COMM_ERR:<n> EXC_FUNC:0x<hex> EXC_CODE:0x<hex> EXC_AGE_MS:<n>
 ```
 
-The four typed bench operations are:
+The five typed bench operations are:
 
 ```text
 SVD48_BENCH_SET_SPEED <device_id> <M1|M2> <rpm>
+SVD48_BENCH_SET_SPEED_PAIR <device_id> <rpm>
 SVD48_BENCH_HOLD <device_id> <M1|M2>
 SVD48_BENCH_DISABLE <device_id> <M1|M2>
 SVD48_BENCH_STOP <device_id> <M1|M2>
 ```
 
-Set-speed validates the endpoint's published RPM range and requests that target;
-hold requests zero RPM while leaving the channel actively enabled. Both require a
+Set-speed validates the endpoint's published RPM range and requests that target.
+`SVD48_BENCH_SET_SPEED_PAIR` validates both M1 and M2 of the selected controller
+before one application-level two-endpoint request. It applies the same target to both
+channels under the coordinator lock; if either required endpoint cannot be applied,
+the coordinator stops any already-applied endpoint and returns a non-OK result. It is
+bench maintenance, not a differential-drive command or a continuous-control source.
+
+The single-channel hold operation requests zero RPM while leaving the channel actively
+enabled. All three active operations require a
 bound, available and `HEALTHY` channel. Disable and stop both request freewheel stop
 and remain best-effort paths for a bound endpoint when availability/health is lost.
-All four route through `actuation_application` and the coordinator. The direct SVD48
+All five route through `actuation_application` and the coordinator. The direct SVD48
 endpoint adapter owns the target-plus-START and target-zero-plus-STOP register
 sequences; the transport command handler does not construct register writes.
 
 When continuous control reports `ARMED` or `ACTIVE`, firmware rejects
-`SVD48_BENCH_SET_SPEED` and `SVD48_BENCH_HOLD` with
+`SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR` and `SVD48_BENCH_HOLD` with
 `ERR CONTINUOUS_CONTROL_CONFLICT ...`. `SVD48_BENCH_DISABLE`,
 `SVD48_BENCH_STOP` and global `STOP ALL` remain available. The same interlock rejects
 `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO` and

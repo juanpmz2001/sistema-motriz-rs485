@@ -134,7 +134,8 @@ channel stop. Stop first writes a zero target and then the stop control command;
 failed zero write does not suppress the stop attempt.
 
 The workspace names these existing behaviors explicitly: `SVD48_BENCH_SET_SPEED`
-uses the requested RPM; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
+uses the requested RPM; `SVD48_BENCH_SET_SPEED_PAIR` validates M1/M2 then applies
+one shared target through the application coordinator; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
 `SVD48_BENCH_DISABLE`/`SVD48_BENCH_STOP` use the stop/freewheel sequence. The gateway
 never selects target/control registers itself. These commands are bench maintenance,
 not a continuous control plane.
