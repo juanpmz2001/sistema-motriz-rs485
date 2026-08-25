@@ -1,7 +1,7 @@
 # Rafa — Bench State and Physical Learnings
 
-> Canonical physical bring-up summary through the 2026-08-20 OTA and PPM-control
-> readiness update.
+> Canonical physical bring-up summary through the 2026-08-25 build-34 OTA
+> verification.
 
 ## Current state
 
@@ -14,21 +14,22 @@ required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
 intermittent HTTP 400 responses from read-only Console preflight endpoints before
 further HOLD requests were sent. No speed smoke was attempted.
 
-Build 33 is the verified installed artifact. It encodes the operator-qualified
-differential mapping and dimensions below, the profile-owned PPM source described
-later in this document, and the corrected fast-feedback health semantics. It exposes
-continuous control as `DISARMED`, `SOURCE:NONE`, `TTL_MS:300`. No ARM, PPM command or
-motion command was issued during this OTA verification; the first bounded elevated
-smoke and browser-close, backend-loss and LAN-loss motion evidence still require
-separate operator-authorized sessions.
+Build 34 is the verified installed artifact. It retains the operator-qualified
+differential mapping and dimensions below, the profile-owned PPM source and the
+corrected fast-feedback health semantics. It adds a typed paired SVD48 bench-speed
+command that validates M1/M2 then enters one coordinator request; no paired command
+or motor-motion command was issued during its OTA verification. Continuous control
+remains `DISARMED`, `SOURCE:NONE`, `TTL_MS:300`; the bounded elevated smoke and
+browser-close, backend-loss and LAN-loss motion evidence still require separate
+operator-authorized sessions.
 
 ## Confirmed facts
 
 - Profile: `rafa`.
 - Maintenance LAN works.
 - Last verified address during the campaign: `192.168.1.194`.
-- Last verified firmware: version `1.0.0`, build `33`, SHA
-  `2f43d4d30220c5b86423b8204281175b561aa410`, clean, OTA slot `ota_0`, OTA state
+- Last verified firmware: version `1.0.0`, build `34`, SHA
+  `93e1a3890b00ef35aaea1c4d04288f92bbe0a97e`, clean, OTA slot `ota_1`, OTA state
   `VALID`, with no pending verification.
 - Composition active and runtime-ready.
 - Platform returned to `SAFE_IDLE`, `MOTION_ACTIVE:0`.
