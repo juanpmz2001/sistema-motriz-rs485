@@ -247,8 +247,8 @@ direct drive, 0.20 m radius and 1.52 m track. Body limits are 0.8 m/s and pi/6 r
 with a 300 ms TTL; endpoint limits remain ±40 RPM. CH2/CH4 calibration is
 1000/1500/2000us inside a separate 750..2250us validity envelope, while profile-owned
 CH6 linearly scales both axes from 0.50 to 1.00. Differential v1 consumes track width
-and radius, not wheelbase. These are candidate build-35 source values, not physical
-motion evidence.
+and radius, not wheelbase. These are the profile values in Rafa's OTA-verified build
+35, not physical motion evidence.
 
 The transitional legacy `MOVE_VEL` facade remains a distinct four-wheel implementation
 and is enabled only when four legacy SVD48 bindings and a positive wheelbase exist.

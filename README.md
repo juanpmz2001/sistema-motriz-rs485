@@ -23,7 +23,8 @@ and typed actuator endpoints.
   `rafa_traction_m1` and `rafa_traction_m2`, and carries the operator-qualified
   two-wheel differential side/sign geometry: M1 right/+1, M2 left/−1, 0.20 m wheel
   radius, 1.52 m track, ±40 RPM endpoints, 0.8 m/s max vx and pi/6 rad/s max wz.
-  These are candidate build-35 source settings, not physical motion evidence. Its PPM
+  These are the profile settings in Rafa's OTA-verified build 35, not physical motion
+  evidence. Its PPM
   source on GPIO14 maps CH2 high to forward and CH4 high to right; CH5≤1500 selects
   RC priority and CH5=2000 is the receiver failsafe that leaves LAN eligible. CH6
   scales the profile-owned PPM source from 50% to 100%; it does not change authority.

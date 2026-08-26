@@ -18,10 +18,10 @@ feature. Recheck the current code, tests and task scope before acting.
   inactive.
 - Rafa has one SVD48 at RS485 address `2`. Operator qualification maps M1 to the
   right wheel with positive RPM forward and M2 to the left wheel with negative RPM
-  forward. Candidate build-35 source uses 0.20 m radius, 1.52 m center-to-center
-  track, direct drive, ±40 RPM endpoint limits, 0.8 m/s max vx and pi/6 rad/s max wz.
-  It has not been deployed or physically accepted. Deploy Rafa firmware changes by
-  OTA only.
+  forward. OTA-verified build 35 uses 0.20 m radius, 1.52 m center-to-center track,
+  direct drive, ±40 RPM endpoint limits, 0.8 m/s max vx and pi/6 rad/s max wz. Its
+  startup/status verification is not physical motion acceptance. Deploy Rafa firmware
+  changes by OTA only.
 - The NEXT-1 maintenance contract now exposes typed N-controller SVD48 inventory,
   cached physical-channel telemetry and bounded bench commands. It bypasses neither
   the application coordinator nor the four-binding legacy limit, and it is not the
@@ -32,8 +32,8 @@ feature. Recheck the current code, tests and task scope before acting.
   was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
-  TTL expiry, retired streams and STOP semantics. Candidate build 35 updates only
-  profile geometry/limits and PPM calibration/CH6 scaling; it does not change
+  TTL expiry, retired streams and STOP semantics. Build 35 updates only profile
+  geometry/limits and PPM calibration/CH6 scaling; it does not change
   authority, deadman or differential kinematics. The first elevated bounded motion
   smoke remains to be recorded; no Rafa browser/backend/LAN-loss motion test has yet
   been accepted.
