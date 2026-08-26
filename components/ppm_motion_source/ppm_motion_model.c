@@ -5,6 +5,18 @@
 #define PPM_MOTION_ARM_PENDING_MAX_NEW_FRAMES 2U
 #define PPM_MOTION_STREAM_PREFIX UINT64_C(0x5243000000000000)
 
+static bool axis_config_valid(uint16_t minimum_us,
+                              uint16_t center_us,
+                              uint16_t maximum_us,
+                              uint16_t deadband_us,
+                              uint16_t valid_min_us,
+                              uint16_t valid_max_us)
+{
+    return minimum_us >= valid_min_us && maximum_us <= valid_max_us &&
+           minimum_us + deadband_us < center_us &&
+           center_us + deadband_us < maximum_us;
+}
+
 static bool config_valid(const ppm_motion_model_config_t *config)
 {
     return config && config->throttle_channel > 0U &&
@@ -13,18 +25,45 @@ static bool config_valid(const ppm_motion_model_config_t *config)
            config->steering_channel <= PPM_MOTION_MODEL_MAX_CHANNELS &&
            config->enable_channel > 0U &&
            config->enable_channel <= PPM_MOTION_MODEL_MAX_CHANNELS &&
+           config->speed_scale_channel > 0U &&
+           config->speed_scale_channel <= PPM_MOTION_MODEL_MAX_CHANNELS &&
            config->throttle_channel != config->steering_channel &&
            config->throttle_channel != config->enable_channel &&
            config->steering_channel != config->enable_channel &&
+           config->speed_scale_channel != config->throttle_channel &&
+           config->speed_scale_channel != config->steering_channel &&
+           config->speed_scale_channel != config->enable_channel &&
            config->enable_active_max_us > 0U &&
            config->neutral_deadband_us > 0U &&
-           config->input_min_us < config->input_max_us &&
-           config->neutral_us >
-               (uint32_t)config->input_min_us + config->neutral_deadband_us &&
-           config->neutral_us + config->neutral_deadband_us <
-               config->input_max_us &&
+           config->valid_min_us < config->valid_max_us &&
+           config->enable_active_max_us >= config->valid_min_us &&
+           config->enable_active_max_us <= config->valid_max_us &&
+           axis_config_valid(config->throttle_min_us,
+                             config->throttle_center_us,
+                             config->throttle_max_us,
+                             config->neutral_deadband_us,
+                             config->valid_min_us,
+                             config->valid_max_us) &&
+           axis_config_valid(config->steering_min_us,
+                             config->steering_center_us,
+                             config->steering_max_us,
+                             config->neutral_deadband_us,
+                             config->valid_min_us,
+                             config->valid_max_us) &&
+           config->speed_scale_min_us >= config->valid_min_us &&
+           config->speed_scale_min_us < config->speed_scale_max_us &&
+           config->speed_scale_max_us <= config->valid_max_us &&
+           config->speed_scale_min > 0.0f &&
+           config->speed_scale_min <= config->speed_scale_max &&
+           config->speed_scale_max <= 1.0f &&
            (config->throttle_sign == -1 || config->throttle_sign == 1) &&
            (config->steering_sign == -1 || config->steering_sign == 1);
+}
+
+static bool pulse_is_valid(const ppm_motion_model_t *model, uint16_t pulse_us)
+{
+    return pulse_us >= model->config.valid_min_us &&
+           pulse_us <= model->config.valid_max_us;
 }
 
 static bool input_has_channels(const ppm_motion_model_t *model,
@@ -33,7 +72,16 @@ static bool input_has_channels(const ppm_motion_model_t *model,
     return input && input->signal_valid &&
            input->channel_count >= model->config.enable_channel &&
            input->channel_count >= model->config.throttle_channel &&
-           input->channel_count >= model->config.steering_channel;
+           input->channel_count >= model->config.steering_channel &&
+           input->channel_count >= model->config.speed_scale_channel &&
+           pulse_is_valid(model,
+                          input->channels[model->config.throttle_channel - 1U]) &&
+           pulse_is_valid(model,
+                          input->channels[model->config.steering_channel - 1U]) &&
+           pulse_is_valid(model,
+                          input->channels[model->config.enable_channel - 1U]) &&
+           pulse_is_valid(model,
+                          input->channels[model->config.speed_scale_channel - 1U]);
 }
 
 static bool input_is_priority(const ppm_motion_model_t *model,
@@ -44,21 +92,26 @@ static bool input_is_priority(const ppm_motion_model_t *model,
                model->config.enable_active_max_us;
 }
 
-static bool is_neutral(const ppm_motion_model_t *model, uint16_t pulse_us)
+static bool is_neutral(uint16_t pulse_us,
+                       uint16_t center_us,
+                       uint16_t deadband_us)
 {
-    int32_t difference = (int32_t)pulse_us - model->config.neutral_us;
+    int32_t difference = (int32_t)pulse_us - center_us;
     if (difference < 0) {
         difference = -difference;
     }
-    return difference <= model->config.neutral_deadband_us;
+    return difference <= deadband_us;
 }
 
-static float normalize_axis(const ppm_motion_model_t *model,
-                            uint16_t pulse_us,
+static float normalize_axis(uint16_t pulse_us,
+                            uint16_t minimum_us,
+                            uint16_t center_us,
+                            uint16_t maximum_us,
+                            uint16_t deadband_us,
                             int8_t sign)
 {
-    const int32_t center = model->config.neutral_us;
-    const int32_t deadband = model->config.neutral_deadband_us;
+    const int32_t center = center_us;
+    const int32_t deadband = deadband_us;
     int32_t delta = (int32_t)pulse_us - center;
     if (delta >= -deadband && delta <= deadband) {
         return 0.0f;
@@ -66,12 +119,10 @@ static float normalize_axis(const ppm_motion_model_t *model,
 
     float normalized;
     if (delta > 0) {
-        const int32_t span = (int32_t)model->config.input_max_us - center -
-                             deadband;
+        const int32_t span = (int32_t)maximum_us - center - deadband;
         normalized = span > 0 ? (float)(delta - deadband) / (float)span : 0.0f;
     } else {
-        const int32_t span = center - deadband -
-                             (int32_t)model->config.input_min_us;
+        const int32_t span = center - deadband - (int32_t)minimum_us;
         normalized = span > 0 ? (float)(delta + deadband) / (float)span : 0.0f;
     }
     if (normalized > 1.0f) {
@@ -80,6 +131,22 @@ static float normalize_axis(const ppm_motion_model_t *model,
         normalized = -1.0f;
     }
     return sign < 0 ? -normalized : normalized;
+}
+
+static float speed_scale(const ppm_motion_model_t *model, uint16_t pulse_us)
+{
+    const uint16_t minimum_us = model->config.speed_scale_min_us;
+    const uint16_t maximum_us = model->config.speed_scale_max_us;
+    float normalized = ((float)pulse_us - minimum_us) /
+                       (float)(maximum_us - minimum_us);
+    if (normalized < 0.0f) {
+        normalized = 0.0f;
+    } else if (normalized > 1.0f) {
+        normalized = 1.0f;
+    }
+    return model->config.speed_scale_min +
+           normalized * (model->config.speed_scale_max -
+                         model->config.speed_scale_min);
 }
 
 static void reset_output(ppm_motion_output_t *output)
@@ -171,7 +238,12 @@ bool ppm_motion_model_step(ppm_motion_model_t *model,
     const uint16_t throttle = input->channels[model->config.throttle_channel - 1U];
     const uint16_t steering = input->channels[model->config.steering_channel - 1U];
     if (model->phase == PPM_MOTION_PHASE_WAIT_NEUTRAL) {
-        if (!is_neutral(model, throttle) || !is_neutral(model, steering)) {
+        if (!is_neutral(throttle,
+                        model->config.throttle_center_us,
+                        model->config.neutral_deadband_us) ||
+            !is_neutral(steering,
+                        model->config.steering_center_us,
+                        model->config.neutral_deadband_us)) {
             return true;
         }
         model->stream_nonce++;
@@ -193,12 +265,23 @@ bool ppm_motion_model_step(ppm_motion_model_t *model,
         output->action = PPM_MOTION_ACTION_COMMAND;
         output->stream_id = model->stream_id;
         output->sequence = model->sequence;
-        output->normalized_vx = normalize_axis(model,
-                                               throttle,
-                                               model->config.throttle_sign);
-        output->normalized_wz = normalize_axis(model,
-                                               steering,
-                                               model->config.steering_sign);
+        output->normalized_vx = normalize_axis(
+            throttle,
+            model->config.throttle_min_us,
+            model->config.throttle_center_us,
+            model->config.throttle_max_us,
+            model->config.neutral_deadband_us,
+            model->config.throttle_sign);
+        output->normalized_wz = normalize_axis(
+            steering,
+            model->config.steering_min_us,
+            model->config.steering_center_us,
+            model->config.steering_max_us,
+            model->config.neutral_deadband_us,
+            model->config.steering_sign);
+        output->speed_scale = speed_scale(
+            model,
+            input->channels[model->config.speed_scale_channel - 1U]);
         output->deadman = output->normalized_vx != 0.0f ||
                           output->normalized_wz != 0.0f;
     }

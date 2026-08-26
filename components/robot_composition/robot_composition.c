@@ -1686,10 +1686,77 @@ static bool workspace_channel_telemetry(
     return true;
 }
 
+static svd48_workspace_hall_calibration_status_t
+workspace_hall_calibration_status_from_device(
+    svd48_hall_calibration_status_t status)
+{
+    switch (status) {
+    case SVD48_HALL_CALIBRATION_STATUS_SUCCESS:
+        return SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_SUCCESS;
+    case SVD48_HALL_CALIBRATION_STATUS_CALIBRATING:
+        return SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_CALIBRATING;
+    case SVD48_HALL_CALIBRATION_STATUS_FAILED:
+        return SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_FAILED;
+    case SVD48_HALL_CALIBRATION_STATUS_UNKNOWN:
+    default:
+        return SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_UNKNOWN;
+    }
+}
+
+static bool workspace_hall_calibrate(
+    svd48_workspace_port_t *port,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel,
+    svd48_workspace_hall_calibration_result_t *result)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || !composition->started ||
+        !composition->profile || !result ||
+        channel >= SVD48_WORKSPACE_CHANNEL_COUNT) {
+        return false;
+    }
+    const robot_device_profile_t *device = find_device_profile(
+        composition->profile, device_id);
+    robot_composition_device_slot_t *slot =
+        device && device->driver_id == ROBOT_DRIVER_SVD48
+            ? find_device_slot(composition, device_id)
+            : NULL;
+    if (!device || !slot || !slot->started) {
+        return false;
+    }
+    svd48_channel_t *physical_channel = svd48_device_channel(
+        &slot->svd48, (svd48_channel_id_t)channel);
+    if (!physical_channel) {
+        return false;
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->device_id = device_id;
+    result->channel = channel;
+    result->address = device->address;
+
+    svd48_hall_calibration_result_t device_result = {0};
+    svd48_device_result_t operation_result =
+        svd48_channel_start_hall_calibration(physical_channel, &device_result);
+    result->trigger_register = device_result.trigger_register;
+    result->status_register = device_result.status_register;
+    result->write_acknowledged = device_result.write_acknowledged;
+    result->status_available = device_result.status_available;
+    result->status_value = device_result.status_value;
+    result->status = workspace_hall_calibration_status_from_device(
+        device_result.status);
+    result->write_result = (uint16_t)(device_result.write_acknowledged
+                                          ? SVD48_DEVICE_OK
+                                          : operation_result);
+    result->status_read_result = (uint16_t)device_result.status_read_result;
+    return true;
+}
+
 static const svd48_workspace_ops_t SVD48_WORKSPACE_OPS = {
     .controller_count = workspace_controller_count,
     .controller_at = workspace_controller_at,
     .channel_telemetry = workspace_channel_telemetry,
+    .hall_calibrate = workspace_hall_calibrate,
 };
 
 static const actuation_application_ops_t APPLICATION_OPS = {

@@ -18,6 +18,13 @@ typedef enum {
     SVD48_WORKSPACE_CHANNEL_M2 = 1,
 } svd48_workspace_channel_id_t;
 
+typedef enum {
+    SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_UNKNOWN = 0,
+    SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_SUCCESS,
+    SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_CALIBRATING,
+    SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_FAILED,
+} svd48_workspace_hall_calibration_status_t;
+
 /* Device-specific read DTOs for the maintenance workspace. They preserve the
  * build-selected profile identity without exposing robot_profile to transport
  * handlers. This is an internal source-level port, not a stable binary ABI. */
@@ -70,6 +77,23 @@ typedef struct {
     uint32_t last_exception_ms;
 } svd48_workspace_channel_telemetry_t;
 
+/* Result of the typed one-shot Hall calibration request. Acknowledged and
+ * status-readable are intentionally separate: an ACK proves only that the
+ * controller accepted the trigger, not a physical calibration result. */
+typedef struct {
+    uint16_t device_id;
+    svd48_workspace_channel_id_t channel;
+    uint8_t address;
+    uint16_t trigger_register;
+    uint16_t status_register;
+    bool write_acknowledged;
+    bool status_available;
+    uint16_t status_value;
+    svd48_workspace_hall_calibration_status_t status;
+    uint16_t write_result;
+    uint16_t status_read_result;
+} svd48_workspace_hall_calibration_result_t;
+
 typedef struct svd48_workspace_port svd48_workspace_port_t;
 
 typedef struct {
@@ -82,6 +106,11 @@ typedef struct {
         uint16_t device_id,
         svd48_workspace_channel_id_t channel,
         svd48_workspace_channel_telemetry_t *telemetry);
+    bool (*hall_calibrate)(
+        svd48_workspace_port_t *port,
+        uint16_t device_id,
+        svd48_workspace_channel_id_t channel,
+        svd48_workspace_hall_calibration_result_t *result);
 } svd48_workspace_ops_t;
 
 struct svd48_workspace_port {
@@ -116,6 +145,17 @@ static inline bool svd48_workspace_get_channel_telemetry(
     return port && port->ops && port->ops->channel_telemetry
                ? port->ops->channel_telemetry(
                      port, device_id, channel, telemetry)
+               : false;
+}
+
+static inline bool svd48_workspace_hall_calibrate(
+    svd48_workspace_port_t *port,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel,
+    svd48_workspace_hall_calibration_result_t *result)
+{
+    return port && port->ops && port->ops->hall_calibrate
+               ? port->ops->hall_calibrate(port, device_id, channel, result)
                : false;
 }
 

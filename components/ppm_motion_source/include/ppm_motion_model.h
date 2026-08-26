@@ -25,12 +25,22 @@ typedef struct {
     uint8_t steering_channel;
     uint8_t enable_channel;
     uint16_t enable_active_max_us;
-    uint16_t neutral_us;
     uint16_t neutral_deadband_us;
-    uint16_t input_min_us;
-    uint16_t input_max_us;
+    uint16_t valid_min_us;
+    uint16_t valid_max_us;
+    uint16_t throttle_min_us;
+    uint16_t throttle_center_us;
+    uint16_t throttle_max_us;
+    uint16_t steering_min_us;
+    uint16_t steering_center_us;
+    uint16_t steering_max_us;
     int8_t throttle_sign;
     int8_t steering_sign;
+    uint8_t speed_scale_channel;
+    uint16_t speed_scale_min_us;
+    uint16_t speed_scale_max_us;
+    float speed_scale_min;
+    float speed_scale_max;
 } ppm_motion_model_config_t;
 
 typedef struct {
@@ -46,6 +56,7 @@ typedef struct {
     uint64_t sequence;
     float normalized_vx;
     float normalized_wz;
+    float speed_scale;
     bool deadman;
 } ppm_motion_output_t;
 

@@ -5,7 +5,9 @@ feature. Recheck the current code, tests and task scope before acting.
 
 ## Current baseline
 
-- Firmware source identity is version `1.0.0`, build `29`; the runtime topology is a
+- Firmware source identity is version `1.0.0`, candidate build `35`; the last
+  independently verified installed artifact remains build `34` in
+  [Rafa bench state](robots/RAFA_BENCH_STATE.md). The runtime topology is a
   build-selected immutable C profile.
 - Supported compositions are `current_robot`, `bench_single_svd48_motor`, `rafa`,
   and the unqualified `bench_single_steering_as5600` development slice.
@@ -16,8 +18,10 @@ feature. Recheck the current code, tests and task scope before acting.
   inactive.
 - Rafa has one SVD48 at RS485 address `2`. Operator qualification maps M1 to the
   right wheel with positive RPM forward and M2 to the left wheel with negative RPM
-  forward. The profile uses 0.1778 m radius, 0.10 m center-to-center track and direct
-  drive. Deploy Rafa firmware changes by OTA only.
+  forward. OTA-verified build 35 uses 0.20 m radius, 1.52 m center-to-center track,
+  direct drive, ±40 RPM endpoint limits, 0.8 m/s max vx and pi/6 rad/s max wz. Its
+  startup/status verification is not physical motion acceptance. Deploy Rafa firmware
+  changes by OTA only.
 - The NEXT-1 maintenance contract now exposes typed N-controller SVD48 inventory,
   cached physical-channel telemetry and bounded bench commands. It bypasses neither
   the application coordinator nor the four-binding legacy limit, and it is not the
@@ -28,14 +32,11 @@ feature. Recheck the current code, tests and task scope before acting.
   was attempted.
 - NEXT-3 adds the dedicated UDP `32322` session protocol and Console `/control` UI.
   Host/model tests cover ARM/DISARM, stream/sequence replay, deadman release, exact
-  TTL expiry, retired streams and STOP semantics. Build 29 activates Rafa's qualified
-  geometry with conservative 0.02 m/s and 0.20 rad/s limits and TTL 300 ms. It fixes
-  the `control_lan` float/double boundary that rejected a JSON decimal exactly equal to
-  `MAX_VX_MPS`; it does not increase any bound or change authority/deadman behavior.
-  Build 29 was installed by OTA on 2026-08-20 and returned `CONTROL_STATUS` as
-  `DISARMED`, `DETAIL:READY`, with both traction endpoints healthy. The first elevated
-  bounded motion smoke remains to be recorded; no Rafa browser/backend/LAN-loss motion
-  test has yet been accepted.
+  TTL expiry, retired streams and STOP semantics. Build 35 updates only profile
+  geometry/limits and PPM calibration/CH6 scaling; it does not change
+  authority, deadman or differential kinematics. The first elevated bounded motion
+  smoke remains to be recorded; no Rafa browser/backend/LAN-loss motion test has yet
+  been accepted.
 
 ## Gates that remain open
 

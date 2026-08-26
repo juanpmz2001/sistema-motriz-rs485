@@ -536,8 +536,12 @@ void app_main(void)
             .ppm_channel_count = 10,
             .ppm_min_frame_channels = 4,
             .ppm_sync_threshold_us = 3000,
-            .ppm_min_pulse_us = 750,
-            .ppm_max_pulse_us = 2250,
+            .ppm_min_pulse_us = profile->ppm_motion.enabled
+                                    ? profile->ppm_motion.valid_min_us
+                                    : 750U,
+            .ppm_max_pulse_us = profile->ppm_motion.enabled
+                                    ? profile->ppm_motion.valid_max_us
+                                    : 2250U,
         };
         err = ibus_receiver_init(&ibus_config, &ibus_receiver);
         if (err != ESP_OK) {

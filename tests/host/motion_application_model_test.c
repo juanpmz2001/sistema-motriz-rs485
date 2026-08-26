@@ -264,28 +264,28 @@ static bool test_rafa_qualified_geometry_targets_and_ttl(void)
     motion_application_model_config_t config = standard_config();
     config.command_ttl_ms = 300U;
     config.velocity_limit = (command_authority_velocity_t){
-        .vx = 0.02f,
+        .vx = 0.80f,
         .vy = 0.0001f,
-        .wz = 0.20f,
+        .wz = 0.5235988f,
     };
-    config.differential.track_width_m = 0.10;
+    config.differential.track_width_m = 1.52;
     config.endpoints[0] = (motion_application_endpoint_config_t){
         .endpoint_id = 1U,
         .name = "rafa_traction_m1",
         .side = ROBOT_KINEMATICS_SIDE_RIGHT,
-        .wheel_radius_m = 0.1778,
+        .wheel_radius_m = 0.20,
         .motor_to_wheel_ratio = 1.0,
         .direction_sign = 1,
-        .max_abs_rpm = 15.0,
+        .max_abs_rpm = 40.0,
     };
     config.endpoints[1] = (motion_application_endpoint_config_t){
         .endpoint_id = 2U,
         .name = "rafa_traction_m2",
         .side = ROBOT_KINEMATICS_SIDE_LEFT,
-        .wheel_radius_m = 0.1778,
+        .wheel_radius_m = 0.20,
         .motor_to_wheel_ratio = 1.0,
         .direction_sign = -1,
-        .max_abs_rpm = 15.0,
+        .max_abs_rpm = 40.0,
     };
 
     motion_application_model_t model;
@@ -304,16 +304,16 @@ static bool test_rafa_qualified_geometry_targets_and_ttl(void)
     motion_application_event_t forward =
         event(MOTION_APPLICATION_EVENT_COMMAND, 77U, 2U, 10U);
     forward.deadman = true;
-    forward.vx_mps = 0.02f;
+    forward.vx_mps = 0.80f;
     HOST_TEST_CHECK(motion_application_model_submit(
                         &model, &forward, true, 10U, &plan) ==
                     MOTION_APPLICATION_RESULT_OK);
     HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_APPLY);
     HOST_TEST_CHECK(plan.target_count == 2U);
     HOST_TEST_CHECK(plan.targets[0].endpoint_id == 1U);
-    HOST_TEST_CHECK(plan.targets[0].rpm == 1);
+    HOST_TEST_CHECK(plan.targets[0].rpm == 38);
     HOST_TEST_CHECK(plan.targets[1].endpoint_id == 2U);
-    HOST_TEST_CHECK(plan.targets[1].rpm == -1);
+    HOST_TEST_CHECK(plan.targets[1].rpm == -38);
     motion_application_model_record_actuation(&model, &plan, true);
 
     motion_application_event_t release =
@@ -328,13 +328,16 @@ static bool test_rafa_qualified_geometry_targets_and_ttl(void)
     motion_application_event_t turn =
         event(MOTION_APPLICATION_EVENT_COMMAND, 77U, 4U, 30U);
     turn.deadman = true;
-    turn.wz_radps = 0.20f;
+    turn.wz_radps = 0.5235988f;
     HOST_TEST_CHECK(motion_application_model_submit(
                         &model, &turn, true, 30U, &plan) ==
                     MOTION_APPLICATION_RESULT_OK);
     HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_APPLY);
-    HOST_TEST_CHECK(plan.targets[0].rpm == 1);
-    HOST_TEST_CHECK(plan.targets[1].rpm == 1);
+    /* Before the controller direction signs, a positive differential turn is
+     * approximately left=-19 RPM/right=+19 RPM. Rafa's M2 sign is -1, so the
+     * two controller targets are both +19 RPM. */
+    HOST_TEST_CHECK(plan.targets[0].rpm == 19);
+    HOST_TEST_CHECK(plan.targets[1].rpm == 19);
     return true;
 }
 
