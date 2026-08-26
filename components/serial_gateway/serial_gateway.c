@@ -2580,7 +2580,7 @@ static bool hall_calibration_channel_is_stopped(
     svd48_workspace_channel_id_t channel_id)
 {
     svd48_workspace_channel_telemetry_t telemetry = {0};
-    if (!svd48_workspace_channel_telemetry(handle->config.svd48_workspace,
+    if (!svd48_workspace_get_channel_telemetry(handle->config.svd48_workspace,
                                            device_id,
                                            channel_id,
                                            &telemetry)) {
