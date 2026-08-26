@@ -22,6 +22,14 @@
 #define REG_M1_GIVEN_CURRENT 0x5308U
 #define REG_M2_GIVEN_CURRENT 0x5309U
 
+/* Reviewed SVD48V V2.0 Hall calibration registers. The command trigger and
+ * its result/status register are distinct one-shot semantics. */
+#define REG_M1_HALL_CALIBRATION_TRIGGER 0x5600U
+#define REG_M2_HALL_CALIBRATION_TRIGGER 0x5601U
+#define REG_M1_HALL_CALIBRATION_STATUS 0x5684U
+#define REG_M2_HALL_CALIBRATION_STATUS 0x5685U
+#define SVD48_HALL_CALIBRATION_TRIGGER_VALUE 1U
+
 #define SVD48_CMD_STOP 0U
 #define SVD48_CMD_START 1U
 #define SVD48_CMD_CLEAR_ALARM 2U
@@ -565,6 +573,24 @@ uint16_t svd48_channel_current_register(svd48_channel_id_t channel)
                                              : 0U;
 }
 
+uint16_t svd48_channel_hall_calibration_trigger_register(
+    svd48_channel_id_t channel)
+{
+    return channel == SVD48_CHANNEL_M1 ? REG_M1_HALL_CALIBRATION_TRIGGER
+                                       : channel == SVD48_CHANNEL_M2
+                                             ? REG_M2_HALL_CALIBRATION_TRIGGER
+                                             : 0U;
+}
+
+uint16_t svd48_channel_hall_calibration_status_register(
+    svd48_channel_id_t channel)
+{
+    return channel == SVD48_CHANNEL_M1 ? REG_M1_HALL_CALIBRATION_STATUS
+                                       : channel == SVD48_CHANNEL_M2
+                                             ? REG_M2_HALL_CALIBRATION_STATUS
+                                             : 0U;
+}
+
 static bool channel_valid(const svd48_channel_t *channel)
 {
     return channel && channel->device && channel->device->initialized &&
@@ -625,6 +651,83 @@ svd48_device_result_t svd48_channel_set_current_deciamp(svd48_channel_t *channel
                                     (uint16_t)deciamp,
                                     channel->device->config.retries)
                : SVD48_DEVICE_INVALID_ARGUMENT;
+}
+
+static svd48_hall_calibration_status_t hall_calibration_status_from_value(
+    uint16_t value)
+{
+    switch (value) {
+    case 0U:
+        return SVD48_HALL_CALIBRATION_STATUS_SUCCESS;
+    case 1U:
+        return SVD48_HALL_CALIBRATION_STATUS_CALIBRATING;
+    case 2U:
+        return SVD48_HALL_CALIBRATION_STATUS_FAILED;
+    default:
+        return SVD48_HALL_CALIBRATION_STATUS_UNKNOWN;
+    }
+}
+
+const char *svd48_hall_calibration_status_name(
+    svd48_hall_calibration_status_t status)
+{
+    switch (status) {
+    case SVD48_HALL_CALIBRATION_STATUS_SUCCESS:
+        return "SUCCESS";
+    case SVD48_HALL_CALIBRATION_STATUS_CALIBRATING:
+        return "CALIBRATING";
+    case SVD48_HALL_CALIBRATION_STATUS_FAILED:
+        return "FAILED";
+    case SVD48_HALL_CALIBRATION_STATUS_UNKNOWN:
+    default:
+        return "UNKNOWN";
+    }
+}
+
+svd48_device_result_t svd48_channel_start_hall_calibration(
+    svd48_channel_t *channel,
+    svd48_hall_calibration_result_t *result)
+{
+    if (!channel_valid(channel) || !result) {
+        return SVD48_DEVICE_INVALID_ARGUMENT;
+    }
+    memset(result, 0, sizeof(*result));
+    result->trigger_register =
+        svd48_channel_hall_calibration_trigger_register(channel->id);
+    result->status_register =
+        svd48_channel_hall_calibration_status_register(channel->id);
+    result->status = SVD48_HALL_CALIBRATION_STATUS_UNKNOWN;
+    result->status_read_result = SVD48_DEVICE_INVALID_ARGUMENT;
+    if (result->trigger_register == 0U || result->status_register == 0U) {
+        return SVD48_DEVICE_INVALID_ARGUMENT;
+    }
+
+    /* Do not retry a one-shot calibration trigger after an unknown transport
+     * outcome. The acknowledgement is the only proof that it was accepted. */
+    svd48_device_result_t write_result = write_register_raw(
+        channel->device,
+        result->trigger_register,
+        SVD48_HALL_CALIBRATION_TRIGGER_VALUE,
+        0U);
+    if (write_result != SVD48_DEVICE_OK) {
+        return write_result;
+    }
+    result->write_acknowledged = true;
+
+    uint16_t raw_status = 0U;
+    result->status_read_result = read_registers_with_retries(
+        channel->device,
+        result->status_register,
+        1U,
+        &raw_status,
+        channel->device->config.retries);
+    if (result->status_read_result != SVD48_DEVICE_OK) {
+        return SVD48_DEVICE_PARTIAL;
+    }
+    result->status_available = true;
+    result->status_value = raw_status;
+    result->status = hall_calibration_status_from_value(raw_status);
+    return SVD48_DEVICE_OK;
 }
 
 bool svd48_channel_get_snapshot(svd48_channel_t *channel,

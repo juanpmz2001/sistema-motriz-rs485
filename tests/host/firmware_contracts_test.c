@@ -327,12 +327,20 @@ static bool test_gateway_lan_maintenance_policy(void)
         "GET_SVD48_CHANNEL_TELEMETRY", "1", "M2"};
     const char *svd48_bench_speed[] = {
         "SVD48_BENCH_SET_SPEED", "1", "M1", "2"};
+    const char *svd48_bench_speed_pair[] = {
+        "SVD48_BENCH_SET_SPEED_PAIR", "1", "2"};
     const char *svd48_bench_hold[] = {"SVD48_BENCH_HOLD", "1", "M1"};
     const char *svd48_bench_disable[] = {
         "SVD48_BENCH_DISABLE", "1", "M1"};
     const char *svd48_bench_stop[] = {"SVD48_BENCH_STOP", "1", "M1"};
     const char *svd48_bench_bad_shape[] = {
         "SVD48_BENCH_SET_SPEED", "1", "M1"};
+    const char *svd48_hall_calibrate[] = {
+        "SVD48_HALL_CALIBRATE", "1", "M1", "CONFIRM"};
+    const char *svd48_hall_calibrate_missing_confirm[] = {
+        "SVD48_HALL_CALIBRATE", "1", "M1"};
+    const char *svd48_hall_calibrate_bad_confirm[] = {
+        "SVD48_HALL_CALIBRATE", "1", "M1", "NO"};
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
@@ -370,11 +378,18 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, svd48_inventory));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_telemetry));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, svd48_bench_speed));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_speed_pair));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_hold));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_disable));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, svd48_bench_stop));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
         3, svd48_bench_bad_shape));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(
+        4, svd48_hall_calibrate));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        3, svd48_hall_calibrate_missing_confirm));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        4, svd48_hall_calibrate_bad_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
     return true;
 }
@@ -406,6 +421,10 @@ static bool test_gateway_diagnostic_policy(void)
         "GET_SVD48_CHANNEL_TELEMETRY", "1", "M1"};
     const char *svd48_bench_speed[] = {
         "SVD48_BENCH_SET_SPEED", "1", "M1", "1"};
+    const char *svd48_bench_speed_pair[] = {
+        "SVD48_BENCH_SET_SPEED_PAIR", "1", "1"};
+    const char *svd48_hall_calibrate[] = {
+        "SVD48_HALL_CALIBRATE", "1", "M1", "CONFIRM"};
 
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, ping));
     HOST_TEST_CHECK(serial_gateway_diagnostic_command_allowed(1, version));
@@ -432,6 +451,10 @@ static bool test_gateway_diagnostic_policy(void)
         3, svd48_telemetry));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
         4, svd48_bench_speed));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        3, svd48_bench_speed_pair));
+    HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(
+        4, svd48_hall_calibrate));
     HOST_TEST_CHECK(!serial_gateway_diagnostic_command_allowed(0, NULL));
     return true;
 }

@@ -6,6 +6,11 @@
 #define GPIO_BIT(pin) (UINT64_C(1) << (pin))
 #define ESP32S3_VALID_GPIO_MASK ((UINT64_C(1) << 49) - 1)
 #define ESP32S3_RESERVED_GPIO_MASK (GPIO_BIT(19) | GPIO_BIT(20))
+#define RAFA_TRACK_WIDTH_M 1.52f
+#define RAFA_WHEEL_RADIUS_M 0.20f
+#define RAFA_MAX_VX_MPS 0.80f
+/* pi / 6: 30 degrees per second. */
+#define RAFA_MAX_WZ_RADPS 0.5235988f
 
 static const robot_board_profile_t BOARD = {
     .id = "botfarms_esp32s3_rev1",
@@ -126,8 +131,8 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
          .capabilities = ROBOT_CAPABILITY_VELOCITY_RPM |
                          ROBOT_CAPABILITY_STOPPABLE,
          .criticality = ROBOT_ENDPOINT_REQUIRED,
-         .min_rpm = -15,
-         .max_rpm = 15,
+         .min_rpm = -40,
+         .max_rpm = 40,
          .motion_side = ROBOT_PROFILE_MOTION_SIDE_RIGHT,
          .motion_direction_sign = 1,
          .motor_to_wheel_ratio = 1.0f},
@@ -138,8 +143,8 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
          .capabilities = ROBOT_CAPABILITY_VELOCITY_RPM |
                          ROBOT_CAPABILITY_STOPPABLE,
          .criticality = ROBOT_ENDPOINT_REQUIRED,
-         .min_rpm = -15,
-         .max_rpm = 15,
+         .min_rpm = -40,
+         .max_rpm = 40,
          .motion_side = ROBOT_PROFILE_MOTION_SIDE_LEFT,
          .motion_direction_sign = -1,
          .motor_to_wheel_ratio = 1.0f},
@@ -148,11 +153,11 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
         .kind = ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY,
         /* Differential v1 consumes track width and wheel radius only. */
         .wheelbase_m = 0.0f,
-        .track_width_m = 0.10f,
-        .wheel_radius_m = 0.1778f,
-        .max_vx_mps = 0.02f,
+        .track_width_m = RAFA_TRACK_WIDTH_M,
+        .wheel_radius_m = RAFA_WHEEL_RADIUS_M,
+        .max_vx_mps = RAFA_MAX_VX_MPS,
         .max_vy_mps = 0.0001f,
-        .max_wz_radps = 0.20f,
+        .max_wz_radps = RAFA_MAX_WZ_RADPS,
         .control_ttl_ms = 300U,
     },
     /* The receiver's configured failsafe is CH5=2000us, so CH5>1500 leaves a
@@ -168,15 +173,24 @@ static const robot_profile_t RAFA __attribute__((unused)) = {
         .steering_channel = 4U,
         .enable_channel = 5U,
         .enable_active_max_us = 1500U,
-        .neutral_us = 1500U,
         .neutral_deadband_us = 30U,
-        /* These bounds equal the receiver's reviewed PPM acceptance window.
-         * They deliberately do not assert a full-scale radio calibration. */
-        .input_min_us = 750U,
-        .input_max_us = 2250U,
+        /* Receiver validity and commanded axis calibration are separate. */
+        .valid_min_us = 750U,
+        .valid_max_us = 2250U,
+        .throttle_min_us = 1000U,
+        .throttle_center_us = 1500U,
+        .throttle_max_us = 2000U,
+        .steering_min_us = 1000U,
+        .steering_center_us = 1500U,
+        .steering_max_us = 2000U,
         .throttle_sign = 1,
         /* Differential +wz is left. Operator-qualified CH4 high is right. */
         .steering_sign = -1,
+        .speed_scale_channel = 6U,
+        .speed_scale_min_us = 1000U,
+        .speed_scale_max_us = 2000U,
+        .speed_scale_min = 0.50f,
+        .speed_scale_max = 1.00f,
     },
 };
 
@@ -481,6 +495,18 @@ static bool steering_axis_is_valid(const robot_profile_t *profile,
     return true;
 }
 
+static bool ppm_axis_calibration_is_valid(uint16_t minimum_us,
+                                          uint16_t center_us,
+                                          uint16_t maximum_us,
+                                          uint16_t deadband_us,
+                                          uint16_t valid_min_us,
+                                          uint16_t valid_max_us)
+{
+    return minimum_us >= valid_min_us && maximum_us <= valid_max_us &&
+           minimum_us + deadband_us < center_us &&
+           center_us + deadband_us < maximum_us;
+}
+
 robot_profile_error_t robot_profile_validate_with_registry(
     const robot_profile_t *profile, const robot_driver_registry_t *registry)
 {
@@ -646,17 +672,41 @@ robot_profile_error_t robot_profile_validate_with_registry(
             ppm->throttle_channel == 0U || ppm->throttle_channel > 14U ||
             ppm->steering_channel == 0U || ppm->steering_channel > 14U ||
             ppm->enable_channel == 0U || ppm->enable_channel > 14U ||
+            ppm->speed_scale_channel == 0U ||
+            ppm->speed_scale_channel > 14U ||
             ppm->throttle_channel == ppm->steering_channel ||
             ppm->throttle_channel == ppm->enable_channel ||
             ppm->steering_channel == ppm->enable_channel ||
+            ppm->speed_scale_channel == ppm->throttle_channel ||
+            ppm->speed_scale_channel == ppm->steering_channel ||
+            ppm->speed_scale_channel == ppm->enable_channel ||
             ppm->enable_channel != profile->rc_lan_interlock.channel ||
             ppm->enable_active_max_us !=
                 profile->rc_lan_interlock.active_max_us ||
             ppm->neutral_deadband_us == 0U ||
-            ppm->input_min_us >= ppm->input_max_us ||
-            ppm->neutral_deadband_us >= ppm->input_max_us ||
-            ppm->neutral_us <= ppm->input_min_us + ppm->neutral_deadband_us ||
-            ppm->neutral_us >= ppm->input_max_us - ppm->neutral_deadband_us ||
+            ppm->valid_min_us >= ppm->valid_max_us ||
+            ppm->enable_active_max_us < ppm->valid_min_us ||
+            ppm->enable_active_max_us > ppm->valid_max_us ||
+            !ppm_axis_calibration_is_valid(ppm->throttle_min_us,
+                                           ppm->throttle_center_us,
+                                           ppm->throttle_max_us,
+                                           ppm->neutral_deadband_us,
+                                           ppm->valid_min_us,
+                                           ppm->valid_max_us) ||
+            !ppm_axis_calibration_is_valid(ppm->steering_min_us,
+                                           ppm->steering_center_us,
+                                           ppm->steering_max_us,
+                                           ppm->neutral_deadband_us,
+                                           ppm->valid_min_us,
+                                           ppm->valid_max_us) ||
+            ppm->speed_scale_min_us < ppm->valid_min_us ||
+            ppm->speed_scale_min_us >= ppm->speed_scale_max_us ||
+            ppm->speed_scale_max_us > ppm->valid_max_us ||
+            !isfinite(ppm->speed_scale_min) ||
+            !isfinite(ppm->speed_scale_max) ||
+            ppm->speed_scale_min <= 0.0f ||
+            ppm->speed_scale_min > ppm->speed_scale_max ||
+            ppm->speed_scale_max > 1.0f ||
             (ppm->throttle_sign != -1 && ppm->throttle_sign != 1) ||
             (ppm->steering_sign != -1 && ppm->steering_sign != 1)) {
             return ROBOT_PROFILE_BAD_PPM_MOTION;

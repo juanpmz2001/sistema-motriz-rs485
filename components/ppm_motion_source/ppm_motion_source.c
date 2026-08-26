@@ -35,12 +35,22 @@ static ppm_motion_model_config_t model_config_from_profile(
         .steering_channel = source->steering_channel,
         .enable_channel = source->enable_channel,
         .enable_active_max_us = source->enable_active_max_us,
-        .neutral_us = source->neutral_us,
         .neutral_deadband_us = source->neutral_deadband_us,
-        .input_min_us = source->input_min_us,
-        .input_max_us = source->input_max_us,
+        .valid_min_us = source->valid_min_us,
+        .valid_max_us = source->valid_max_us,
+        .throttle_min_us = source->throttle_min_us,
+        .throttle_center_us = source->throttle_center_us,
+        .throttle_max_us = source->throttle_max_us,
+        .steering_min_us = source->steering_min_us,
+        .steering_center_us = source->steering_center_us,
+        .steering_max_us = source->steering_max_us,
         .throttle_sign = source->throttle_sign,
         .steering_sign = source->steering_sign,
+        .speed_scale_channel = source->speed_scale_channel,
+        .speed_scale_min_us = source->speed_scale_min_us,
+        .speed_scale_max_us = source->speed_scale_max_us,
+        .speed_scale_min = source->speed_scale_min,
+        .speed_scale_max = source->speed_scale_max,
     };
 }
 
@@ -80,10 +90,10 @@ static void publish_output(ppm_motion_source_handle_t handle,
         event.action = MOTION_APPLICATION_EVENT_COMMAND;
         event.stream_id = output->stream_id;
         event.sequence = output->sequence;
-        event.vx_mps = output->normalized_vx *
+        event.vx_mps = output->normalized_vx * output->speed_scale *
                        handle->config.profile->application.max_vx_mps;
         event.vy_mps = 0.0f;
-        event.wz_radps = output->normalized_wz *
+        event.wz_radps = output->normalized_wz * output->speed_scale *
                          handle->config.profile->application.max_wz_radps;
         event.deadman = output->deadman;
         break;

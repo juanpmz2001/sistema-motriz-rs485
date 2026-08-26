@@ -34,14 +34,19 @@ static bool common_profile_contract(void)
     HOST_TEST_CHECK(profile->buses[0].type == ROBOT_BUS_UART_RS485);
     HOST_TEST_CHECK(profile->buses[0].id == 1U);
     HOST_TEST_CHECK(profile->buses[0].rate == 115200U);
+#ifdef BOTFARMS_EXPECT_RAFA_PROFILE
+    const int16_t expected_max_rpm = 40;
+#else
+    const int16_t expected_max_rpm = 15;
+#endif
     for (size_t index = 0; index < profile->endpoint_count; ++index) {
         const robot_endpoint_profile_t *endpoint = &profile->endpoints[index];
         HOST_TEST_CHECK(endpoint->id == index + 1U);
         HOST_TEST_CHECK(endpoint->capabilities ==
                         (ROBOT_CAPABILITY_VELOCITY_RPM |
                          ROBOT_CAPABILITY_STOPPABLE));
-        HOST_TEST_CHECK(endpoint->min_rpm == -15);
-        HOST_TEST_CHECK(endpoint->max_rpm == 15);
+        HOST_TEST_CHECK(endpoint->min_rpm == -expected_max_rpm);
+        HOST_TEST_CHECK(endpoint->max_rpm == expected_max_rpm);
     }
     return true;
 #endif
@@ -148,15 +153,15 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->application.kind ==
                     ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY);
     HOST_TEST_CHECK(profile->application.wheelbase_m == 0.0f);
-    HOST_TEST_CHECK(fabsf(profile->application.track_width_m - 0.10f) <
+    HOST_TEST_CHECK(fabsf(profile->application.track_width_m - 1.52f) <
                     0.000001f);
-    HOST_TEST_CHECK(fabsf(profile->application.wheel_radius_m - 0.1778f) <
+    HOST_TEST_CHECK(fabsf(profile->application.wheel_radius_m - 0.20f) <
                     0.000001f);
-    HOST_TEST_CHECK(fabsf(profile->application.max_vx_mps - 0.02f) <
+    HOST_TEST_CHECK(fabsf(profile->application.max_vx_mps - 0.80f) <
                     0.000001f);
     HOST_TEST_CHECK(fabsf(profile->application.max_vy_mps - 0.0001f) <
                     0.000001f);
-    HOST_TEST_CHECK(fabsf(profile->application.max_wz_radps - 0.20f) <
+    HOST_TEST_CHECK(fabsf(profile->application.max_wz_radps - 0.5235988f) <
                     0.000001f);
     HOST_TEST_CHECK(profile->application.control_ttl_ms == 300U);
     HOST_TEST_CHECK(profile->rc_lan_interlock.enabled);
@@ -167,18 +172,36 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->ppm_motion.steering_channel == 4U);
     HOST_TEST_CHECK(profile->ppm_motion.enable_channel == 5U);
     HOST_TEST_CHECK(profile->ppm_motion.enable_active_max_us == 1500U);
-    HOST_TEST_CHECK(profile->ppm_motion.neutral_us == 1500U);
     HOST_TEST_CHECK(profile->ppm_motion.neutral_deadband_us == 30U);
-    HOST_TEST_CHECK(profile->ppm_motion.input_min_us == 750U);
-    HOST_TEST_CHECK(profile->ppm_motion.input_max_us == 2250U);
+    HOST_TEST_CHECK(profile->ppm_motion.valid_min_us == 750U);
+    HOST_TEST_CHECK(profile->ppm_motion.valid_max_us == 2250U);
+    HOST_TEST_CHECK(profile->ppm_motion.throttle_min_us == 1000U);
+    HOST_TEST_CHECK(profile->ppm_motion.throttle_center_us == 1500U);
+    HOST_TEST_CHECK(profile->ppm_motion.throttle_max_us == 2000U);
+    HOST_TEST_CHECK(profile->ppm_motion.steering_min_us == 1000U);
+    HOST_TEST_CHECK(profile->ppm_motion.steering_center_us == 1500U);
+    HOST_TEST_CHECK(profile->ppm_motion.steering_max_us == 2000U);
     HOST_TEST_CHECK(profile->ppm_motion.throttle_sign == 1);
     HOST_TEST_CHECK(profile->ppm_motion.steering_sign == -1);
+    HOST_TEST_CHECK(profile->ppm_motion.speed_scale_channel == 6U);
+    HOST_TEST_CHECK(profile->ppm_motion.speed_scale_min_us == 1000U);
+    HOST_TEST_CHECK(profile->ppm_motion.speed_scale_max_us == 2000U);
+    HOST_TEST_CHECK(profile->ppm_motion.speed_scale_min == 0.50f);
+    HOST_TEST_CHECK(profile->ppm_motion.speed_scale_max == 1.00f);
     HOST_TEST_CHECK(robot_profile_validate(profile) == ROBOT_PROFILE_VALID);
 
     robot_profile_t pin_conflict = *profile;
     pin_conflict.buses[1].pins[0] = 17;
     HOST_TEST_CHECK(robot_profile_validate(&pin_conflict) ==
                     ROBOT_PROFILE_PIN_CONFLICT);
+    robot_profile_t ppm_calibration_conflict = *profile;
+    ppm_calibration_conflict.ppm_motion.steering_center_us = 1030U;
+    HOST_TEST_CHECK(robot_profile_validate(&ppm_calibration_conflict) ==
+                    ROBOT_PROFILE_BAD_PPM_MOTION);
+    robot_profile_t ppm_channel_conflict = *profile;
+    ppm_channel_conflict.ppm_motion.speed_scale_channel = 5U;
+    HOST_TEST_CHECK(robot_profile_validate(&ppm_channel_conflict) ==
+                    ROBOT_PROFILE_BAD_PPM_MOTION);
     return true;
 }
 #elif defined(BOTFARMS_EXPECT_BENCH_PROFILE)

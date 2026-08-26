@@ -1,7 +1,7 @@
 # Rafa — Bench State and Physical Learnings
 
-> Canonical physical bring-up summary through the 2026-08-20 OTA and PPM-control
-> readiness update.
+> Canonical physical bring-up summary through the 2026-08-25 build-34 OTA
+> verification.
 
 ## Current state
 
@@ -14,21 +14,23 @@ required M1 HOLD/DISABLE and M2 HOLD/DISABLE acceptance sequence was blocked by
 intermittent HTTP 400 responses from read-only Console preflight endpoints before
 further HOLD requests were sent. No speed smoke was attempted.
 
-Build 33 is the verified installed artifact. It encodes the operator-qualified
-differential mapping and dimensions below, the profile-owned PPM source described
-later in this document, and the corrected fast-feedback health semantics. It exposes
-continuous control as `DISARMED`, `SOURCE:NONE`, `TTL_MS:300`. No ARM, PPM command or
-motion command was issued during this OTA verification; the first bounded elevated
-smoke and browser-close, backend-loss and LAN-loss motion evidence still require
-separate operator-authorized sessions.
+Build 34 is the verified installed artifact. It retains the then-installed
+operator-qualified differential mapping, the profile-owned PPM source and the
+corrected fast-feedback health semantics. It adds a typed paired SVD48 bench-speed
+command that validates M1/M2 then enters one coordinator request; no paired command
+or motor-motion command was issued during its OTA verification. Candidate build-35
+source changes below are not installed or physically verified. Continuous control
+remains `DISARMED`, `SOURCE:NONE`, `TTL_MS:300`; the bounded elevated smoke and
+browser-close, backend-loss and LAN-loss motion evidence still require separate
+operator-authorized sessions.
 
 ## Confirmed facts
 
 - Profile: `rafa`.
 - Maintenance LAN works.
 - Last verified address during the campaign: `192.168.1.194`.
-- Last verified firmware: version `1.0.0`, build `33`, SHA
-  `2f43d4d30220c5b86423b8204281175b561aa410`, clean, OTA slot `ota_0`, OTA state
+- Last verified firmware: version `1.0.0`, build `34`, SHA
+  `93e1a3890b00ef35aaea1c4d04288f92bbe0a97e`, clean, OTA slot `ota_1`, OTA state
   `VALID`, with no pending verification.
 - Composition active and runtime-ready.
 - Platform returned to `SAFE_IDLE`, `MOTION_ACTIVE:0`.
@@ -49,22 +51,21 @@ separate operator-authorized sessions.
 
 ## Operator-qualified differential geometry
 
-Recorded for the build-28 profile change:
+Canonical operator inputs for the candidate build-35 source profile (not installed):
 
 - M1 is the right wheel; positive controller RPM produces robot-forward wheel
   rotation, so `motion_direction_sign = +1`.
 - M2 is the left wheel; positive controller RPM does not produce robot-forward wheel
   rotation, so `motion_direction_sign = -1`.
-- wheel radius: 7 in = 0.1778 m;
-- wheel-center track width: 0.10 m;
+- wheel radius: 0.20 m (physical diameter 0.40 m);
+- wheel-center track width: 1.52 m;
 - direct drive: `motor_to_wheel_ratio = 1.0`;
 - overall reported chassis dimensions: 1.5 m wide and 0.9 m long. Differential v1
   does not consume wheelbase, so the profile does not substitute the 0.9 m length
   into the kinematics.
 
-These inputs authorize encoding the profile and the specifically requested elevated
-smoke. They do not by themselves prove the deployed targets, wheel motion, TTL stop
-latency or floor behavior.
+These inputs authorize source encoding only. They do not by themselves prove an
+installed artifact, deployed targets, wheel motion, TTL stop latency or floor behavior.
 
 ## RS485 discovery rule
 
@@ -148,20 +149,22 @@ Confirmed:
 - 8 channels;
 - no RC loss.
 
-Operator-supplied source configuration installed in build 33 (not physical
-qualification yet):
+Candidate build-35 source configuration (not installed or physically qualified yet):
 
 - CH2 high: forward;
 - CH4 high: right;
 - CH5≤1500us: PPM priority;
 - neutral: 1500±30us before PPM arm;
 - PPM TTL: 300 ms;
-- input acceptance window: 750–2250us.
+- validity envelope: 750–2250us;
+- CH2 and CH4 axis calibration: 1000/1500/2000us; values inside the validity
+  envelope beyond those endpoints clamp to full scale;
+- CH6 dynamic speed scale: 1000us=0.50, 1500us=0.75, 2000us=1.00.
 
 The associated software path is `ibus_receiver → ppm_motion_source →
 motion_application → command_authority → robot_kinematics → traction endpoints`.
-It is installed by OTA, but must still be tested elevated before any floor-motion
-conclusion.
+Candidate build 35 must still be built, deployed by OTA and tested elevated before any
+floor-motion conclusion.
 
 ### RC/LAN priority policy
 
@@ -243,13 +246,20 @@ The UI should distinguish unqualified values from trusted physical temperature.
 Confirmed:
 
 - `0x2201` available.
-- `0x2202` and `0x2203` unavailable on this controller variant.
+- `0x2202` and `0x2203` unavailable on this controller variant (`ERR:0x108`); the
+  reviewed manual classifies them as controller-wide `uint16`, range `1..32767`, but
+  the Console must retain `UNAVAILABLE` and the controller detail rather than invent a
+  value.
 - The original 11 supported catalog registers read twice consistently.
 - Two original read-only snapshots compared with no differences.
 - Wheel diameter: 100 mm.
 - Pole pairs M1/M2: 24 / 24.
 - Sensor type M1/M2: Hall / Hall.
 - No parameter write or persistence was physically executed in the first campaign.
+
+Candidate build-35 adds a typed Hall calibration trigger/status path for the Console;
+it is `NOT TESTED` on Rafa. It does not use generic register write/readback or save,
+and no Hall calibration is authorized by this evidence alone.
 
 NEXT-2 float qualification added read-only evidence on 2026-08-18:
 

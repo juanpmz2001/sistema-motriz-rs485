@@ -228,7 +228,7 @@ The supported profiles are:
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 | `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
-| `rafa` | One RS485 bus, one SVD48 at address 2; PPM source on GPIO14 | ID 1 `rafa_traction_m1`: right/+1; ID 2 `rafa_traction_m2`: left/−1; both direct-drive and ±15 RPM | Differential: radius 0.1778 m, track 0.10 m, TTL 300 ms |
+| `rafa` | One RS485 bus, one SVD48 at address 2; PPM source on GPIO14 | ID 1 `rafa_traction_m1`: right/+1; ID 2 `rafa_traction_m2`: left/−1; both direct-drive and ±40 RPM | Differential: radius 0.20 m, track 1.52 m, max vx 0.8 m/s, max wz pi/6 rad/s, TTL 300 ms |
 
 The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
 and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
@@ -243,9 +243,12 @@ to `motion_application`. CH5≤1500us grants PPM priority, CH2 high maps to forw
 and CH4 high maps to a right turn. Its mandatory neutral-before-arm handshake is owned
 by the source; the source has no driver or transport dependency. Its
 operator-qualified differential profile maps M1 to right/+1 and M2 to left/−1 with
-direct drive, 0.1778 m radius and 0.10 m track. Body limits are deliberately
-bench-conservative at 0.02 m/s and 0.20 rad/s with a 300 ms TTL. Differential v1
-consumes track width and radius, not wheelbase.
+direct drive, 0.20 m radius and 1.52 m track. Body limits are 0.8 m/s and pi/6 rad/s
+with a 300 ms TTL; endpoint limits remain ±40 RPM. CH2/CH4 calibration is
+1000/1500/2000us inside a separate 750..2250us validity envelope, while profile-owned
+CH6 linearly scales both axes from 0.50 to 1.00. Differential v1 consumes track width
+and radius, not wheelbase. These are candidate build-35 source values, not physical
+motion evidence.
 
 The transitional legacy `MOVE_VEL` facade remains a distinct four-wheel implementation
 and is enabled only when four legacy SVD48 bindings and a positive wheelbase exist.

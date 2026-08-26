@@ -21,6 +21,13 @@ typedef enum {
 } svd48_channel_id_t;
 
 typedef enum {
+    SVD48_HALL_CALIBRATION_STATUS_UNKNOWN = 0,
+    SVD48_HALL_CALIBRATION_STATUS_SUCCESS,
+    SVD48_HALL_CALIBRATION_STATUS_CALIBRATING,
+    SVD48_HALL_CALIBRATION_STATUS_FAILED,
+} svd48_hall_calibration_status_t;
+
+typedef enum {
     SVD48_DEVICE_OK = 0,
     SVD48_DEVICE_INVALID_ARGUMENT,
     SVD48_DEVICE_TIMEOUT,
@@ -163,6 +170,20 @@ typedef struct {
     svd48_channel_id_t id;
 } svd48_channel_t;
 
+/* Hall calibration is a controller one-shot, not a persistent parameter
+ * write. A write acknowledgement and its independent status read are reported
+ * separately because a controller may accept the trigger before a status read
+ * becomes available. */
+typedef struct {
+    uint16_t trigger_register;
+    uint16_t status_register;
+    bool write_acknowledged;
+    bool status_available;
+    uint16_t status_value;
+    svd48_hall_calibration_status_t status;
+    svd48_device_result_t status_read_result;
+} svd48_hall_calibration_result_t;
+
 struct svd48_device {
     svd48_device_config_t config;
     svd48_channel_t channels[SVD48_DEVICE_CHANNEL_COUNT];
@@ -188,6 +209,10 @@ svd48_channel_t *svd48_device_channel(svd48_device_t *device,
 uint16_t svd48_channel_control_register(svd48_channel_id_t channel);
 uint16_t svd48_channel_velocity_register(svd48_channel_id_t channel);
 uint16_t svd48_channel_current_register(svd48_channel_id_t channel);
+uint16_t svd48_channel_hall_calibration_trigger_register(
+    svd48_channel_id_t channel);
+uint16_t svd48_channel_hall_calibration_status_register(
+    svd48_channel_id_t channel);
 
 svd48_device_result_t svd48_channel_set_target_rpm(svd48_channel_t *channel,
                                                    int16_t target_rpm);
@@ -196,6 +221,11 @@ svd48_device_result_t svd48_channel_stop(svd48_channel_t *channel);
 svd48_device_result_t svd48_channel_clear_fault(svd48_channel_t *channel);
 svd48_device_result_t svd48_channel_set_current_deciamp(svd48_channel_t *channel,
                                                        int16_t deciamp);
+svd48_device_result_t svd48_channel_start_hall_calibration(
+    svd48_channel_t *channel,
+    svd48_hall_calibration_result_t *result);
+const char *svd48_hall_calibration_status_name(
+    svd48_hall_calibration_status_t status);
 
 bool svd48_channel_get_snapshot(svd48_channel_t *channel,
                                 svd48_channel_snapshot_t *snapshot);

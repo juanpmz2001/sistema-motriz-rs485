@@ -94,6 +94,14 @@ power path.
   resume automatically.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates
   motor-fault handling.
+- `SVD48_HALL_CALIBRATE` is a controller-owned maintenance procedure, not a generic
+  configuration write. Firmware rejects it while continuous control is `ARMED` or
+  `ACTIVE`, unless the platform is `SAFE_IDLE`, the safety task is running without a
+  motor fault, and the selected bound channel is available, `HEALTHY` and reports
+  `STOPPED`; `HOLD 0` is intentionally rejected because it leaves the controller
+  enabled. It does not send `SAVE_SVD48_CONFIG` or retry a one-shot trigger after
+  ambiguous transport. An ACK or status read is not evidence that calibration
+  completed mechanically.
 - While a legacy RC-loss stop or a reported motor fault remains active, the safety
   task requests a serialized global stop every 500 ms. Rafa does not turn an absent
   or failsafe RC signal into a stop of a live LAN lease; the source-aware interlock

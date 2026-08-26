@@ -34,12 +34,14 @@ no application geometry, so `SET_SPEED 0`, `STOP 0` and `STOP ALL` are routable 
 reported as failed hardware.
 
 `rafa` configures one device at address 2 and exposes both channels as
-`rafa_traction_m1` and `rafa_traction_m2`. It preserves the same conservative
-`-15..15 RPM` application limits and has no motion geometry. M1/M2 are not called
-left/right until an installed, unloaded physical qualification establishes side,
-sign and scale. The profile declares the controller as required, so an unplugged
-bootstrap board truthfully reports offline/stale observations; that is not evidence
-that the future installed SVD48 failed qualification.
+`rafa_traction_m1` and `rafa_traction_m2`. Its source profile maps M1 to
+right/`+1` and M2 to left/`-1`, with direct drive and `-40..40 RPM` endpoint limits.
+It uses a 0.20 m wheel radius, 1.52 m lateral centre-to-centre track, `0.8 m/s`
+maximum forward speed, `pi/6 rad/s` maximum yaw, and a 300 ms control TTL.
+Differential v1 consumes track width and wheel radius, not wheelbase. These are source
+configuration values for candidate build 35, not evidence of deployed wheel motion or
+floor qualification. The profile declares the controller as required, so an unplugged
+board truthfully reports offline/stale observations.
 
 Profiles are immutable C selected by Kconfig. There is no supported runtime JSON/YAML
 loader or mutable topology override in NVS.
@@ -116,6 +118,15 @@ trusted SV-Config export qualified these as IEEE-754 binary32 with the high 16-b
 at the lower register. This is evidence for the typed Console codec, not permission to
 tune PID or proof of persistence. No physical write or save was used for qualification.
 
+Hall calibration is intentionally outside that generic parameter workflow. The
+reviewed manual maps M1/M2 trigger registers to `0x5600`/`0x5601` (write `1`) and
+status registers to `0x5684`/`0x5685` (`0=SUCCESS`, `1=CALIBRATING`, `2=FAILED`).
+The firmware exposes them only through `SVD48_HALL_CALIBRATE`; it performs one typed,
+non-retried trigger and then an independent status read. Acknowledgement or status
+availability is not a mechanical calibration result and does not send a configuration
+save command. The firmware requires the selected healthy channel to report `STOPPED`;
+`HOLD 0` remains enabled and is rejected rather than being treated as stopped.
+
 The shared bus lock covers one complete request/response exchange, so polling,
 actuation and maintenance calls from different devices cannot interleave bytes.
 Per-device state uses a separate lock and must not be confused with bus serialization.
@@ -134,7 +145,8 @@ channel stop. Stop first writes a zero target and then the stop control command;
 failed zero write does not suppress the stop attempt.
 
 The workspace names these existing behaviors explicitly: `SVD48_BENCH_SET_SPEED`
-uses the requested RPM; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
+uses the requested RPM; `SVD48_BENCH_SET_SPEED_PAIR` validates M1/M2 then applies
+one shared target through the application coordinator; `SVD48_BENCH_HOLD` uses zero RPM while enabled; and
 `SVD48_BENCH_DISABLE`/`SVD48_BENCH_STOP` use the stop/freewheel sequence. The gateway
 never selects target/control registers itself. These commands are bench maintenance,
 not a continuous control plane.
@@ -250,9 +262,16 @@ new device API. Confirmed maintenance access remains available for non-actuation
 registers through the legacy command surface.
 
 Configuration/diagnostic helpers use `0x2201..0x2203`, `0x5018..0x5019`,
-`0x502C..0x502D`, `0x5620..0x5621` and `0x5688..0x568D`. `CONFIRM` acknowledges
-operator intent but is not authorization, rollback or proof that an address is safe.
-Do not extrapolate undocumented registers from adjacency.
+`0x502C..0x502D`, `0x5620..0x5621`, `0x5684..0x5685` and `0x5688..0x568D`.
+The reviewed manual classifies `0x2202` (motor sprocket teeth) and `0x2203` (wheel
+sprocket teeth) as controller-wide `uint16` configuration, range `1..32767`. Rafa's
+currently observed controller variant returns `ERR:0x108` for both reads; clients must
+present that as `UNAVAILABLE` with the controller detail preserved, never as zero or an
+inferred value. Hall installation registers `0x5620/0x5621` encode `0=120 degrees`,
+`1=60 degrees`; `0x5688/0x5689` are Hall status, and `0x568C/0x568D` are signed Hall
+angles in degrees. `CONFIRM` acknowledges operator intent but is not authorization,
+rollback or proof that an address is safe. Do not extrapolate undocumented registers
+from adjacency.
 
 For any write campaign:
 

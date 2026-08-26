@@ -344,6 +344,14 @@ static bool test_identity_channels_and_initial_health(void)
     HOST_TEST_CHECK(svd48_channel_control_register(SVD48_CHANNEL_M2) == 0x5301U);
     HOST_TEST_CHECK(svd48_channel_velocity_register(SVD48_CHANNEL_M1) == 0x5304U);
     HOST_TEST_CHECK(svd48_channel_velocity_register(SVD48_CHANNEL_M2) == 0x5305U);
+    HOST_TEST_CHECK(svd48_channel_hall_calibration_trigger_register(
+                        SVD48_CHANNEL_M1) == 0x5600U);
+    HOST_TEST_CHECK(svd48_channel_hall_calibration_trigger_register(
+                        SVD48_CHANNEL_M2) == 0x5601U);
+    HOST_TEST_CHECK(svd48_channel_hall_calibration_status_register(
+                        SVD48_CHANNEL_M1) == 0x5684U);
+    HOST_TEST_CHECK(svd48_channel_hall_calibration_status_register(
+                        SVD48_CHANNEL_M2) == 0x5685U);
 
     svd48_channel_snapshot_t snapshot;
     svd48_channel_t *m1 = svd48_device_channel(&fixture.device, SVD48_CHANNEL_M1);
@@ -423,6 +431,82 @@ static bool test_enable_stop_clear_and_current_framing(void)
     HOST_TEST_CHECK(fake_bus_transport_mismatch(&fixture.bus) ==
                     FAKE_BUS_TRANSPORT_MISMATCH_NONE);
     HOST_TEST_CHECK(fake_bus_transport_call_count(&fixture.bus) == 5U);
+    return true;
+}
+
+static bool test_hall_calibration_is_one_shot_with_independent_status(void)
+{
+    device_fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
+    const uint16_t m1_calibrating[] = {1U};
+    const uint16_t m2_success[] = {0U};
+    HOST_TEST_CHECK(queue_write_single_result(&fixture.bus,
+                                             1U,
+                                             0x5600U,
+                                             1U,
+                                             BUS_TRANSPORT_OK,
+                                             true));
+    HOST_TEST_CHECK(queue_read_response(&fixture.bus,
+                                       1U,
+                                       0x5684U,
+                                       m1_calibrating,
+                                       1U));
+    HOST_TEST_CHECK(queue_write_single_result(&fixture.bus,
+                                             1U,
+                                             0x5601U,
+                                             1U,
+                                             BUS_TRANSPORT_OK,
+                                             true));
+    HOST_TEST_CHECK(queue_read_response(&fixture.bus,
+                                       1U,
+                                       0x5685U,
+                                       m2_success,
+                                       1U));
+
+    svd48_hall_calibration_result_t result;
+    HOST_TEST_CHECK(svd48_channel_start_hall_calibration(
+                        svd48_device_channel(&fixture.device, SVD48_CHANNEL_M1),
+                        &result) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(result.trigger_register == 0x5600U);
+    HOST_TEST_CHECK(result.status_register == 0x5684U);
+    HOST_TEST_CHECK(result.write_acknowledged);
+    HOST_TEST_CHECK(result.status_available);
+    HOST_TEST_CHECK(result.status_value == 1U);
+    HOST_TEST_CHECK(result.status == SVD48_HALL_CALIBRATION_STATUS_CALIBRATING);
+    HOST_TEST_CHECK(result.status_read_result == SVD48_DEVICE_OK);
+
+    HOST_TEST_CHECK(svd48_channel_start_hall_calibration(
+                        svd48_device_channel(&fixture.device, SVD48_CHANNEL_M2),
+                        &result) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(result.trigger_register == 0x5601U);
+    HOST_TEST_CHECK(result.status_register == 0x5685U);
+    HOST_TEST_CHECK(result.status == SVD48_HALL_CALIBRATION_STATUS_SUCCESS);
+    HOST_TEST_CHECK(strcmp(svd48_hall_calibration_status_name(result.status),
+                           "SUCCESS") == 0);
+    HOST_TEST_CHECK(fake_bus_transport_mismatch(&fixture.bus) ==
+                    FAKE_BUS_TRANSPORT_MISMATCH_NONE);
+
+    device_fixture_t unverified;
+    HOST_TEST_CHECK(fixture_init(&unverified, 0U, 1000U));
+    HOST_TEST_CHECK(queue_write_single_result(&unverified.bus,
+                                             1U,
+                                             0x5600U,
+                                             1U,
+                                             BUS_TRANSPORT_OK,
+                                             true));
+    HOST_TEST_CHECK(queue_read_result(&unverified.bus,
+                                     1U,
+                                     0x5684U,
+                                     1U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(svd48_channel_start_hall_calibration(
+                        svd48_device_channel(&unverified.device,
+                                             SVD48_CHANNEL_M1),
+                        &result) == SVD48_DEVICE_PARTIAL);
+    HOST_TEST_CHECK(result.write_acknowledged);
+    HOST_TEST_CHECK(!result.status_available);
+    HOST_TEST_CHECK(result.status_read_result == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK(fake_bus_transport_call_count(&unverified.bus) == 2U);
     return true;
 }
 
@@ -1024,6 +1108,7 @@ int main(void)
         HOST_TEST_CASE(test_identity_channels_and_initial_health),
         HOST_TEST_CASE(test_m1_m2_target_rpm_framing),
         HOST_TEST_CASE(test_enable_stop_clear_and_current_framing),
+        HOST_TEST_CASE(test_hall_calibration_is_one_shot_with_independent_status),
         HOST_TEST_CASE(test_retry_is_bounded_and_only_for_retryable_results),
         HOST_TEST_CASE(test_timeout_retry_can_recover),
         HOST_TEST_CASE(test_generic_writes_are_not_retried),

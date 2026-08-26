@@ -7,7 +7,7 @@
 
 #include "robot_capabilities.h"
 
-#define ROBOT_PROFILE_SCHEMA_VERSION 6
+#define ROBOT_PROFILE_SCHEMA_VERSION 7
 #define ROBOT_PROFILE_CONTROL_TTL_MIN_MS 50U
 #define ROBOT_PROFILE_CONTROL_TTL_MAX_MS 500U
 #define ROBOT_PROFILE_MAX_BUSES 5
@@ -158,20 +158,34 @@ typedef struct {
 /* Profile-owned mapping from a validated PPM receiver frame to differential
  * body intent. This is intentionally a small source configuration, not a
  * receiver protocol or motor-driver configuration. Channels are one-based.
- * Positive throttle maps to positive vx; positive steering maps to positive
- * wz before steering_sign is applied. */
+ *
+ * valid_min/max_us are the receiver plausibility envelope. Axis calibration is
+ * deliberately independent: each motion axis has its own min/centre/max so a
+ * broad valid frame never silently becomes a broad full-scale command. */
 typedef struct {
     bool enabled;
     uint8_t throttle_channel;
     uint8_t steering_channel;
     uint8_t enable_channel;
     uint16_t enable_active_max_us;
-    uint16_t neutral_us;
     uint16_t neutral_deadband_us;
-    uint16_t input_min_us;
-    uint16_t input_max_us;
+    uint16_t valid_min_us;
+    uint16_t valid_max_us;
+    uint16_t throttle_min_us;
+    uint16_t throttle_center_us;
+    uint16_t throttle_max_us;
+    uint16_t steering_min_us;
+    uint16_t steering_center_us;
+    uint16_t steering_max_us;
     int8_t throttle_sign;
     int8_t steering_sign;
+    /* This optional source-owned channel scales both body axes. A value outside
+     * its calibrated range is clamped, never interpreted as invalid motion. */
+    uint8_t speed_scale_channel;
+    uint16_t speed_scale_min_us;
+    uint16_t speed_scale_max_us;
+    float speed_scale_min;
+    float speed_scale_max;
 } robot_ppm_motion_profile_t;
 
 typedef struct {

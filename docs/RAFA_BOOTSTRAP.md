@@ -1,5 +1,9 @@
 # Rafa USB bootstrap and OTA handoff
 
+> Historical bootstrap context only. For the current Rafa source profile and installed
+> hardware evidence, use [Rafa bench state](robots/RAFA_BENCH_STATE.md) and the active
+> `robot_profile.c`; candidate build-35 values supersede the old bootstrap limits.
+
 ## Scope and safety boundary
 
 This runbook commissions the ESP32-S3 that will later be installed in Rafa. The

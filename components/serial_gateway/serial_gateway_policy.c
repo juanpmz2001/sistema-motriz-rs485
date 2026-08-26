@@ -62,10 +62,17 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
     if (arg_is(argv[0], "SVD48_BENCH_SET_SPEED") && argc == 4) {
         return true;
     }
+    if (arg_is(argv[0], "SVD48_BENCH_SET_SPEED_PAIR") && argc == 3) {
+        return true;
+    }
     if ((arg_is(argv[0], "SVD48_BENCH_HOLD") ||
          arg_is(argv[0], "SVD48_BENCH_DISABLE") ||
          arg_is(argv[0], "SVD48_BENCH_STOP")) &&
         argc == 3) {
+        return true;
+    }
+    if (arg_is(argv[0], "SVD48_HALL_CALIBRATE") && argc == 4 &&
+        arg_is(argv[3], "CONFIRM")) {
         return true;
     }
     if (arg_is(argv[0], "READ_REG") && (argc == 3 || argc == 4)) {

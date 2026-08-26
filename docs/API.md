@@ -34,7 +34,7 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
-| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` |
+| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP`, `SVD48_HALL_CALIBRATE` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -114,30 +114,64 @@ existing cached driver snapshot. It performs no immediate RS485 transaction:
 DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> STATUS:<n> RPM:<rpm> CURRENT_DA:<n> BUS_DV:<n> MOTOR_TEMP_DC:<n> MOS_TEMP_DC:<n> POS:<n> ERROR:0x<hex> ONLINE:<0|1> STALE:<0|1> HEALTH:<health> VALID_MASK:0x<hex> FAILED_MASK:0x<hex> STALE_MASK:0x<hex> COMM_ERR:<n> EXC_FUNC:0x<hex> EXC_CODE:0x<hex> EXC_AGE_MS:<n>
 ```
 
-The four typed bench operations are:
+The five typed bench operations are:
 
 ```text
 SVD48_BENCH_SET_SPEED <device_id> <M1|M2> <rpm>
+SVD48_BENCH_SET_SPEED_PAIR <device_id> <rpm>
 SVD48_BENCH_HOLD <device_id> <M1|M2>
 SVD48_BENCH_DISABLE <device_id> <M1|M2>
 SVD48_BENCH_STOP <device_id> <M1|M2>
 ```
 
-Set-speed validates the endpoint's published RPM range and requests that target;
-hold requests zero RPM while leaving the channel actively enabled. Both require a
+Hall calibration is a separate controller-owned, one-shot maintenance operation:
+
+```text
+SVD48_HALL_CALIBRATE <device_id> <M1|M2> CONFIRM
+```
+
+It resolves the configured device/channel and invokes the typed SVD48 vertical; it is
+not a generic `WRITE_REG` transaction. Acknowledged replies include the command and
+status registers without claiming a mechanical result:
+
+```text
+DATA SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> ADDRESS:<1..247> TRIGGER_REG:0x<hex> STATUS_REG:0x<hex> WRITE_ACK:<0|1> STATUS_AVAILABLE:<0|1> STATUS:<n|0> STATUS_NAME:<SUCCESS|CALIBRATING|FAILED|UNKNOWN> STATUS_READ_RESULT:<result>
+OK SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> OUTCOME:<ACKED|ACKED_UNVERIFIED>
+```
+
+`STATUS` is controller evidence only: `0=SUCCESS`, `1=CALIBRATING`, `2=FAILED`, and
+any other value is `UNKNOWN`. The trigger is not retried after an ambiguous transport
+result, is never sent through Parameter Lab's original-read/write/readback workflow,
+and does not issue `SAVE_SVD48_CONFIG`.
+
+Set-speed validates the endpoint's published RPM range and requests that target.
+`SVD48_BENCH_SET_SPEED_PAIR` validates both M1 and M2 of the selected controller
+before one application-level two-endpoint request. It applies the same target to both
+channels under the coordinator lock; if either required endpoint cannot be applied,
+the coordinator stops any already-applied endpoint and returns a non-OK result. It is
+bench maintenance, not a differential-drive command or a continuous-control source.
+
+The single-channel hold operation requests zero RPM while leaving the channel actively
+enabled. All three active operations require a
 bound, available and `HEALTHY` channel. Disable and stop both request freewheel stop
 and remain best-effort paths for a bound endpoint when availability/health is lost.
-All four route through `actuation_application` and the coordinator. The direct SVD48
+All five route through `actuation_application` and the coordinator. The direct SVD48
 endpoint adapter owns the target-plus-START and target-zero-plus-STOP register
 sequences; the transport command handler does not construct register writes.
 
 When continuous control reports `ARMED` or `ACTIVE`, firmware rejects
-`SVD48_BENCH_SET_SPEED` and `SVD48_BENCH_HOLD` with
+`SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR` and `SVD48_BENCH_HOLD` with
 `ERR CONTINUOUS_CONTROL_CONFLICT ...`. `SVD48_BENCH_DISABLE`,
 `SVD48_BENCH_STOP` and global `STOP ALL` remain available. The same interlock rejects
 `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO` and
 `APPLY_PY6514_CONFIG`. `DISARMED` and profiles where continuous control is
 `UNAVAILABLE` remain eligible, subject to every existing stopped/safety/write gate.
+`SVD48_HALL_CALIBRATE` has the same `ARMED`/`ACTIVE` exclusion and additionally
+requires `SAFE_IDLE`, a running safety task with no motor fault, and a bound,
+available, `HEALTHY` channel that reports `STOPPED`. A zero-RPM `HOLD` is not
+`STOPPED` for this operation because it leaves the controller enabled. Its
+acknowledgement is not evidence that the Hall procedure completed or that wheel motion
+is safe.
 
 These are persistent bench maintenance operations with no TTL, deadman, sequence or
 authority lease. The Engineering Console separately requires the exact phrase
@@ -401,7 +435,7 @@ The exact LAN allowlist is code-owned in
 - `GET_SPEED`, `GET_MOTOR`, `SVD48_INVENTORY`, typed SVD48 channel telemetry,
   `SVD48_PROBE`, `READ_REG`, `GET_SVD48_CONFIG` and `POLL_ONCE`.
 - `STOP <motor|ALL>` and `SET_SPEED <motor> <rpm>`.
-- The exact-shape `SVD48_BENCH_*` commands documented above.
+- The exact-shape `SVD48_BENCH_*` commands and `SVD48_HALL_CALIBRATE` documented above.
 - Confirmed register writes, save, gear-ratio and identify operations.
 
 Everything else returns `ERR LAN_COMMAND_BLOCKED <command>`. This allowlist is
@@ -430,7 +464,8 @@ LAN telemetry in this version.
 `control_lan` is the authenticated continuous-intent protocol on UDP port `32322`.
 It starts only when the selected profile has validated differential geometry. It is
 separate from Maintenance LAN: joystick heartbeats never use port `32321` or ASCII
-speed commands, and PPM is not a control authority in this version.
+speed commands. Profile-owned PPM source events are a separate path and never use
+Maintenance LAN or direct controller commands.
 
 Rafa additionally has a profile-owned RC/LAN interlock. It is source selection, not
 PPM motion control:
@@ -497,7 +532,7 @@ Velocity fields must be finite and within the profile limits returned by
 `CONTROL_STATUS`; differential v1 accepts no material lateral velocity. The packet
 is parsed as decimal JSON but the active control representation is `float`, so
 validation quantizes to that representation before comparing the profile bound. A
-decimal equal to a published bound such as Rafa's `0.02` m/s is therefore accepted;
+decimal equal to a published bound such as Rafa's `0.8` m/s is therefore accepted;
 values that quantize above the bound remain rejected as `BAD_VELOCITY`.
 
 `CONTROL_STATUS` is a read-only ASCII command exposed through Maintenance LAN for
@@ -529,8 +564,13 @@ The receiver failsafe CH5=2000us leaves LAN eligible. The source needs a *new* v
 PPM frame with CH2 and CH4 neutral (1500±30us) after PPM priority begins, after PPM
 loss, or after any external STOP before it can ARM. Each following fresh PPM frame
 publishes a bounded command with the profile TTL (300 ms); stale/missing PPM stops
-and retires the RC stream. The profile uses the reviewed PPM acceptance window
-750–2250us as an input bound, not a claim that radio endpoints are calibrated.
+and retires the RC stream. The validity envelope is `750..2250us`; it is not axis
+calibration. CH2 and CH4 each use `1000/1500/2000us` min/centre/max with the same
+`±30us` neutral deadband. Values inside the validity envelope but beyond a calibrated
+axis endpoint saturate to `-1/+1`; values outside it invalidate the input. CH6 is the
+profile-owned speed scale: `1000us→0.50`, `1500us→0.75`, `2000us→1.00`, clamped to
+`[0.50, 1.00]`, and scales both `vx` and `wz`. CH5 priority/failsafe policy is
+unchanged.
 
 `SAFETY_STATUS` appends the same `RC_INTERLOCK`, `RC_CH5_US`, `LAN_ELIGIBLE` and
 `LAN_REVOCATION_EPOCH` fields. Consumers must continue to parse by key and ignore
