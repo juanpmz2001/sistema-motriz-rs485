@@ -1749,6 +1749,21 @@ static bool workspace_hall_calibrate(
                                           ? SVD48_DEVICE_OK
                                           : operation_result);
     result->status_read_result = (uint16_t)device_result.status_read_result;
+    result->trace_count = device_result.trace_count;
+    if (result->trace_count > SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS) {
+        result->trace_count = SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS;
+    }
+    for (uint8_t index = 0U; index < result->trace_count; ++index) {
+        const svd48_hall_calibration_trace_entry_t *source =
+            &device_result.trace[index];
+        svd48_workspace_hall_trace_entry_t *target = &result->trace[index];
+        target->attempt = source->attempt;
+        target->result = (uint16_t)source->result;
+        target->request_length = source->request_length;
+        target->response_length = source->response_length;
+        memcpy(target->request, source->request, sizeof(target->request));
+        memcpy(target->response, source->response, sizeof(target->response));
+    }
     return true;
 }
 

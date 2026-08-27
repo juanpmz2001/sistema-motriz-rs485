@@ -146,6 +146,11 @@ typedef struct {
     uint16_t quantity;
 } write_multiple_response_context_t;
 
+typedef struct {
+    svd48_device_trace_fn callback;
+    void *context;
+} operation_trace_t;
+
 static bool validate_read_response(const uint8_t *response,
                                    size_t response_length,
                                    const void *context)
@@ -208,7 +213,8 @@ static svd48_device_result_t transact(svd48_device_t *device,
                                       size_t *response_length,
                                       uint8_t retries,
                                       response_validator_fn validator,
-                                      const void *validator_context)
+                                      const void *validator_context,
+                                      const operation_trace_t *operation_trace)
 {
     if (!device || !device->initialized || !request || !response ||
         !response_length || !validator || retries > SVD48_DEVICE_MAX_RETRIES) {
@@ -263,6 +269,17 @@ static svd48_device_result_t transact(svd48_device_t *device,
                           *response_length,
                           last_result);
         }
+        if (operation_trace && operation_trace->callback) {
+            operation_trace->callback(operation_trace->context,
+                                      device->config.device_id,
+                                      device->config.address,
+                                      (uint8_t)(attempt + 1U),
+                                      request,
+                                      request_length,
+                                      response,
+                                      *response_length,
+                                      last_result);
+        }
         if (last_result == SVD48_DEVICE_OK && valid_crc) {
             return SVD48_DEVICE_OK;
         }
@@ -273,11 +290,13 @@ static svd48_device_result_t transact(svd48_device_t *device,
     return last_result;
 }
 
-static svd48_device_result_t read_registers_with_retries(svd48_device_t *device,
-                                                         uint16_t reg,
-                                                         uint16_t quantity,
-                                                         uint16_t *out_regs,
-                                                         uint8_t retries)
+static svd48_device_result_t read_registers_with_retries_traced(
+    svd48_device_t *device,
+    uint16_t reg,
+    uint16_t quantity,
+    uint16_t *out_regs,
+    uint8_t retries,
+    const operation_trace_t *operation_trace)
 {
     if (!device || !device->initialized || quantity == 0U || quantity > 16U ||
         !out_regs) {
@@ -305,7 +324,8 @@ static svd48_device_result_t read_registers_with_retries(svd48_device_t *device,
                                             &response_length,
                                             retries,
                                             validate_read_response,
-                                            &response_context);
+                                            &response_context,
+                                            operation_trace);
     if (result != SVD48_DEVICE_OK) {
         return result;
     }
@@ -316,10 +336,22 @@ static svd48_device_result_t read_registers_with_retries(svd48_device_t *device,
     return SVD48_DEVICE_OK;
 }
 
-static svd48_device_result_t write_register_raw(svd48_device_t *device,
-                                                uint16_t reg,
-                                                uint16_t value,
-                                                uint8_t retries)
+static svd48_device_result_t read_registers_with_retries(svd48_device_t *device,
+                                                         uint16_t reg,
+                                                         uint16_t quantity,
+                                                         uint16_t *out_regs,
+                                                         uint8_t retries)
+{
+    return read_registers_with_retries_traced(
+        device, reg, quantity, out_regs, retries, NULL);
+}
+
+static svd48_device_result_t write_register_raw_traced(
+    svd48_device_t *device,
+    uint16_t reg,
+    uint16_t value,
+    uint8_t retries,
+    const operation_trace_t *operation_trace)
 {
     if (!device || !device->initialized) {
         return SVD48_DEVICE_INVALID_ARGUMENT;
@@ -340,8 +372,17 @@ static svd48_device_result_t write_register_raw(svd48_device_t *device,
                                             &response_length,
                                             retries,
                                             validate_write_single_response,
-                                            &response_context);
+                                            &response_context,
+                                            operation_trace);
     return result;
+}
+
+static svd48_device_result_t write_register_raw(svd48_device_t *device,
+                                                uint16_t reg,
+                                                uint16_t value,
+                                                uint8_t retries)
+{
+    return write_register_raw_traced(device, reg, value, retries, NULL);
 }
 
 static void update_pair_i16(svd48_device_t *device,
@@ -668,6 +709,38 @@ static svd48_hall_calibration_status_t hall_calibration_status_from_value(
     }
 }
 
+static void capture_hall_calibration_trace(void *context,
+                                           uint16_t device_id,
+                                           uint8_t address,
+                                           uint8_t attempt,
+                                           const uint8_t *request,
+                                           size_t request_length,
+                                           const uint8_t *response,
+                                           size_t response_length,
+                                           svd48_device_result_t result)
+{
+    (void)device_id;
+    (void)address;
+    svd48_hall_calibration_result_t *calibration = context;
+    if (!calibration || !request || !response ||
+        calibration->trace_count >=
+            SVD48_HALL_CALIBRATION_TRACE_MAX_TRANSACTIONS) {
+        return;
+    }
+    svd48_hall_calibration_trace_entry_t *entry =
+        &calibration->trace[calibration->trace_count++];
+    entry->attempt = attempt;
+    entry->result = result;
+    entry->request_length = (uint8_t)(
+        request_length > sizeof(entry->request) ? sizeof(entry->request)
+                                                : request_length);
+    entry->response_length = (uint8_t)(
+        response_length > sizeof(entry->response) ? sizeof(entry->response)
+                                                  : response_length);
+    memcpy(entry->request, request, entry->request_length);
+    memcpy(entry->response, response, entry->response_length);
+}
+
 const char *svd48_hall_calibration_status_name(
     svd48_hall_calibration_status_t status)
 {
@@ -701,26 +774,32 @@ svd48_device_result_t svd48_channel_start_hall_calibration(
     if (result->trigger_register == 0U || result->status_register == 0U) {
         return SVD48_DEVICE_INVALID_ARGUMENT;
     }
+    const operation_trace_t trace = {
+        .callback = capture_hall_calibration_trace,
+        .context = result,
+    };
 
     /* Do not retry a one-shot calibration trigger after an unknown transport
      * outcome. The acknowledgement is the only proof that it was accepted. */
-    svd48_device_result_t write_result = write_register_raw(
+    svd48_device_result_t write_result = write_register_raw_traced(
         channel->device,
         result->trigger_register,
         SVD48_HALL_CALIBRATION_TRIGGER_VALUE,
-        0U);
+        0U,
+        &trace);
     if (write_result != SVD48_DEVICE_OK) {
         return write_result;
     }
     result->write_acknowledged = true;
 
     uint16_t raw_status = 0U;
-    result->status_read_result = read_registers_with_retries(
+    result->status_read_result = read_registers_with_retries_traced(
         channel->device,
         result->status_register,
         1U,
         &raw_status,
-        channel->device->config.retries);
+        channel->device->config.retries,
+        &trace);
     if (result->status_read_result != SVD48_DEVICE_OK) {
         return SVD48_DEVICE_PARTIAL;
     }
@@ -1075,7 +1154,8 @@ svd48_device_result_t svd48_device_write_registers(svd48_device_t *device,
                                             &response_length,
                                             0,
                                             validate_write_multiple_response,
-                                            &response_context);
+                                            &response_context,
+                                            NULL);
     return result;
 }
 

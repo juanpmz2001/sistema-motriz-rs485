@@ -139,6 +139,18 @@ DATA SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> ADDRESS:<1..247> TRIG
 OK SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> OUTCOME:<ACKED|ACKED_UNVERIFIED>
 ```
 
+Before that summary, the firmware emits zero or more bounded diagnostic lines for
+that same one-shot operation:
+
+```text
+DATA SVD48_HALL_TRACE DEVICE_ID:<id> CHANNEL:<M1|M2> INDEX:<n> ATTEMPT:<n> RESULT:<driver-result> TX:<uppercase-hex|-> RX:<uppercase-hex|->
+```
+
+`TX` and `RX` are the literal RS485 request/response bytes observed by the driver,
+including the driver's CRC. They are evidence for this typed Hall flow only: the
+command does not accept an operator-supplied hex frame, does not expose a general
+RS485 passthrough, and a missing `RX` is represented by `-`.
+
 `STATUS` is controller evidence only: `0=SUCCESS`, `1=CALIBRATING`, `2=FAILED`, and
 any other value is `UNKNOWN`. The trigger is not retried after an ambiguous transport
 result, is never sent through Parameter Lab's original-read/write/readback workflow,
