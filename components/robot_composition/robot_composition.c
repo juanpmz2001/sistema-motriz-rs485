@@ -5,6 +5,8 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define COORDINATOR_LOCK_TIMEOUT_MS 500U
 #define POLLING_STOP_TIMEOUT_MS 2000U
@@ -1703,6 +1705,67 @@ workspace_hall_calibration_status_from_device(
     }
 }
 
+static void workspace_hall_trace_capture(void *context,
+                                         uint16_t device_id,
+                                         uint8_t address,
+                                         uint8_t attempt,
+                                         const uint8_t *request,
+                                         size_t request_length,
+                                         const uint8_t *response,
+                                         size_t response_length,
+                                         svd48_device_result_t operation_result)
+{
+    svd48_workspace_hall_calibration_result_t *result = context;
+    if (!result || !request || !response ||
+        result->trace_count >= SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS) {
+        return;
+    }
+    svd48_workspace_hall_trace_entry_t *entry = &result->trace[result->trace_count++];
+    entry->timestamp_ms = composition_clock_ms(NULL);
+    entry->attempt = attempt;
+    entry->address = address;
+    entry->result = (uint16_t)operation_result;
+    entry->request_length = (uint8_t)(request_length > sizeof(entry->request)
+                                          ? sizeof(entry->request) : request_length);
+    entry->response_length = (uint8_t)(response_length > sizeof(entry->response)
+                                            ? sizeof(entry->response) : response_length);
+    memcpy(entry->request, request, entry->request_length);
+    memcpy(entry->response, response, entry->response_length);
+    (void)device_id;
+}
+
+static void workspace_hall_preflight_read(svd48_device_t *device,
+                                          svd48_workspace_hall_calibration_result_t *result,
+                                          uint16_t start_register,
+                                          uint8_t quantity)
+{
+    if (!device || !result || quantity == 0U || quantity > 8U ||
+        result->preflight_count >= SVD48_WORKSPACE_HALL_PREFLIGHT_MAX_READS) {
+        return;
+    }
+    svd48_workspace_hall_preflight_read_t *read =
+        &result->preflight[result->preflight_count++];
+    read->start_register = start_register;
+    read->quantity = quantity;
+    read->result = (uint16_t)svd48_device_read_registers(
+        device, start_register, quantity, read->values);
+}
+
+static void workspace_hall_status_sample(svd48_device_t *device,
+                                         svd48_workspace_hall_calibration_result_t *result,
+                                         uint16_t status_register)
+{
+    if (!device || !result ||
+        result->status_sample_count >= SVD48_WORKSPACE_HALL_STATUS_SAMPLES_MAX) {
+        return;
+    }
+    svd48_workspace_hall_status_sample_t *sample =
+        &result->status_samples[result->status_sample_count++];
+    sample->elapsed_ms = composition_clock_ms(NULL) - result->started_ms;
+    sample->result = (uint16_t)svd48_device_read_registers(
+        device, status_register, 1U, &sample->value);
+}
+
 static bool workspace_hall_calibrate(
     svd48_workspace_port_t *port,
     uint16_t device_id,
@@ -1734,6 +1797,34 @@ static bool workspace_hall_calibrate(
     result->device_id = device_id;
     result->channel = channel;
     result->address = device->address;
+    result->started_ms = composition_clock_ms(NULL);
+
+    /* The reviewed V2.0 manual gives M2 calibration current as both 0x5605
+     * and 0x5609. Both are safe read-only candidates; neither is written or
+     * treated as canonical until controller evidence resolves the ambiguity. */
+    const uint16_t m1_preflight[] = {0x502CU, 0x5620U, 0x5624U, 0x5684U,
+                                     0x5688U, 0x5640U, 0x5400U, 0x5420U};
+    const uint8_t m1_quantities[] = {1U, 1U, 1U, 1U, 1U, 8U, 1U, 2U};
+    const uint16_t m2_preflight[] = {0x502DU, 0x5621U, 0x5605U, 0x5609U,
+                                     0x5685U, 0x5689U, 0x5650U, 0x5401U,
+                                     0x5422U};
+    const uint8_t m2_quantities[] = {1U, 1U, 1U, 1U, 1U, 1U, 8U, 1U, 2U};
+
+    const bool prior_trace_enabled = slot->svd48.trace_enabled;
+    svd48_device_trace_fn prior_trace = slot->svd48.trace;
+    void *prior_trace_context = slot->svd48.trace_context;
+    svd48_device_set_trace(&slot->svd48, true, workspace_hall_trace_capture, result);
+    const uint16_t *preflight = channel == SVD48_WORKSPACE_CHANNEL_M1
+                                    ? m1_preflight : m2_preflight;
+    const uint8_t *quantities = channel == SVD48_WORKSPACE_CHANNEL_M1
+                                    ? m1_quantities : m2_quantities;
+    const size_t preflight_count = channel == SVD48_WORKSPACE_CHANNEL_M1
+                                       ? sizeof(m1_preflight) / sizeof(m1_preflight[0])
+                                       : sizeof(m2_preflight) / sizeof(m2_preflight[0]);
+    for (size_t index = 0U; index < preflight_count; ++index) {
+        workspace_hall_preflight_read(&slot->svd48, result,
+                                      preflight[index], quantities[index]);
+    }
 
     svd48_hall_calibration_result_t device_result = {0};
     svd48_device_result_t operation_result =
@@ -1749,21 +1840,37 @@ static bool workspace_hall_calibrate(
                                           ? SVD48_DEVICE_OK
                                           : operation_result);
     result->status_read_result = (uint16_t)device_result.status_read_result;
-    result->trace_count = device_result.trace_count;
-    if (result->trace_count > SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS) {
-        result->trace_count = SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS;
+    if (result->write_acknowledged) {
+        result->status_sample_count = 0U;
+        do {
+            workspace_hall_status_sample(&slot->svd48, result,
+                                         result->status_register);
+            const svd48_workspace_hall_status_sample_t *last =
+                &result->status_samples[result->status_sample_count - 1U];
+            if (last->result != SVD48_DEVICE_OK || last->value != 1U ||
+                result->status_sample_count >= SVD48_WORKSPACE_HALL_STATUS_SAMPLES_MAX) {
+                result->status_available = last->result == SVD48_DEVICE_OK;
+                result->status_value = last->value;
+                result->status = workspace_hall_calibration_status_from_device(
+                    last->value == 0U ? SVD48_HALL_CALIBRATION_STATUS_SUCCESS
+                    : last->value == 1U ? SVD48_HALL_CALIBRATION_STATUS_CALIBRATING
+                    : last->value == 2U ? SVD48_HALL_CALIBRATION_STATUS_FAILED
+                                        : SVD48_HALL_CALIBRATION_STATUS_UNKNOWN);
+                result->status_read_result = last->result;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(200U));
+        } while (true);
     }
-    for (uint8_t index = 0U; index < result->trace_count; ++index) {
-        const svd48_hall_calibration_trace_entry_t *source =
-            &device_result.trace[index];
-        svd48_workspace_hall_trace_entry_t *target = &result->trace[index];
-        target->attempt = source->attempt;
-        target->result = (uint16_t)source->result;
-        target->request_length = source->request_length;
-        target->response_length = source->response_length;
-        memcpy(target->request, source->request, sizeof(target->request));
-        memcpy(target->response, source->response, sizeof(target->response));
-    }
+    workspace_hall_preflight_read(&slot->svd48, result,
+                                  channel == SVD48_WORKSPACE_CHANNEL_M1 ? 0x5640U : 0x5650U,
+                                  8U);
+    workspace_hall_preflight_read(&slot->svd48, result,
+                                  channel == SVD48_WORKSPACE_CHANNEL_M1 ? 0x5420U : 0x5422U,
+                                  2U);
+    result->finished_ms = composition_clock_ms(NULL);
+    svd48_device_set_trace(&slot->svd48, prior_trace_enabled, prior_trace,
+                           prior_trace_context);
     return true;
 }
 

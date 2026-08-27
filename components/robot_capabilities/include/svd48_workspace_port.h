@@ -14,9 +14,11 @@ extern "C" {
 #define SVD48_WORKSPACE_CHANNEL_COUNT 2U
 /* Bounded, read-only projection of raw frames emitted by one typed Hall
  * operation. It is deliberately not a general-purpose RS485 command port. */
-#define SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS 7U
+#define SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS 48U
 #define SVD48_WORKSPACE_HALL_TRACE_REQUEST_MAX_BYTES 8U
 #define SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES 64U
+#define SVD48_WORKSPACE_HALL_PREFLIGHT_MAX_READS 10U
+#define SVD48_WORKSPACE_HALL_STATUS_SAMPLES_MAX 26U
 
 typedef enum {
     SVD48_WORKSPACE_CHANNEL_M1 = 0,
@@ -83,13 +85,28 @@ typedef struct {
 } svd48_workspace_channel_telemetry_t;
 
 typedef struct {
+    uint32_t timestamp_ms;
     uint8_t attempt;
+    uint8_t address;
     uint16_t result;
     uint8_t request_length;
     uint8_t request[SVD48_WORKSPACE_HALL_TRACE_REQUEST_MAX_BYTES];
     uint8_t response_length;
     uint8_t response[SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES];
 } svd48_workspace_hall_trace_entry_t;
+
+typedef struct {
+    uint16_t start_register;
+    uint8_t quantity;
+    uint16_t values[8];
+    uint16_t result;
+} svd48_workspace_hall_preflight_read_t;
+
+typedef struct {
+    uint32_t elapsed_ms;
+    uint16_t value;
+    uint16_t result;
+} svd48_workspace_hall_status_sample_t;
 
 /* Result of the typed one-shot Hall calibration request. Acknowledged and
  * status-readable are intentionally separate: an ACK proves only that the
@@ -106,6 +123,14 @@ typedef struct {
     svd48_workspace_hall_calibration_status_t status;
     uint16_t write_result;
     uint16_t status_read_result;
+    uint32_t started_ms;
+    uint32_t finished_ms;
+    uint8_t preflight_count;
+    svd48_workspace_hall_preflight_read_t
+        preflight[SVD48_WORKSPACE_HALL_PREFLIGHT_MAX_READS];
+    uint8_t status_sample_count;
+    svd48_workspace_hall_status_sample_t
+        status_samples[SVD48_WORKSPACE_HALL_STATUS_SAMPLES_MAX];
     uint8_t trace_count;
     svd48_workspace_hall_trace_entry_t
         trace[SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS];

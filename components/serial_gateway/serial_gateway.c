@@ -2649,14 +2649,41 @@ static void print_svd48_hall_calibration_trace(
         bytes_to_hex(entry->request, entry->request_length, tx, sizeof(tx));
         bytes_to_hex(entry->response, entry->response_length, rx, sizeof(rx));
         print_locked(handle,
-                     "DATA SVD48_HALL_TRACE DEVICE_ID:%u CHANNEL:%s INDEX:%u ATTEMPT:%u RESULT:%u TX:%s RX:%s\n",
+                     "DATA SVD48_HALL_TRACE DEVICE_ID:%u CHANNEL:%s TIME_MS:%lu INDEX:%u ATTEMPT:%u RESULT:%u TX:%s RX:%s\n",
                      (unsigned)result->device_id,
                      channel_name((uint8_t)result->channel),
+                     (unsigned long)entry->timestamp_ms,
                      (unsigned)index,
                      (unsigned)entry->attempt,
                      (unsigned)entry->result,
                      tx,
                      rx);
+    }
+}
+
+static void print_svd48_hall_diagnostic_data(
+    serial_gateway_handle_t handle,
+    const svd48_workspace_hall_calibration_result_t *result)
+{
+    for (uint8_t index = 0U; result && index < result->preflight_count; ++index) {
+        const svd48_workspace_hall_preflight_read_t *read = &result->preflight[index];
+        print_locked(handle,
+                     "DATA SVD48_HALL_PREFLIGHT INDEX:%u START_REG:0x%04x COUNT:%u RESULT:%u",
+                     (unsigned)index, read->start_register,
+                     (unsigned)read->quantity, (unsigned)read->result);
+        for (uint8_t value = 0U; value < read->quantity; ++value) {
+            print_locked(handle, " R%u:0x%04x/%u", (unsigned)value,
+                         read->values[value], read->values[value]);
+        }
+        print_locked(handle, "\n");
+    }
+    for (uint8_t index = 0U; result && index < result->status_sample_count; ++index) {
+        const svd48_workspace_hall_status_sample_t *sample =
+            &result->status_samples[index];
+        print_locked(handle,
+                     "DATA SVD48_HALL_STATUS_SAMPLE INDEX:%u ELAPSED_MS:%lu STATUS:%u RESULT:%u\n",
+                     (unsigned)index, (unsigned long)sample->elapsed_ms,
+                     (unsigned)sample->value, (unsigned)sample->result);
     }
 }
 
@@ -2721,6 +2748,7 @@ static void handle_svd48_hall_calibrate(serial_gateway_handle_t handle,
     }
     if (!result.write_acknowledged) {
         print_svd48_hall_calibration_trace(handle, &result);
+        print_svd48_hall_diagnostic_data(handle, &result);
         print_locked(handle,
                      "ERR SVD48_HALL_CALIBRATION_WRITE_FAILED DEVICE_ID:%u CHANNEL:%s ADDRESS:%u TRIGGER_REG:0x%04x WRITE_RESULT:%u\n",
                      (unsigned)result.device_id,
@@ -2732,6 +2760,7 @@ static void handle_svd48_hall_calibrate(serial_gateway_handle_t handle,
     }
 
     print_svd48_hall_calibration_trace(handle, &result);
+    print_svd48_hall_diagnostic_data(handle, &result);
     print_locked(handle,
                  "DATA SVD48_HALL_CALIBRATION DEVICE_ID:%u CHANNEL:%s ADDRESS:%u TRIGGER_REG:0x%04x STATUS_REG:0x%04x WRITE_ACK:1 STATUS_AVAILABLE:%u STATUS:%u STATUS_NAME:%s STATUS_READ_RESULT:%u\n",
                  (unsigned)result.device_id,
