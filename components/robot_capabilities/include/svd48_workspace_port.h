@@ -12,6 +12,11 @@ extern "C" {
 #endif
 
 #define SVD48_WORKSPACE_CHANNEL_COUNT 2U
+/* Bounded, read-only projection of raw frames emitted by one typed Hall
+ * operation. It is deliberately not a general-purpose RS485 command port. */
+#define SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS 7U
+#define SVD48_WORKSPACE_HALL_TRACE_REQUEST_MAX_BYTES 8U
+#define SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES 64U
 
 typedef enum {
     SVD48_WORKSPACE_CHANNEL_M1 = 0,
@@ -77,6 +82,15 @@ typedef struct {
     uint32_t last_exception_ms;
 } svd48_workspace_channel_telemetry_t;
 
+typedef struct {
+    uint8_t attempt;
+    uint16_t result;
+    uint8_t request_length;
+    uint8_t request[SVD48_WORKSPACE_HALL_TRACE_REQUEST_MAX_BYTES];
+    uint8_t response_length;
+    uint8_t response[SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES];
+} svd48_workspace_hall_trace_entry_t;
+
 /* Result of the typed one-shot Hall calibration request. Acknowledged and
  * status-readable are intentionally separate: an ACK proves only that the
  * controller accepted the trigger, not a physical calibration result. */
@@ -92,6 +106,9 @@ typedef struct {
     svd48_workspace_hall_calibration_status_t status;
     uint16_t write_result;
     uint16_t status_read_result;
+    uint8_t trace_count;
+    svd48_workspace_hall_trace_entry_t
+        trace[SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS];
 } svd48_workspace_hall_calibration_result_t;
 
 typedef struct svd48_workspace_port svd48_workspace_port_t;

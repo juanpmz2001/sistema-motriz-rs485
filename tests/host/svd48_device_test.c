@@ -474,6 +474,23 @@ static bool test_hall_calibration_is_one_shot_with_independent_status(void)
     HOST_TEST_CHECK(result.status_value == 1U);
     HOST_TEST_CHECK(result.status == SVD48_HALL_CALIBRATION_STATUS_CALIBRATING);
     HOST_TEST_CHECK(result.status_read_result == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(result.trace_count == 2U);
+    HOST_TEST_CHECK(result.trace[0].attempt == 1U);
+    HOST_TEST_CHECK(result.trace[0].result == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(result.trace[0].request_length == 8U);
+    HOST_TEST_CHECK(result.trace[0].response_length == 8U);
+    HOST_TEST_CHECK(result.trace[0].request[0] == 1U);
+    HOST_TEST_CHECK(result.trace[0].request[1] == SVD48_FUNC_WRITE_SINGLE);
+    HOST_TEST_CHECK(result.trace[0].request[2] == 0x56U);
+    HOST_TEST_CHECK(result.trace[0].request[3] == 0x00U);
+    HOST_TEST_CHECK(memcmp(result.trace[0].request,
+                           result.trace[0].response,
+                           result.trace[0].request_length) == 0);
+    HOST_TEST_CHECK(result.trace[1].request_length == 8U);
+    HOST_TEST_CHECK(result.trace[1].response_length == 7U);
+    HOST_TEST_CHECK(result.trace[1].request[1] == SVD48_FUNC_READ_HOLDING);
+    HOST_TEST_CHECK(result.trace[1].request[2] == 0x56U);
+    HOST_TEST_CHECK(result.trace[1].request[3] == 0x84U);
 
     HOST_TEST_CHECK(svd48_channel_start_hall_calibration(
                         svd48_device_channel(&fixture.device, SVD48_CHANNEL_M2),
@@ -506,6 +523,9 @@ static bool test_hall_calibration_is_one_shot_with_independent_status(void)
     HOST_TEST_CHECK(result.write_acknowledged);
     HOST_TEST_CHECK(!result.status_available);
     HOST_TEST_CHECK(result.status_read_result == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK(result.trace_count == 2U);
+    HOST_TEST_CHECK(result.trace[1].result == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK(result.trace[1].response_length == 0U);
     HOST_TEST_CHECK(fake_bus_transport_call_count(&unverified.bus) == 2U);
     return true;
 }

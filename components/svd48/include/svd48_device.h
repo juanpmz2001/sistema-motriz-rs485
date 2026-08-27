@@ -14,6 +14,11 @@ extern "C" {
 
 #define SVD48_DEVICE_CHANNEL_COUNT 2U
 #define SVD48_DEVICE_MAX_RETRIES 5U
+/* One non-retried Hall trigger plus every allowed retry of its status read. */
+#define SVD48_HALL_CALIBRATION_TRACE_MAX_TRANSACTIONS \
+    (2U + SVD48_DEVICE_MAX_RETRIES)
+#define SVD48_HALL_CALIBRATION_TRACE_REQUEST_MAX_BYTES 8U
+#define SVD48_HALL_CALIBRATION_TRACE_RESPONSE_MAX_BYTES 64U
 
 typedef enum {
     SVD48_CHANNEL_M1 = 0,
@@ -151,6 +156,17 @@ typedef void (*svd48_device_trace_fn)(void *context,
                                      size_t response_length,
                                      svd48_device_result_t result);
 
+/* Bounded raw evidence from exactly one typed Hall calibration operation. The
+ * bytes include the driver's CRC and are not an API for arbitrary frames. */
+typedef struct {
+    uint8_t attempt;
+    svd48_device_result_t result;
+    uint8_t request_length;
+    uint8_t request[SVD48_HALL_CALIBRATION_TRACE_REQUEST_MAX_BYTES];
+    uint8_t response_length;
+    uint8_t response[SVD48_HALL_CALIBRATION_TRACE_RESPONSE_MAX_BYTES];
+} svd48_hall_calibration_trace_entry_t;
+
 typedef struct {
     uint16_t device_id;
     uint8_t address;
@@ -182,6 +198,9 @@ typedef struct {
     uint16_t status_value;
     svd48_hall_calibration_status_t status;
     svd48_device_result_t status_read_result;
+    uint8_t trace_count;
+    svd48_hall_calibration_trace_entry_t
+        trace[SVD48_HALL_CALIBRATION_TRACE_MAX_TRANSACTIONS];
 } svd48_hall_calibration_result_t;
 
 struct svd48_device {
