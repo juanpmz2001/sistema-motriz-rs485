@@ -1,0 +1,3 @@
+# Reproducible Rafa release selection.  This file is only an SDK configuration
+# overlay; it does not authorize OTA deployment or physical actuation.
+CONFIG_BOTFARMS_PROFILE_RAFA=y
