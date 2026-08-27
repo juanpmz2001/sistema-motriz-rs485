@@ -214,6 +214,10 @@ struct svd48_device {
     bool trace_enabled;
     svd48_device_trace_fn trace;
     void *trace_context;
+    /* Short-lived, bounded engineering sink. It is independent of the legacy
+     * console TRACE printer and protected by the device state lock. */
+    svd48_device_trace_fn diagnostic_trace;
+    void *diagnostic_trace_context;
 };
 
 bool svd48_device_init(svd48_device_t *device,
@@ -279,6 +283,9 @@ void svd48_device_set_trace(svd48_device_t *device,
                             bool enabled,
                             svd48_device_trace_fn trace,
                             void *trace_context);
+void svd48_device_set_diagnostic_trace(svd48_device_t *device,
+                                       svd48_device_trace_fn trace,
+                                       void *trace_context);
 
 #ifdef __cplusplus
 }

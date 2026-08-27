@@ -1810,10 +1810,9 @@ static bool workspace_hall_calibrate(
                                      0x5422U};
     const uint8_t m2_quantities[] = {1U, 1U, 1U, 1U, 1U, 1U, 8U, 1U, 2U};
 
-    const bool prior_trace_enabled = slot->svd48.trace_enabled;
-    svd48_device_trace_fn prior_trace = slot->svd48.trace;
-    void *prior_trace_context = slot->svd48.trace_context;
-    svd48_device_set_trace(&slot->svd48, true, workspace_hall_trace_capture, result);
+    svd48_device_set_diagnostic_trace(&slot->svd48,
+                                      workspace_hall_trace_capture,
+                                      result);
     const uint16_t *preflight = channel == SVD48_WORKSPACE_CHANNEL_M1
                                     ? m1_preflight : m2_preflight;
     const uint8_t *quantities = channel == SVD48_WORKSPACE_CHANNEL_M1
@@ -1840,6 +1839,9 @@ static bool workspace_hall_calibrate(
                                           ? SVD48_DEVICE_OK
                                           : operation_result);
     result->status_read_result = (uint16_t)device_result.status_read_result;
+    result->outcome = result->write_acknowledged
+                          ? SVD48_WORKSPACE_HALL_OUTCOME_COMMUNICATION_ERROR
+                          : SVD48_WORKSPACE_HALL_OUTCOME_TRIGGER_NOT_CONFIRMED;
     if (result->write_acknowledged) {
         result->status_sample_count = 0U;
         do {
@@ -1857,6 +1859,13 @@ static bool workspace_hall_calibrate(
                     : last->value == 2U ? SVD48_HALL_CALIBRATION_STATUS_FAILED
                                         : SVD48_HALL_CALIBRATION_STATUS_UNKNOWN);
                 result->status_read_result = last->result;
+                result->outcome = last->result != SVD48_DEVICE_OK
+                                      ? SVD48_WORKSPACE_HALL_OUTCOME_COMMUNICATION_ERROR
+                                      : last->value == 0U
+                                      ? SVD48_WORKSPACE_HALL_OUTCOME_SUCCESS
+                                      : last->value == 2U
+                                      ? SVD48_WORKSPACE_HALL_OUTCOME_FAILED
+                                      : SVD48_WORKSPACE_HALL_OUTCOME_TIMEOUT;
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(200U));
@@ -1869,8 +1878,7 @@ static bool workspace_hall_calibrate(
                                   channel == SVD48_WORKSPACE_CHANNEL_M1 ? 0x5420U : 0x5422U,
                                   2U);
     result->finished_ms = composition_clock_ms(NULL);
-    svd48_device_set_trace(&slot->svd48, prior_trace_enabled, prior_trace,
-                           prior_trace_context);
+    svd48_device_set_diagnostic_trace(&slot->svd48, NULL, NULL);
     return true;
 }
 

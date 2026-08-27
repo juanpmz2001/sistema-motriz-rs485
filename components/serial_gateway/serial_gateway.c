@@ -21,6 +21,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "serial_gateway_policy.h"
+#include "svd48_protocol.h"
 
 static const char *TAG = "serial_gateway";
 
@@ -58,6 +59,9 @@ struct serial_gateway_t {
     bool running;
     bool stream_enabled;
     uint32_t stream_period_ms;
+    bool hall_diagnostic_available;
+    uint32_t hall_diagnostic_id;
+    svd48_workspace_hall_calibration_result_t hall_diagnostic;
 };
 
 static void print_locked(serial_gateway_handle_t handle, const char *fmt, ...)
@@ -2635,55 +2639,94 @@ static void bytes_to_hex(const uint8_t *bytes,
     output[cursor] = '\0';
 }
 
-static void print_svd48_hall_calibration_trace(
-    serial_gateway_handle_t handle,
-    const svd48_workspace_hall_calibration_result_t *result)
+static const char *hall_outcome_name(svd48_workspace_hall_outcome_t outcome)
 {
-    if (!handle || !result) {
-        return;
-    }
-    for (uint8_t index = 0U; index < result->trace_count; ++index) {
-        const svd48_workspace_hall_trace_entry_t *entry = &result->trace[index];
-        char tx[SVD48_WORKSPACE_HALL_TRACE_REQUEST_MAX_BYTES * 2U + 1U];
-        char rx[SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES * 2U + 1U];
-        bytes_to_hex(entry->request, entry->request_length, tx, sizeof(tx));
-        bytes_to_hex(entry->response, entry->response_length, rx, sizeof(rx));
-        print_locked(handle,
-                     "DATA SVD48_HALL_TRACE DEVICE_ID:%u CHANNEL:%s TIME_MS:%lu INDEX:%u ATTEMPT:%u RESULT:%u TX:%s RX:%s\n",
-                     (unsigned)result->device_id,
-                     channel_name((uint8_t)result->channel),
-                     (unsigned long)entry->timestamp_ms,
-                     (unsigned)index,
-                     (unsigned)entry->attempt,
-                     (unsigned)entry->result,
-                     tx,
-                     rx);
+    switch (outcome) {
+    case SVD48_WORKSPACE_HALL_OUTCOME_SUCCESS: return "SUCCESS";
+    case SVD48_WORKSPACE_HALL_OUTCOME_FAILED: return "FAILED";
+    case SVD48_WORKSPACE_HALL_OUTCOME_TIMEOUT: return "TIMEOUT";
+    case SVD48_WORKSPACE_HALL_OUTCOME_COMMUNICATION_ERROR: return "COMMUNICATION_ERROR";
+    default: return "TRIGGER_NOT_CONFIRMED";
     }
 }
 
-static void print_svd48_hall_diagnostic_data(
-    serial_gateway_handle_t handle,
-    const svd48_workspace_hall_calibration_result_t *result)
+static const char *hall_trace_type(const svd48_workspace_hall_trace_entry_t *entry)
 {
-    for (uint8_t index = 0U; result && index < result->preflight_count; ++index) {
-        const svd48_workspace_hall_preflight_read_t *read = &result->preflight[index];
-        print_locked(handle,
-                     "DATA SVD48_HALL_PREFLIGHT INDEX:%u START_REG:0x%04x COUNT:%u RESULT:%u",
-                     (unsigned)index, read->start_register,
-                     (unsigned)read->quantity, (unsigned)read->result);
-        for (uint8_t value = 0U; value < read->quantity; ++value) {
-            print_locked(handle, " R%u:0x%04x/%u", (unsigned)value,
-                         read->values[value], read->values[value]);
-        }
-        print_locked(handle, "\n");
+    if (!entry || entry->request_length < 6U) {
+        return "UNKNOWN";
     }
-    for (uint8_t index = 0U; result && index < result->status_sample_count; ++index) {
-        const svd48_workspace_hall_status_sample_t *sample =
-            &result->status_samples[index];
+    const uint8_t function = entry->request[1];
+    const uint16_t reg = ((uint16_t)entry->request[2] << 8U) | entry->request[3];
+    if (function == SVD48_FUNC_WRITE_SINGLE && (reg == 0x5600U || reg == 0x5601U)) return "HALL_TRIGGER";
+    if (function == SVD48_FUNC_READ_HOLDING && (reg == 0x5684U || reg == 0x5685U)) return "HALL_STATUS_READ";
+    if (function == SVD48_FUNC_WRITE_SINGLE && (reg == 0x5300U || reg == 0x5301U)) return "CONTROL_WRITE";
+    if (function == SVD48_FUNC_WRITE_SINGLE && (reg == 0x5304U || reg == 0x5305U)) return "SPEED_TARGET_WRITE";
+    if (function == SVD48_FUNC_READ_HOLDING && (reg & 0xff00U) == 0x5400U) return "TELEMETRY_POLL";
+    if (function == SVD48_FUNC_READ_HOLDING) return "PARAMETER_READ";
+    if (function == SVD48_FUNC_WRITE_SINGLE || function == SVD48_FUNC_WRITE_MULTI) return "PARAMETER_WRITE";
+    return "UNKNOWN";
+}
+
+static void print_hall_diagnostic_page(serial_gateway_handle_t handle,
+                                       const char *kind,
+                                       uint8_t offset,
+                                       uint8_t count)
+{
+    if (!handle || !handle->hall_diagnostic_available) {
+        print_locked(handle, "ERR SVD48_HALL_DIAG_UNAVAILABLE\n");
+        return;
+    }
+    const svd48_workspace_hall_calibration_result_t *report =
+        &handle->hall_diagnostic;
+    if (strcasecmp(kind, "STATUS") == 0) {
         print_locked(handle,
-                     "DATA SVD48_HALL_STATUS_SAMPLE INDEX:%u ELAPSED_MS:%lu STATUS:%u RESULT:%u\n",
-                     (unsigned)index, (unsigned long)sample->elapsed_ms,
-                     (unsigned)sample->value, (unsigned)sample->result);
+                     "DATA SVD48_HALL_DIAG ID:%lu DEVICE_ID:%u CHANNEL:%s OUTCOME:%s STATUS:%u STATUS_NAME:%s TRACE_COUNT:%u PREFLIGHT_COUNT:%u TIMELINE_COUNT:%u\n",
+                     (unsigned long)handle->hall_diagnostic_id,
+                     (unsigned)report->device_id,
+                     channel_name((uint8_t)report->channel),
+                     hall_outcome_name(report->outcome), (unsigned)report->status_value,
+                     workspace_hall_calibration_status_name(report->status),
+                     (unsigned)report->trace_count, (unsigned)report->preflight_count,
+                     (unsigned)report->status_sample_count);
+        return;
+    }
+    const uint8_t total = strcasecmp(kind, "TRACE") == 0 ? report->trace_count
+                        : strcasecmp(kind, "PREFLIGHT") == 0 ? report->preflight_count
+                        : report->status_sample_count;
+    const uint8_t end = (uint8_t)((offset + count > total) ? total : offset + count);
+    print_locked(handle, "DATA SVD48_HALL_DIAG_PAGE ID:%lu KIND:%s OFFSET:%u COUNT:%u TOTAL:%u\n",
+                 (unsigned long)handle->hall_diagnostic_id, kind,
+                 (unsigned)offset, (unsigned)(end > offset ? end - offset : 0U),
+                 (unsigned)total);
+    if (strcasecmp(kind, "TRACE") == 0) {
+        for (uint8_t index = offset; index < end; ++index) {
+            const svd48_workspace_hall_trace_entry_t *entry = &report->trace[index];
+            char tx[17], rx[129];
+            bytes_to_hex(entry->request, entry->request_length, tx, sizeof(tx));
+            bytes_to_hex(entry->response, entry->response_length, rx, sizeof(rx));
+            const uint16_t reg = entry->request_length >= 4U ?
+                ((uint16_t)entry->request[2] << 8U) | entry->request[3] : 0U;
+            const bool crc_valid = entry->response_length >= 5U &&
+                svd48_frame_has_valid_crc(entry->response, entry->response_length);
+            print_locked(handle, "DATA SVD48_HALL_TRACE ID:%lu INDEX:%u TIME_MS:%lu ATTEMPT:%u TYPE:%s FUNC:0x%02x REG:0x%04x RESULT:%u RX_CRC:%s TX:%s RX:%s\n", (unsigned long)handle->hall_diagnostic_id, (unsigned)index, (unsigned long)entry->timestamp_ms, (unsigned)entry->attempt, hall_trace_type(entry), entry->request_length >= 2U ? entry->request[1] : 0U, reg, (unsigned)entry->result, entry->response_length == 0U ? "NONE" : crc_valid ? "VALID" : "INVALID", tx, rx);
+        }
+    } else if (strcasecmp(kind, "PREFLIGHT") == 0) {
+        for (uint8_t index = offset; index < end; ++index) {
+            const svd48_workspace_hall_preflight_read_t *read =
+                &report->preflight[index];
+            print_locked(handle,
+                         "DATA SVD48_HALL_PREFLIGHT ID:%lu INDEX:%u START_REG:0x%04x COUNT:%u RESULT:%u",
+                         (unsigned long)handle->hall_diagnostic_id,
+                         (unsigned)index, read->start_register,
+                         (unsigned)read->quantity, (unsigned)read->result);
+            for (uint8_t value = 0U; value < read->quantity; ++value) {
+                print_locked(handle, " R%u:0x%04x/%u", (unsigned)value,
+                             read->values[value], read->values[value]);
+            }
+            print_locked(handle, "\n");
+        }
+    } else if (strcasecmp(kind, "TIMELINE") == 0) {
+        for (uint8_t index = offset; index < end; ++index) { const svd48_workspace_hall_status_sample_t *s=&report->status_samples[index]; print_locked(handle, "DATA SVD48_HALL_STATUS_SAMPLE ID:%lu INDEX:%u ELAPSED_MS:%lu STATUS:%u RESULT:%u\n", (unsigned long)handle->hall_diagnostic_id, (unsigned)index, (unsigned long)s->elapsed_ms, (unsigned)s->value, (unsigned)s->result); }
     }
 }
 
@@ -2746,37 +2789,28 @@ static void handle_svd48_hall_calibrate(serial_gateway_handle_t handle,
                      channel_name((uint8_t)channel_id));
         return;
     }
-    if (!result.write_acknowledged) {
-        print_svd48_hall_calibration_trace(handle, &result);
-        print_svd48_hall_diagnostic_data(handle, &result);
-        print_locked(handle,
-                     "ERR SVD48_HALL_CALIBRATION_WRITE_FAILED DEVICE_ID:%u CHANNEL:%s ADDRESS:%u TRIGGER_REG:0x%04x WRITE_RESULT:%u\n",
-                     (unsigned)result.device_id,
-                     channel_name((uint8_t)result.channel),
-                     (unsigned)result.address,
-                     result.trigger_register,
-                     (unsigned)result.write_result);
-        return;
-    }
-
-    print_svd48_hall_calibration_trace(handle, &result);
-    print_svd48_hall_diagnostic_data(handle, &result);
+    handle->hall_diagnostic = result;
+    handle->hall_diagnostic_available = true;
+    handle->hall_diagnostic_id++;
     print_locked(handle,
-                 "DATA SVD48_HALL_CALIBRATION DEVICE_ID:%u CHANNEL:%s ADDRESS:%u TRIGGER_REG:0x%04x STATUS_REG:0x%04x WRITE_ACK:1 STATUS_AVAILABLE:%u STATUS:%u STATUS_NAME:%s STATUS_READ_RESULT:%u\n",
+                 "DATA SVD48_HALL_CALIBRATION DIAGNOSTIC_ID:%lu DEVICE_ID:%u CHANNEL:%s ADDRESS:%u TRIGGER_REG:0x%04x STATUS_REG:0x%04x WRITE_ACK:%u STATUS_AVAILABLE:%u STATUS:%u STATUS_NAME:%s STATUS_READ_RESULT:%u OUTCOME:%s TRACE_COUNT:%u PREFLIGHT_COUNT:%u TIMELINE_COUNT:%u\n",
+                 (unsigned long)handle->hall_diagnostic_id,
                  (unsigned)result.device_id,
                  channel_name((uint8_t)result.channel),
                  (unsigned)result.address,
-                 result.trigger_register,
+                 result.trigger_register, result.write_acknowledged ? 1U : 0U,
                  result.status_register,
                  result.status_available ? 1U : 0U,
                  (unsigned)result.status_value,
                  workspace_hall_calibration_status_name(result.status),
-                 (unsigned)result.status_read_result);
+                 (unsigned)result.status_read_result, hall_outcome_name(result.outcome),
+                 (unsigned)result.trace_count, (unsigned)result.preflight_count,
+                 (unsigned)result.status_sample_count);
     print_locked(handle,
                  "OK SVD48_HALL_CALIBRATION DEVICE_ID:%u CHANNEL:%s OUTCOME:%s\n",
                  (unsigned)result.device_id,
                  channel_name((uint8_t)result.channel),
-                 result.status_available ? "ACKED" : "ACKED_UNVERIFIED");
+                 hall_outcome_name(result.outcome));
 }
 
 typedef enum {
@@ -4139,6 +4173,22 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_get_svd48_channel_telemetry(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SVD48_HALL_CALIBRATE") == 0) {
         handle_svd48_hall_calibrate(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "SVD48_HALL_DIAG") == 0) {
+        uint32_t offset = 0U, count = 0U;
+        if (argc == 2 && strcasecmp(argv[1], "STATUS") == 0) {
+            print_hall_diagnostic_page(handle, "STATUS", 0U, 0U);
+        } else if (argc == 4 &&
+                   (strcasecmp(argv[1], "TRACE") == 0 ||
+                    strcasecmp(argv[1], "TIMELINE") == 0 ||
+                    strcasecmp(argv[1], "PREFLIGHT") == 0) &&
+                   parse_u32_any_arg(argv[2], &offset) &&
+                   parse_u32_any_arg(argv[3], &count) && offset <= UINT8_MAX &&
+                   count > 0U && count <= 4U) {
+            print_hall_diagnostic_page(handle, argv[1], (uint8_t)offset,
+                                       (uint8_t)count);
+        } else {
+            print_locked(handle, "ERR USAGE SVD48_HALL_DIAG STATUS|TRACE|PREFLIGHT|TIMELINE offset count\n");
+        }
     } else if (strcasecmp(argv[0], "SVD48_BENCH_SET_SPEED_PAIR") == 0) {
         handle_svd48_bench_set_speed_pair(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SVD48_BENCH_SET_SPEED") == 0) {

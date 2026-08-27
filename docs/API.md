@@ -34,7 +34,7 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
-| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP`, `SVD48_HALL_CALIBRATE` |
+| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP`, `SVD48_HALL_CALIBRATE`, `SVD48_HALL_DIAG` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -135,24 +135,32 @@ not a generic `WRITE_REG` transaction. Acknowledged replies include the command 
 status registers without claiming a mechanical result:
 
 ```text
-DATA SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> ADDRESS:<1..247> TRIGGER_REG:0x<hex> STATUS_REG:0x<hex> WRITE_ACK:<0|1> STATUS_AVAILABLE:<0|1> STATUS:<n|0> STATUS_NAME:<SUCCESS|CALIBRATING|FAILED|UNKNOWN> STATUS_READ_RESULT:<result>
-OK SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> OUTCOME:<ACKED|ACKED_UNVERIFIED>
+DATA SVD48_HALL_CALIBRATION DIAGNOSTIC_ID:<id> DEVICE_ID:<id> CHANNEL:<M1|M2> ADDRESS:<1..247> TRIGGER_REG:0x<hex> STATUS_REG:0x<hex> WRITE_ACK:<0|1> STATUS_AVAILABLE:<0|1> STATUS:<n|0> STATUS_NAME:<SUCCESS|CALIBRATING|FAILED|UNKNOWN> STATUS_READ_RESULT:<result> OUTCOME:<SUCCESS|FAILED|TIMEOUT|COMMUNICATION_ERROR|TRIGGER_NOT_CONFIRMED> TRACE_COUNT:<n> PREFLIGHT_COUNT:<n> TIMELINE_COUNT:<n>
+OK SVD48_HALL_CALIBRATION DEVICE_ID:<id> CHANNEL:<M1|M2> OUTCOME:<...>
 ```
 
-Before that summary, the firmware emits zero or more bounded diagnostic lines for
-that same one-shot operation:
+The calibration reply is deliberately small. The firmware retains one bounded report
+for that `DIAGNOSTIC_ID`; read-only Maintenance LAN retrieves it in pages of at most
+four entries:
 
 ```text
-DATA SVD48_HALL_TRACE DEVICE_ID:<id> CHANNEL:<M1|M2> INDEX:<n> ATTEMPT:<n> RESULT:<driver-result> TX:<uppercase-hex|-> RX:<uppercase-hex|->
+SVD48_HALL_DIAG STATUS
+SVD48_HALL_DIAG TRACE <offset> <1..4>
+SVD48_HALL_DIAG PREFLIGHT <offset> <1..4>
+SVD48_HALL_DIAG TIMELINE <offset> <1..4>
 ```
 
-`TX` and `RX` are the literal RS485 request/response bytes observed by the driver,
+Trace pages include literal `TX` and `RX` bytes observed by the driver,
 including the driver's CRC. They are evidence for this typed Hall flow only: the
 command does not accept an operator-supplied hex frame, does not expose a general
 RS485 passthrough, and a missing `RX` is represented by `-`.
 
 `STATUS` is controller evidence only: `0=SUCCESS`, `1=CALIBRATING`, `2=FAILED`, and
-any other value is `UNKNOWN`. The trigger is not retried after an ambiguous transport
+any other value is `UNKNOWN`; `OUTCOME` is the separate bounded lifecycle result.
+Thus `STATUS_NAME:CALIBRATING` with `OUTCOME:TIMEOUT` is valid evidence, not a failed
+controller status. The firmware uses a conservative engineering window of at most 26
+status samples separated by 200 ms because the manual does not specify timing. The
+trigger is not retried after an ambiguous transport
 result, is never sent through Parameter Lab's original-read/write/readback workflow,
 and does not issue `SAVE_SVD48_CONFIG`.
 

@@ -32,6 +32,14 @@ typedef enum {
     SVD48_WORKSPACE_HALL_CALIBRATION_STATUS_FAILED,
 } svd48_workspace_hall_calibration_status_t;
 
+typedef enum {
+    SVD48_WORKSPACE_HALL_OUTCOME_TRIGGER_NOT_CONFIRMED = 0,
+    SVD48_WORKSPACE_HALL_OUTCOME_SUCCESS,
+    SVD48_WORKSPACE_HALL_OUTCOME_FAILED,
+    SVD48_WORKSPACE_HALL_OUTCOME_TIMEOUT,
+    SVD48_WORKSPACE_HALL_OUTCOME_COMMUNICATION_ERROR,
+} svd48_workspace_hall_outcome_t;
+
 /* Device-specific read DTOs for the maintenance workspace. They preserve the
  * build-selected profile identity without exposing robot_profile to transport
  * handlers. This is an internal source-level port, not a stable binary ABI. */
@@ -121,6 +129,7 @@ typedef struct {
     bool status_available;
     uint16_t status_value;
     svd48_workspace_hall_calibration_status_t status;
+    svd48_workspace_hall_outcome_t outcome;
     uint16_t write_result;
     uint16_t status_read_result;
     uint32_t started_ms;

@@ -25,6 +25,38 @@ typedef struct {
     bool done;
 } poll_worker_t;
 
+typedef struct {
+    pthread_mutex_t lock;
+    uint8_t count;
+    uint8_t first_request[8];
+    size_t first_request_length;
+    uint8_t first_response[64];
+    size_t first_response_length;
+} diagnostic_trace_sink_t;
+
+static void diagnostic_trace_capture(void *context,
+                                     uint16_t device_id,
+                                     uint8_t address,
+                                     uint8_t attempt,
+                                     const uint8_t *request,
+                                     size_t request_length,
+                                     const uint8_t *response,
+                                     size_t response_length,
+                                     svd48_device_result_t result)
+{
+    diagnostic_trace_sink_t *sink = context;
+    if (!sink || !request || !response) return;
+    pthread_mutex_lock(&sink->lock);
+    if (sink->count++ == 0U) {
+        sink->first_request_length = request_length;
+        sink->first_response_length = response_length;
+        memcpy(sink->first_request, request, request_length);
+        memcpy(sink->first_response, response, response_length);
+    }
+    pthread_mutex_unlock(&sink->lock);
+    (void)device_id; (void)address; (void)attempt; (void)result;
+}
+
 static void append_crc(uint8_t *frame, size_t payload_length)
 {
     uint16_t crc = svd48_crc16_uumotor(frame, payload_length);
@@ -527,6 +559,32 @@ static bool test_hall_calibration_is_one_shot_with_independent_status(void)
     HOST_TEST_CHECK(result.trace[1].result == SVD48_DEVICE_TIMEOUT);
     HOST_TEST_CHECK(result.trace[1].response_length == 0U);
     HOST_TEST_CHECK(fake_bus_transport_call_count(&unverified.bus) == 2U);
+    return true;
+}
+
+static bool test_diagnostic_trace_captures_real_crc_frames_with_bounded_sink(void)
+{
+    device_fixture_t fixture;
+    diagnostic_trace_sink_t sink = {0};
+    HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
+    HOST_TEST_CHECK(pthread_mutex_init(&sink.lock, NULL) == 0);
+    HOST_TEST_CHECK(queue_write_single_result(&fixture.bus, 1U, 0x5304U, 7U,
+                                             BUS_TRANSPORT_OK, true));
+    svd48_device_set_diagnostic_trace(&fixture.device,
+                                      diagnostic_trace_capture, &sink);
+    HOST_TEST_CHECK(svd48_channel_set_target_rpm(
+                        svd48_device_channel(&fixture.device, SVD48_CHANNEL_M1), 7) ==
+                    SVD48_DEVICE_OK);
+    svd48_device_set_diagnostic_trace(&fixture.device, NULL, NULL);
+    HOST_TEST_CHECK(sink.count == 1U);
+    HOST_TEST_CHECK(sink.first_request_length == 8U);
+    HOST_TEST_CHECK(sink.first_response_length == 8U);
+    HOST_TEST_CHECK(svd48_frame_has_valid_crc(sink.first_request,
+                                               sink.first_request_length));
+    HOST_TEST_CHECK(svd48_frame_has_valid_crc(sink.first_response,
+                                               sink.first_response_length));
+    HOST_TEST_CHECK(memcmp(sink.first_request, sink.first_response, 8U) == 0);
+    pthread_mutex_destroy(&sink.lock);
     return true;
 }
 
@@ -1129,6 +1187,7 @@ int main(void)
         HOST_TEST_CASE(test_m1_m2_target_rpm_framing),
         HOST_TEST_CASE(test_enable_stop_clear_and_current_framing),
         HOST_TEST_CASE(test_hall_calibration_is_one_shot_with_independent_status),
+        HOST_TEST_CASE(test_diagnostic_trace_captures_real_crc_frames_with_bounded_sink),
         HOST_TEST_CASE(test_retry_is_bounded_and_only_for_retryable_results),
         HOST_TEST_CASE(test_timeout_retry_can_recover),
         HOST_TEST_CASE(test_generic_writes_are_not_retried),

@@ -278,7 +278,21 @@ static svd48_device_result_t transact(svd48_device_t *device,
                                       request_length,
                                       response,
                                       *response_length,
-                                      last_result);
+                          last_result);
+        }
+        /* A diagnostic sink is deliberately called under the short state lock:
+         * it copies only this completed transaction and setter/restorer cannot
+         * invalidate its context while a poll task is reporting it. */
+        if (lock_state(device)) {
+            if (device->diagnostic_trace) {
+                device->diagnostic_trace(device->diagnostic_trace_context,
+                                         device->config.device_id,
+                                         device->config.address,
+                                         (uint8_t)(attempt + 1U), request,
+                                         request_length, response,
+                                         *response_length, last_result);
+            }
+            unlock_state(device);
         }
         if (last_result == SVD48_DEVICE_OK && valid_crc) {
             return SVD48_DEVICE_OK;
@@ -1181,4 +1195,16 @@ void svd48_device_set_trace(svd48_device_t *device,
     device->trace_enabled = enabled;
     device->trace = trace;
     device->trace_context = trace_context;
+}
+
+void svd48_device_set_diagnostic_trace(svd48_device_t *device,
+                                       svd48_device_trace_fn trace,
+                                       void *trace_context)
+{
+    if (!device || !device->initialized || !lock_state(device)) {
+        return;
+    }
+    device->diagnostic_trace = trace;
+    device->diagnostic_trace_context = trace_context;
+    unlock_state(device);
 }
