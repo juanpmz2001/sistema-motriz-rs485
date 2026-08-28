@@ -2667,6 +2667,141 @@ static const char *hall_trace_type(const svd48_workspace_hall_trace_entry_t *ent
     return "UNKNOWN";
 }
 
+static const char *stop_diagnostic_state_name(
+    svd48_workspace_stop_diagnostic_state_t state)
+{
+    switch (state) {
+    case SVD48_WORKSPACE_STOP_DIAG_ARMED: return "ARMED";
+    case SVD48_WORKSPACE_STOP_DIAG_CAPTURING: return "CAPTURING";
+    case SVD48_WORKSPACE_STOP_DIAG_COMPLETE: return "COMPLETE";
+    default: return "UNAVAILABLE";
+    }
+}
+
+static const char *stop_trace_type_name(svd48_workspace_stop_trace_type_t type)
+{
+    switch (type) {
+    case SVD48_WORKSPACE_STOP_TRACE_M1_TARGET_ZERO: return "M1_TARGET_ZERO";
+    case SVD48_WORKSPACE_STOP_TRACE_M1_STOP: return "M1_STOP";
+    case SVD48_WORKSPACE_STOP_TRACE_M2_TARGET_ZERO: return "M2_TARGET_ZERO";
+    case SVD48_WORKSPACE_STOP_TRACE_M2_STOP: return "M2_STOP";
+    case SVD48_WORKSPACE_STOP_TRACE_CONTROL_WRITE: return "CONTROL_WRITE";
+    case SVD48_WORKSPACE_STOP_TRACE_SPEED_TARGET_WRITE: return "SPEED_TARGET_WRITE";
+    case SVD48_WORKSPACE_STOP_TRACE_TELEMETRY_READ: return "TELEMETRY_READ";
+    default: return "OTHER";
+    }
+}
+
+static const char *stop_observation_point_name(
+    svd48_workspace_stop_observation_point_t point)
+{
+    switch (point) {
+    case SVD48_WORKSPACE_STOP_OBSERVATION_BEFORE_STOP: return "BEFORE_STOP";
+    case SVD48_WORKSPACE_STOP_OBSERVATION_IMMEDIATE_AFTER_STOP: return "IMMEDIATE_AFTER_STOP";
+    case SVD48_WORKSPACE_STOP_OBSERVATION_AFTER_FIRST_FRESH_POLL: return "AFTER_FIRST_FRESH_POLL";
+    default: return "FINAL";
+    }
+}
+
+static const char *stop_platform_state_name(uint8_t state)
+{
+    return state == 2U ? "FAULT" : state == 1U ? "MOTION_ACTIVE" : "SAFE_IDLE";
+}
+
+static void print_stop_diagnostic_page(serial_gateway_handle_t handle,
+                                       const char *kind,
+                                       uint8_t offset,
+                                       uint8_t count)
+{
+    svd48_workspace_stop_diagnostic_result_t report = {0};
+    if (!handle || !svd48_workspace_stop_diagnostic_get(
+                       handle->config.svd48_workspace, &report)) {
+        print_locked(handle, "ERR STOP_DIAG_UNAVAILABLE\n");
+        return;
+    }
+    if (strcasecmp(kind, "STATUS") == 0) {
+        print_locked(handle,
+                     "DATA STOP_DIAG ID:%lu STATE:%s DEVICE_ID:%u ADDRESS:%u TRACE_COUNT:%u OBSERVATION_COUNT:%u POST_WINDOW_MS:%lu ARMED_MS:%lu STOP_STARTED_MS:%lu STOP_FINISHED_MS:%lu COMPLETED_MS:%lu\n",
+                     (unsigned long)report.id, stop_diagnostic_state_name(report.state),
+                     (unsigned)report.device_id, (unsigned)report.address,
+                     (unsigned)report.trace_count, (unsigned)report.observation_count,
+                     (unsigned long)report.post_window_ms,
+                     (unsigned long)report.armed_ms,
+                     (unsigned long)report.stop_started_ms,
+                     (unsigned long)report.stop_finished_ms,
+                     (unsigned long)report.completed_ms);
+        return;
+    }
+    const uint8_t total = strcasecmp(kind, "TRACE") == 0 ? report.trace_count
+                                                           : report.observation_count;
+    const uint8_t end = (uint8_t)((offset + count > total) ? total : offset + count);
+    print_locked(handle,
+                 "DATA STOP_DIAG_PAGE ID:%lu KIND:%s OFFSET:%u COUNT:%u TOTAL:%u\n",
+                 (unsigned long)report.id, kind, (unsigned)offset,
+                 (unsigned)(end > offset ? end - offset : 0U), (unsigned)total);
+    if (strcasecmp(kind, "TRACE") == 0) {
+        for (uint8_t index = offset; index < end; ++index) {
+            const svd48_workspace_stop_trace_entry_t *entry = &report.trace[index];
+            char tx[17], rx[129];
+            bytes_to_hex(entry->request, entry->request_length, tx, sizeof(tx));
+            bytes_to_hex(entry->response, entry->response_length, rx, sizeof(rx));
+            const uint16_t reg = entry->request_length >= 4U
+                                     ? ((uint16_t)entry->request[2] << 8U) | entry->request[3]
+                                     : 0U;
+            const uint16_t value = entry->request_length >= 6U
+                                       ? ((uint16_t)entry->request[4] << 8U) | entry->request[5]
+                                       : 0U;
+            const bool crc_valid = entry->response_length >= 5U &&
+                svd48_frame_has_valid_crc(entry->response, entry->response_length);
+            const bool exception = entry->response_length >= 3U &&
+                (entry->response[1] & 0x80U) != 0U;
+            print_locked(handle,
+                         "DATA STOP_DIAG_TRACE ID:%lu INDEX:%u TIME_MS:%lu DEVICE_ID:%u ADDRESS:%u ATTEMPT:%u TYPE:%s FUNC:0x%02x REG:0x%04x VALUE:0x%04x RESULT:%u RX_CRC:%s EXC_FUNC:0x%02x EXC_CODE:0x%02x TX:%s RX:%s\n",
+                         (unsigned long)report.id, (unsigned)index,
+                         (unsigned long)entry->timestamp_ms, (unsigned)entry->device_id,
+                         (unsigned)entry->address, (unsigned)entry->attempt,
+                         stop_trace_type_name(entry->type),
+                         entry->request_length >= 2U ? entry->request[1] : 0U,
+                         reg, value, (unsigned)entry->result,
+                         entry->response_length == 0U ? "NONE" : crc_valid ? "VALID" : "INVALID",
+                         exception ? entry->response[1] : 0U,
+                         exception ? entry->response[2] : 0U, tx, rx);
+        }
+    } else {
+        for (uint8_t index = offset; index < end; ++index) {
+            const svd48_workspace_stop_observation_t *o = &report.observations[index];
+            print_locked(handle,
+                         "DATA STOP_DIAG_OBSERVATION ID:%lu INDEX:%u TIME_MS:%lu POINT:%s FRESH_POLL:%u M1_STATUS:%d M1_RPM:%d M1_ONLINE:%u M1_STALE:%u M1_HEALTH:%s M1_ERROR:0x%08lx M1_POLL_MS:%lu M2_STATUS:%d M2_RPM:%d M2_ONLINE:%u M2_STALE:%u M2_HEALTH:%s M2_ERROR:0x%08lx M2_POLL_MS:%lu PLATFORM_STATE:%s MOTION_ACTIVE:%u\n",
+                         (unsigned long)report.id, (unsigned)index,
+                         (unsigned long)o->timestamp_ms, stop_observation_point_name(o->point),
+                         o->fresh_poll_observation ? 1U : 0U,
+                         o->m1.status, o->m1.observed_speed_rpm, o->m1.online ? 1U : 0U,
+                         o->m1.stale ? 1U : 0U, endpoint_health_name(o->m1.health),
+                         (unsigned long)o->m1.error_code, (unsigned long)o->m1.last_poll_ms,
+                         o->m2.status, o->m2.observed_speed_rpm, o->m2.online ? 1U : 0U,
+                         o->m2.stale ? 1U : 0U, endpoint_health_name(o->m2.health),
+                         (unsigned long)o->m2.error_code, (unsigned long)o->m2.last_poll_ms,
+                         stop_platform_state_name(o->platform_state), o->motion_active ? 1U : 0U);
+        }
+    }
+}
+
+static void handle_stop_diagnostic_arm(serial_gateway_handle_t handle,
+                                       int argc, char *argv[])
+{
+    (void)argv;
+    uint32_t id = 0U;
+    if (argc != 1) {
+        print_locked(handle, "ERR USAGE STOP_DIAG_ARM\n");
+    } else if (!svd48_workspace_stop_diagnostic_arm(handle->config.svd48_workspace,
+                                                     &id)) {
+        print_locked(handle, "ERR STOP_DIAG_ARM_FAILED\n");
+    } else {
+        /* Arming is intentionally observation-only: it sends no RS485 frame. */
+        print_locked(handle, "OK STOP_DIAG_ARM ID:%lu\n", (unsigned long)id);
+    }
+}
+
 static void print_hall_diagnostic_page(serial_gateway_handle_t handle,
                                        const char *kind,
                                        uint8_t offset,
@@ -3915,6 +4050,16 @@ static void handle_stop(serial_gateway_handle_t handle, int argc, char *argv[])
     }
 
     if (strcasecmp(argv[1], "ALL") == 0) {
+        /* The typed diagnostic observes this exact pre-existing command.  It
+         * neither changes the stop implementation nor adds a verification
+         * wait/retry to the physical path. */
+        svd48_workspace_stop_diagnostic_result_t diagnostic = {0};
+        const bool diagnostic_armed =
+            svd48_workspace_stop_diagnostic_get(handle->config.svd48_workspace,
+                                                &diagnostic) &&
+            diagnostic.state == SVD48_WORKSPACE_STOP_DIAG_ARMED &&
+            svd48_workspace_stop_diagnostic_before_stop(
+                handle->config.svd48_workspace, diagnostic.id);
         char motion_detail[MOTION_STATUS_DETAIL_MAX] = {0};
         bool control_stopped = !handle->config.motion_control ||
                                motion_control_stop_all(
@@ -3922,6 +4067,10 @@ static void handle_stop(serial_gateway_handle_t handle, int argc, char *argv[])
                                    motion_detail,
                                    sizeof(motion_detail));
         esp_err_t err = actuation_application_stop_all(handle->config.actuation) == ACTUATION_APPLICATION_OK ? ESP_OK : ESP_FAIL;
+        if (diagnostic_armed) {
+            svd48_workspace_stop_diagnostic_after_stop(
+                handle->config.svd48_workspace, diagnostic.id);
+        }
         if (err != ESP_OK) {
             print_locked(handle, "ERR STOP_FAILED 0x%x\n", err);
         } else if (!control_stopped) {
@@ -4188,6 +4337,23 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
                                        (uint8_t)count);
         } else {
             print_locked(handle, "ERR USAGE SVD48_HALL_DIAG STATUS|TRACE|PREFLIGHT|TIMELINE offset count\n");
+        }
+    } else if (strcasecmp(argv[0], "STOP_DIAG_ARM") == 0) {
+        handle_stop_diagnostic_arm(handle, argc, argv);
+    } else if (strcasecmp(argv[0], "STOP_DIAG") == 0) {
+        uint32_t offset = 0U, count = 0U;
+        if (argc == 2 && strcasecmp(argv[1], "STATUS") == 0) {
+            print_stop_diagnostic_page(handle, "STATUS", 0U, 0U);
+        } else if (argc == 4 &&
+                   (strcasecmp(argv[1], "TRACE") == 0 ||
+                    strcasecmp(argv[1], "OBSERVATIONS") == 0) &&
+                   parse_u32_any_arg(argv[2], &offset) &&
+                   parse_u32_any_arg(argv[3], &count) && offset <= UINT8_MAX &&
+                   count > 0U && count <= 4U) {
+            print_stop_diagnostic_page(handle, argv[1], (uint8_t)offset,
+                                       (uint8_t)count);
+        } else {
+            print_locked(handle, "ERR USAGE STOP_DIAG STATUS|TRACE|OBSERVATIONS offset count\n");
         }
     } else if (strcasecmp(argv[0], "SVD48_BENCH_SET_SPEED_PAIR") == 0) {
         handle_svd48_bench_set_speed_pair(handle, argc, argv);

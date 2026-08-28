@@ -344,6 +344,13 @@ static bool test_gateway_lan_maintenance_policy(void)
     const char *hall_diag_status[] = {"SVD48_HALL_DIAG", "STATUS"};
     const char *hall_diag_trace[] = {"SVD48_HALL_DIAG", "TRACE", "0", "4"};
     const char *hall_diag_bad[] = {"SVD48_HALL_DIAG", "TRACE", "0"};
+    const char *stop_diag_arm[] = {"STOP_DIAG_ARM"};
+    const char *stop_diag_status[] = {"STOP_DIAG", "STATUS"};
+    const char *stop_diag_trace[] = {"STOP_DIAG", "TRACE", "0", "4"};
+    const char *stop_diag_observations[] = {"STOP_DIAG", "OBSERVATIONS", "0", "4"};
+    const char *stop_diag_bad_page[] = {"STOP_DIAG", "TRACE", "0", "5"};
+    const char *trace_on[] = {"TRACE", "ON"};
+    const char *raw_frame[] = {"RAW_MODBUS", "020653040000"};
 
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(3, read_one));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, read_many));
@@ -396,6 +403,15 @@ static bool test_gateway_lan_maintenance_policy(void)
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, hall_diag_status));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, hall_diag_trace));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, hall_diag_bad));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(1, stop_diag_arm));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, stop_diag_status));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, stop_diag_trace));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, stop_diag_observations));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, stop_diag_bad_page));
+    /* Shape validation remains in the command handler; policy never exposes
+     * generic trace or a raw Modbus/frame escape hatch. */
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, trace_on));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(2, raw_frame));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(0, NULL));
     return true;
 }

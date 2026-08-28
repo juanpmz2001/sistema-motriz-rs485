@@ -94,6 +94,13 @@ typedef struct {
 } robot_composition_steering_task_t;
 
 typedef struct {
+    TaskHandle_t task;
+    StaticSemaphore_t lock_storage;
+    SemaphoreHandle_t lock;
+    svd48_workspace_stop_diagnostic_result_t report;
+} robot_composition_stop_diagnostic_t;
+
+typedef struct {
     robot_endpoint_registry_t registry;
     actuation_coordinator_t coordinator;
     svd48_channel_endpoint_adapter_t adapters[ROBOT_PROFILE_MAX_ENDPOINTS];
@@ -124,6 +131,7 @@ typedef struct {
     svd48_poll_service_t polling_service;
     svd48_poll_task_t polling_task;
     robot_composition_steering_task_t steering_task;
+    robot_composition_stop_diagnostic_t stop_diagnostic;
     svd48_handle_t legacy_svd48;
     StaticSemaphore_t coordinator_lock_storage;
     SemaphoreHandle_t coordinator_lock;

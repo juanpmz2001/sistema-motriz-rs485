@@ -17,6 +17,9 @@
 #define RS485_BUS_LOCK_TIMEOUT_MS 1000U
 #define I2C_BUS_LOCK_TIMEOUT_MS 100U
 #define I2C_EDGE_TIMEOUT_US 1000U
+#define STOP_DIAGNOSTIC_TASK_STACK_SIZE 3072U
+#define STOP_DIAGNOSTIC_TASK_PRIORITY 5U
+#define STOP_DIAGNOSTIC_OBSERVATION_PERIOD_MS 20U
 
 static const char *TAG = "robot_composition";
 
@@ -1882,11 +1885,337 @@ static bool workspace_hall_calibrate(
     return true;
 }
 
+static robot_composition_device_slot_t *workspace_stop_diagnostic_slot(
+    robot_composition_t *composition)
+{
+    if (!composition) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < ROBOT_PROFILE_MAX_DEVICES; ++index) {
+        robot_composition_device_slot_t *slot = &composition->devices[index];
+        if (slot->used && slot->started) {
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static svd48_workspace_stop_trace_type_t workspace_stop_trace_type(
+    const uint8_t *request, size_t request_length)
+{
+    if (!request || request_length < 2U) {
+        return SVD48_WORKSPACE_STOP_TRACE_OTHER;
+    }
+    const uint8_t function = request[1];
+    if (function == 0x03U && request_length >= 6U && request[2] == 0x54U) {
+        return SVD48_WORKSPACE_STOP_TRACE_TELEMETRY_READ;
+    }
+    if (function != 0x06U || request_length < 6U) {
+        return SVD48_WORKSPACE_STOP_TRACE_OTHER;
+    }
+    const uint16_t reg = ((uint16_t)request[2] << 8U) | request[3];
+    const uint16_t value = ((uint16_t)request[4] << 8U) | request[5];
+    if (reg == 0x5304U) {
+        return value == 0U ? SVD48_WORKSPACE_STOP_TRACE_M1_TARGET_ZERO
+                           : SVD48_WORKSPACE_STOP_TRACE_SPEED_TARGET_WRITE;
+    }
+    if (reg == 0x5305U) {
+        return value == 0U ? SVD48_WORKSPACE_STOP_TRACE_M2_TARGET_ZERO
+                           : SVD48_WORKSPACE_STOP_TRACE_SPEED_TARGET_WRITE;
+    }
+    if (reg == 0x5300U) {
+        return value == 0U ? SVD48_WORKSPACE_STOP_TRACE_M1_STOP
+                           : SVD48_WORKSPACE_STOP_TRACE_CONTROL_WRITE;
+    }
+    if (reg == 0x5301U) {
+        return value == 0U ? SVD48_WORKSPACE_STOP_TRACE_M2_STOP
+                           : SVD48_WORKSPACE_STOP_TRACE_CONTROL_WRITE;
+    }
+    return SVD48_WORKSPACE_STOP_TRACE_OTHER;
+}
+
+static void workspace_stop_trace_capture(void *context,
+                                         uint16_t device_id,
+                                         uint8_t address,
+                                         uint8_t attempt,
+                                         const uint8_t *request,
+                                         size_t request_length,
+                                         const uint8_t *response,
+                                         size_t response_length,
+                                         svd48_device_result_t result)
+{
+    robot_composition_t *composition = context;
+    if (!composition || !composition->stop_diagnostic.lock ||
+        !request || request_length == 0U) {
+        return;
+    }
+    /* This callback runs after a transaction with the device state lock held.
+     * Its separate short lock only copies bounded metadata/real bytes. */
+    if (xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+    svd48_workspace_stop_diagnostic_result_t *report =
+        &composition->stop_diagnostic.report;
+    const uint32_t now = composition_clock_ms(NULL);
+    if (report->state != SVD48_WORKSPACE_STOP_DIAG_CAPTURING ||
+        now - report->stop_started_ms > report->post_window_ms ||
+        report->trace_count >= SVD48_WORKSPACE_STOP_TRACE_MAX_TRANSACTIONS) {
+        xSemaphoreGive(composition->stop_diagnostic.lock);
+        return;
+    }
+    svd48_workspace_stop_trace_entry_t *entry = &report->trace[report->trace_count++];
+    memset(entry, 0, sizeof(*entry));
+    entry->timestamp_ms = now;
+    entry->device_id = device_id;
+    entry->address = address;
+    entry->attempt = attempt;
+    entry->result = (uint16_t)result;
+    entry->type = workspace_stop_trace_type(request, request_length);
+    entry->request_length = request_length > sizeof(entry->request)
+                                ? sizeof(entry->request) : (uint8_t)request_length;
+    memcpy(entry->request, request, entry->request_length);
+    entry->response_length = response_length > sizeof(entry->response)
+                                 ? sizeof(entry->response) : (uint8_t)response_length;
+    if (response && entry->response_length > 0U) {
+        memcpy(entry->response, response, entry->response_length);
+    }
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+}
+
+static void workspace_stop_channel_observation(
+    const svd48_channel_snapshot_t *snapshot,
+    svd48_workspace_stop_channel_observation_t *observation)
+{
+    if (!snapshot || !observation) {
+        return;
+    }
+    observation->online = snapshot->online;
+    observation->stale = snapshot->stale;
+    observation->health = workspace_health_from_svd48(
+        svd48_channel_health_from_snapshot(snapshot));
+    observation->status = snapshot->status;
+    observation->observed_speed_rpm = snapshot->observed_speed_rpm;
+    observation->error_code = snapshot->error_code;
+    observation->last_poll_ms = snapshot->last_poll_ms;
+}
+
+static bool workspace_stop_platform_motion_active(
+    const robot_composition_t *composition,
+    const svd48_channel_snapshot_t *m1,
+    const svd48_channel_snapshot_t *m2)
+{
+    robot_motion_command_t command = {0};
+    const bool command_active = composition && composition->legacy_robot &&
+        robot_control_get_last_motion(composition->legacy_robot, &command) &&
+        (command.vx_mps != 0.0f || command.vy_mps != 0.0f ||
+         command.wz_radps != 0.0f || command.wheel_rpm[0] != 0 ||
+         command.wheel_rpm[1] != 0);
+    const bool running = (m1 && m1->online && !m1->stale &&
+                          (m1->observed_speed_rpm > 5 ||
+                           m1->observed_speed_rpm < -5)) ||
+                         (m2 && m2->online && !m2->stale &&
+                          (m2->observed_speed_rpm > 5 ||
+                           m2->observed_speed_rpm < -5));
+    return command_active || running;
+}
+
+static void workspace_stop_capture_observation(
+    robot_composition_t *composition,
+    svd48_workspace_stop_observation_point_t point,
+    bool fresh)
+{
+    robot_composition_device_slot_t *slot = workspace_stop_diagnostic_slot(composition);
+    svd48_channel_snapshot_t m1 = {0}, m2 = {0};
+    if (!slot || !svd48_channel_get_snapshot(
+                     svd48_device_channel(&slot->svd48, SVD48_CHANNEL_M1), &m1) ||
+        !svd48_channel_get_snapshot(
+                     svd48_device_channel(&slot->svd48, SVD48_CHANNEL_M2), &m2) ||
+        xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+    svd48_workspace_stop_diagnostic_result_t *report =
+        &composition->stop_diagnostic.report;
+    if (report->state != SVD48_WORKSPACE_STOP_DIAG_CAPTURING ||
+        report->observation_count >= SVD48_WORKSPACE_STOP_OBSERVATION_COUNT) {
+        xSemaphoreGive(composition->stop_diagnostic.lock);
+        return;
+    }
+    svd48_workspace_stop_observation_t *observation =
+        &report->observations[report->observation_count++];
+    memset(observation, 0, sizeof(*observation));
+    observation->timestamp_ms = composition_clock_ms(NULL);
+    observation->point = point;
+    observation->fresh_poll_observation = fresh;
+    workspace_stop_channel_observation(&m1, &observation->m1);
+    workspace_stop_channel_observation(&m2, &observation->m2);
+    observation->motion_active = workspace_stop_platform_motion_active(
+        composition, &m1, &m2);
+    observation->platform_state = (m1.error_code != 0U || m2.error_code != 0U)
+                                      ? 2U
+                                      : observation->motion_active ? 1U : 0U;
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+}
+
+static void workspace_stop_diagnostic_task(void *context)
+{
+    robot_composition_t *composition = context;
+    robot_composition_device_slot_t *slot = workspace_stop_diagnostic_slot(composition);
+    uint32_t initial_poll_ms = 0U;
+    svd48_channel_snapshot_t initial = {0};
+    if (slot && svd48_channel_get_snapshot(
+                    svd48_device_channel(&slot->svd48, SVD48_CHANNEL_M1), &initial)) {
+        initial_poll_ms = initial.last_poll_ms;
+    }
+    bool fresh_captured = false;
+    const uint32_t started = composition_clock_ms(NULL);
+    while (composition->started &&
+           composition_clock_ms(NULL) - started < SVD48_WORKSPACE_STOP_POST_WINDOW_MS) {
+        vTaskDelay(pdMS_TO_TICKS(STOP_DIAGNOSTIC_OBSERVATION_PERIOD_MS));
+        svd48_channel_snapshot_t current = {0};
+        if (!fresh_captured && slot && svd48_channel_get_snapshot(
+                svd48_device_channel(&slot->svd48, SVD48_CHANNEL_M1), &current) &&
+            current.last_poll_ms != initial_poll_ms) {
+            workspace_stop_capture_observation(
+                composition,
+                SVD48_WORKSPACE_STOP_OBSERVATION_AFTER_FIRST_FRESH_POLL,
+                true);
+            fresh_captured = true;
+        }
+    }
+    workspace_stop_capture_observation(composition,
+                                       SVD48_WORKSPACE_STOP_OBSERVATION_FINAL,
+                                       fresh_captured);
+    if (slot) {
+        svd48_device_set_diagnostic_trace(&slot->svd48, NULL, NULL);
+    }
+    if (xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) == pdTRUE) {
+        composition->stop_diagnostic.report.completed_ms = composition_clock_ms(NULL);
+        composition->stop_diagnostic.report.state = SVD48_WORKSPACE_STOP_DIAG_COMPLETE;
+        composition->stop_diagnostic.task = NULL;
+        xSemaphoreGive(composition->stop_diagnostic.lock);
+    }
+    vTaskDelete(NULL);
+}
+
+static bool workspace_stop_diagnostic_arm(svd48_workspace_port_t *port,
+                                          uint32_t *diagnostic_id)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    robot_composition_device_slot_t *slot = workspace_stop_diagnostic_slot(composition);
+    if (!composition || !composition->constructed || !composition->started ||
+        !slot || !composition->stop_diagnostic.lock ||
+        xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    svd48_workspace_stop_diagnostic_result_t *report =
+        &composition->stop_diagnostic.report;
+    if (report->state == SVD48_WORKSPACE_STOP_DIAG_CAPTURING) {
+        xSemaphoreGive(composition->stop_diagnostic.lock);
+        return false;
+    }
+    const uint32_t next_id = report->id + 1U;
+    memset(report, 0, sizeof(*report));
+    report->id = next_id == 0U ? 1U : next_id;
+    report->state = SVD48_WORKSPACE_STOP_DIAG_ARMED;
+    report->armed_ms = composition_clock_ms(NULL);
+    report->post_window_ms = SVD48_WORKSPACE_STOP_POST_WINDOW_MS;
+    report->device_id = slot->profile_device_id;
+    report->address = svd48_device_address(&slot->svd48);
+    *diagnostic_id = report->id;
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+    return true;
+}
+
+static bool workspace_stop_diagnostic_before_stop(svd48_workspace_port_t *port,
+                                                  uint32_t diagnostic_id)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    robot_composition_device_slot_t *slot = workspace_stop_diagnostic_slot(composition);
+    if (!composition || !slot || !composition->stop_diagnostic.lock ||
+        xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    svd48_workspace_stop_diagnostic_result_t *report =
+        &composition->stop_diagnostic.report;
+    const bool ready = report->state == SVD48_WORKSPACE_STOP_DIAG_ARMED &&
+                       report->id == diagnostic_id;
+    if (ready) {
+        report->state = SVD48_WORKSPACE_STOP_DIAG_CAPTURING;
+        report->stop_started_ms = composition_clock_ms(NULL);
+    }
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+    if (!ready) {
+        return false;
+    }
+    workspace_stop_capture_observation(composition,
+                                       SVD48_WORKSPACE_STOP_OBSERVATION_BEFORE_STOP,
+                                       false);
+    svd48_device_set_diagnostic_trace(&slot->svd48,
+                                      workspace_stop_trace_capture,
+                                      composition);
+    return true;
+}
+
+static void workspace_stop_diagnostic_after_stop(svd48_workspace_port_t *port,
+                                                 uint32_t diagnostic_id)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->stop_diagnostic.lock ||
+        xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+    const bool capturing = composition->stop_diagnostic.report.state ==
+                               SVD48_WORKSPACE_STOP_DIAG_CAPTURING &&
+                           composition->stop_diagnostic.report.id == diagnostic_id;
+    if (capturing) {
+        composition->stop_diagnostic.report.stop_finished_ms = composition_clock_ms(NULL);
+    }
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+    if (!capturing) {
+        return;
+    }
+    workspace_stop_capture_observation(
+        composition, SVD48_WORKSPACE_STOP_OBSERVATION_IMMEDIATE_AFTER_STOP, false);
+    if (xTaskCreate(workspace_stop_diagnostic_task, "stop_diag",
+                    STOP_DIAGNOSTIC_TASK_STACK_SIZE, composition,
+                    STOP_DIAGNOSTIC_TASK_PRIORITY,
+                    &composition->stop_diagnostic.task) != pdPASS) {
+        robot_composition_device_slot_t *slot = workspace_stop_diagnostic_slot(composition);
+        if (slot) {
+            svd48_device_set_diagnostic_trace(&slot->svd48, NULL, NULL);
+        }
+        if (xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) == pdTRUE) {
+            composition->stop_diagnostic.report.completed_ms = composition_clock_ms(NULL);
+            composition->stop_diagnostic.report.state = SVD48_WORKSPACE_STOP_DIAG_COMPLETE;
+            xSemaphoreGive(composition->stop_diagnostic.lock);
+        }
+    }
+}
+
+static bool workspace_stop_diagnostic_get(
+    svd48_workspace_port_t *port,
+    svd48_workspace_stop_diagnostic_result_t *result)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !result || !composition->stop_diagnostic.lock ||
+        xSemaphoreTake(composition->stop_diagnostic.lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    *result = composition->stop_diagnostic.report;
+    const bool available = result->state != SVD48_WORKSPACE_STOP_DIAG_UNAVAILABLE;
+    xSemaphoreGive(composition->stop_diagnostic.lock);
+    return available;
+}
+
 static const svd48_workspace_ops_t SVD48_WORKSPACE_OPS = {
     .controller_count = workspace_controller_count,
     .controller_at = workspace_controller_at,
     .channel_telemetry = workspace_channel_telemetry,
     .hall_calibrate = workspace_hall_calibrate,
+    .stop_diagnostic_arm = workspace_stop_diagnostic_arm,
+    .stop_diagnostic_before_stop = workspace_stop_diagnostic_before_stop,
+    .stop_diagnostic_after_stop = workspace_stop_diagnostic_after_stop,
+    .stop_diagnostic_get = workspace_stop_diagnostic_get,
 };
 
 static const actuation_application_ops_t APPLICATION_OPS = {
@@ -2383,12 +2712,14 @@ esp_err_t robot_composition_init(robot_composition_t *composition,
     }
     composition->coordinator_lock = xSemaphoreCreateMutexStatic(
         &composition->coordinator_lock_storage);
+    composition->stop_diagnostic.lock = xSemaphoreCreateMutexStatic(
+        &composition->stop_diagnostic.lock_storage);
     const actuation_lock_port_t lock = {
         .acquire = acquire_coordinator,
         .release = release_coordinator,
         .context = composition,
     };
-    if (!composition->coordinator_lock ||
+    if (!composition->coordinator_lock || !composition->stop_diagnostic.lock ||
         !actuation_coordinator_init(&composition->coordinator,
                                     &composition->registry,
                                     &lock)) {

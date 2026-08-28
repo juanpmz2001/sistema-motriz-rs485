@@ -82,6 +82,15 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
                         arg_is(argv[1], "TIMELINE"))))) {
         return true;
     }
+    if (arg_is(argv[0], "STOP_DIAG_ARM") && argc == 1) {
+        return true;
+    }
+    if (arg_is(argv[0], "STOP_DIAG") &&
+        ((argc == 2 && arg_is(argv[1], "STATUS")) ||
+         (argc == 4 && (arg_is(argv[1], "TRACE") ||
+                        arg_is(argv[1], "OBSERVATIONS"))))) {
+        return true;
+    }
     if (arg_is(argv[0], "READ_REG") && (argc == 3 || argc == 4)) {
         return true;
     }

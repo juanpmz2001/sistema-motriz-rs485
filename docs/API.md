@@ -150,6 +150,27 @@ SVD48_HALL_DIAG PREFLIGHT <offset> <1..4>
 SVD48_HALL_DIAG TIMELINE <offset> <1..4>
 ```
 
+`STOP_DIAG_ARM` is a separate, bounded observer for the **next existing**
+`STOP ALL`; arming sends no RS485 traffic and does not introduce a diagnostic
+stop command.  The normal `STOP ALL` path remains the physical command.  Once
+that command returns, the report retains raw driver evidence for 250 ms while
+the ordinary poller continues unchanged:
+
+```text
+STOP_DIAG_ARM
+STOP_DIAG STATUS
+STOP_DIAG TRACE <offset> <1..4>
+STOP_DIAG OBSERVATIONS <offset> <1..4>
+```
+
+The single retained report has an ID, a maximum of 64 raw transactions, and
+the four cache/fresh-labelled observation points `BEFORE_STOP`,
+`IMMEDIATE_AFTER_STOP`, `AFTER_FIRST_FRESH_POLL`, and `FINAL`.  Trace rows are
+the literal TX/RX bytes from `svd48_device::transact()`, including CRC, and
+classify the known M1/M2 target-zero/stop writes plus telemetry and later
+control/speed writes.  This is a read-only diagnostic projection; it is not
+`TRACE ON`, arbitrary register access, or a Modbus/frame passthrough.
+
 Trace pages include literal `TX` and `RX` bytes observed by the driver,
 including the driver's CRC. They are evidence for this typed Hall flow only: the
 command does not accept an operator-supplied hex frame, does not expose a general
@@ -455,7 +476,8 @@ The exact LAN allowlist is code-owned in
 - `GET_SPEED`, `GET_MOTOR`, `SVD48_INVENTORY`, typed SVD48 channel telemetry,
   `SVD48_PROBE`, `READ_REG`, `GET_SVD48_CONFIG` and `POLL_ONCE`.
 - `STOP <motor|ALL>` and `SET_SPEED <motor> <rpm>`.
-- The exact-shape `SVD48_BENCH_*` commands and `SVD48_HALL_CALIBRATE` documented above.
+- The exact-shape `SVD48_BENCH_*`, `SVD48_HALL_CALIBRATE`, and bounded
+  `STOP_DIAG_*` commands documented above.
 - Confirmed register writes, save, gear-ratio and identify operations.
 
 Everything else returns `ERR LAN_COMMAND_BLOCKED <command>`. This allowlist is

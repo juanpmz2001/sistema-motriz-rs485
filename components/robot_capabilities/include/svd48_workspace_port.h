@@ -19,6 +19,13 @@ extern "C" {
 #define SVD48_WORKSPACE_HALL_TRACE_RESPONSE_MAX_BYTES 64U
 #define SVD48_WORKSPACE_HALL_PREFLIGHT_MAX_READS 10U
 #define SVD48_WORKSPACE_HALL_STATUS_SAMPLES_MAX 26U
+/* Bounded evidence for the next existing STOP ALL operation.  This is a
+ * diagnostic projection, never a general RS485 command interface. */
+#define SVD48_WORKSPACE_STOP_TRACE_MAX_TRANSACTIONS 64U
+#define SVD48_WORKSPACE_STOP_TRACE_REQUEST_MAX_BYTES 8U
+#define SVD48_WORKSPACE_STOP_TRACE_RESPONSE_MAX_BYTES 64U
+#define SVD48_WORKSPACE_STOP_OBSERVATION_COUNT 4U
+#define SVD48_WORKSPACE_STOP_POST_WINDOW_MS 250U
 
 typedef enum {
     SVD48_WORKSPACE_CHANNEL_M1 = 0,
@@ -39,6 +46,31 @@ typedef enum {
     SVD48_WORKSPACE_HALL_OUTCOME_TIMEOUT,
     SVD48_WORKSPACE_HALL_OUTCOME_COMMUNICATION_ERROR,
 } svd48_workspace_hall_outcome_t;
+
+typedef enum {
+    SVD48_WORKSPACE_STOP_DIAG_UNAVAILABLE = 0,
+    SVD48_WORKSPACE_STOP_DIAG_ARMED,
+    SVD48_WORKSPACE_STOP_DIAG_CAPTURING,
+    SVD48_WORKSPACE_STOP_DIAG_COMPLETE,
+} svd48_workspace_stop_diagnostic_state_t;
+
+typedef enum {
+    SVD48_WORKSPACE_STOP_TRACE_OTHER = 0,
+    SVD48_WORKSPACE_STOP_TRACE_M1_TARGET_ZERO,
+    SVD48_WORKSPACE_STOP_TRACE_M1_STOP,
+    SVD48_WORKSPACE_STOP_TRACE_M2_TARGET_ZERO,
+    SVD48_WORKSPACE_STOP_TRACE_M2_STOP,
+    SVD48_WORKSPACE_STOP_TRACE_CONTROL_WRITE,
+    SVD48_WORKSPACE_STOP_TRACE_SPEED_TARGET_WRITE,
+    SVD48_WORKSPACE_STOP_TRACE_TELEMETRY_READ,
+} svd48_workspace_stop_trace_type_t;
+
+typedef enum {
+    SVD48_WORKSPACE_STOP_OBSERVATION_BEFORE_STOP = 0,
+    SVD48_WORKSPACE_STOP_OBSERVATION_IMMEDIATE_AFTER_STOP,
+    SVD48_WORKSPACE_STOP_OBSERVATION_AFTER_FIRST_FRESH_POLL,
+    SVD48_WORKSPACE_STOP_OBSERVATION_FINAL,
+} svd48_workspace_stop_observation_point_t;
 
 /* Device-specific read DTOs for the maintenance workspace. They preserve the
  * build-selected profile identity without exposing robot_profile to transport
@@ -145,6 +177,59 @@ typedef struct {
         trace[SVD48_WORKSPACE_HALL_TRACE_MAX_TRANSACTIONS];
 } svd48_workspace_hall_calibration_result_t;
 
+typedef struct {
+    uint32_t timestamp_ms;
+    uint16_t device_id;
+    uint8_t address;
+    uint8_t attempt;
+    uint16_t result;
+    svd48_workspace_stop_trace_type_t type;
+    uint8_t request_length;
+    uint8_t request[SVD48_WORKSPACE_STOP_TRACE_REQUEST_MAX_BYTES];
+    uint8_t response_length;
+    uint8_t response[SVD48_WORKSPACE_STOP_TRACE_RESPONSE_MAX_BYTES];
+} svd48_workspace_stop_trace_entry_t;
+
+typedef struct {
+    bool online;
+    bool stale;
+    robot_endpoint_health_t health;
+    int16_t status;
+    int16_t observed_speed_rpm;
+    uint32_t error_code;
+    uint32_t last_poll_ms;
+} svd48_workspace_stop_channel_observation_t;
+
+typedef struct {
+    uint32_t timestamp_ms;
+    svd48_workspace_stop_observation_point_t point;
+    /* BEFORE_STOP and IMMEDIATE_AFTER_STOP are cache observations.  The
+     * AFTER_FIRST_FRESH_POLL point is emitted only after a later poll stamp. */
+    bool fresh_poll_observation;
+    svd48_workspace_stop_channel_observation_t m1;
+    svd48_workspace_stop_channel_observation_t m2;
+    bool motion_active;
+    uint8_t platform_state; /* 0 SAFE_IDLE, 1 MOTION_ACTIVE, 2 FAULT */
+} svd48_workspace_stop_observation_t;
+
+typedef struct {
+    uint32_t id;
+    svd48_workspace_stop_diagnostic_state_t state;
+    uint16_t device_id;
+    uint8_t address;
+    uint32_t armed_ms;
+    uint32_t stop_started_ms;
+    uint32_t stop_finished_ms;
+    uint32_t completed_ms;
+    uint32_t post_window_ms;
+    uint8_t trace_count;
+    uint8_t observation_count;
+    svd48_workspace_stop_trace_entry_t
+        trace[SVD48_WORKSPACE_STOP_TRACE_MAX_TRANSACTIONS];
+    svd48_workspace_stop_observation_t
+        observations[SVD48_WORKSPACE_STOP_OBSERVATION_COUNT];
+} svd48_workspace_stop_diagnostic_result_t;
+
 typedef struct svd48_workspace_port svd48_workspace_port_t;
 
 typedef struct {
@@ -162,6 +247,15 @@ typedef struct {
         uint16_t device_id,
         svd48_workspace_channel_id_t channel,
         svd48_workspace_hall_calibration_result_t *result);
+    bool (*stop_diagnostic_arm)(svd48_workspace_port_t *port,
+                                uint32_t *diagnostic_id);
+    /* These hooks only observe the gateway's existing STOP ALL path. */
+    bool (*stop_diagnostic_before_stop)(svd48_workspace_port_t *port,
+                                        uint32_t diagnostic_id);
+    void (*stop_diagnostic_after_stop)(svd48_workspace_port_t *port,
+                                       uint32_t diagnostic_id);
+    bool (*stop_diagnostic_get)(svd48_workspace_port_t *port,
+                                svd48_workspace_stop_diagnostic_result_t *result);
 } svd48_workspace_ops_t;
 
 struct svd48_workspace_port {
@@ -207,6 +301,39 @@ static inline bool svd48_workspace_hall_calibrate(
 {
     return port && port->ops && port->ops->hall_calibrate
                ? port->ops->hall_calibrate(port, device_id, channel, result)
+               : false;
+}
+
+static inline bool svd48_workspace_stop_diagnostic_arm(
+    svd48_workspace_port_t *port, uint32_t *diagnostic_id)
+{
+    return port && port->ops && port->ops->stop_diagnostic_arm
+               ? port->ops->stop_diagnostic_arm(port, diagnostic_id)
+               : false;
+}
+
+static inline bool svd48_workspace_stop_diagnostic_before_stop(
+    svd48_workspace_port_t *port, uint32_t diagnostic_id)
+{
+    return port && port->ops && port->ops->stop_diagnostic_before_stop
+               ? port->ops->stop_diagnostic_before_stop(port, diagnostic_id)
+               : false;
+}
+
+static inline void svd48_workspace_stop_diagnostic_after_stop(
+    svd48_workspace_port_t *port, uint32_t diagnostic_id)
+{
+    if (port && port->ops && port->ops->stop_diagnostic_after_stop) {
+        port->ops->stop_diagnostic_after_stop(port, diagnostic_id);
+    }
+}
+
+static inline bool svd48_workspace_stop_diagnostic_get(
+    svd48_workspace_port_t *port,
+    svd48_workspace_stop_diagnostic_result_t *result)
+{
+    return port && port->ops && port->ops->stop_diagnostic_get
+               ? port->ops->stop_diagnostic_get(port, result)
                : false;
 }
 
