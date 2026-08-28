@@ -1,6 +1,6 @@
 #include "host_test.h"
 
-#include <pthread.h>
+#include "host_threads.h"
 #include <stdatomic.h>
 #include <string.h>
 
@@ -412,13 +412,13 @@ static bool concurrent_transactions_do_not_interleave(void)
         .port = fake_bus_transport_port(&fake),
         .request = first_request,
         .request_length = sizeof(first_request),
-        .done = ATOMIC_VAR_INIT(false),
+        .done = false,
     };
     transaction_thread_t second = {
         .port = fake_bus_transport_port(&fake),
         .request = second_request,
         .request_length = sizeof(second_request),
-        .done = ATOMIC_VAR_INIT(false),
+        .done = false,
     };
     pthread_t first_thread;
     pthread_t second_thread;
@@ -490,11 +490,11 @@ static bool concurrent_stats_snapshot_is_coherent(void)
         .port = fake_bus_transport_port(&fake),
         .request = request,
         .request_length = sizeof(request),
-        .done = ATOMIC_VAR_INIT(false),
+        .done = false,
     };
     stats_thread_t snapshot = {
         .port = fake_bus_transport_port(&fake),
-        .done = ATOMIC_VAR_INIT(false),
+        .done = false,
     };
     pthread_t transaction_thread;
     pthread_t stats_thread;

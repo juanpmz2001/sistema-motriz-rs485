@@ -1,7 +1,7 @@
 #ifndef BOTFARMS_FAKE_BUS_TRANSPORT_H
 #define BOTFARMS_FAKE_BUS_TRANSPORT_H
 
-#include <pthread.h>
+#include "host_threads.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

@@ -3,6 +3,12 @@
 #include <math.h>
 #include <string.h>
 
+#if defined(_MSC_VER)
+#define BOTFARMS_UNUSED
+#else
+#define BOTFARMS_UNUSED __attribute__((unused))
+#endif
+
 #define GPIO_BIT(pin) (UINT64_C(1) << (pin))
 #define ESP32S3_VALID_GPIO_MASK ((UINT64_C(1) << 49) - 1)
 #define ESP32S3_RESERVED_GPIO_MASK (GPIO_BIT(19) | GPIO_BIT(20))
@@ -40,7 +46,7 @@ static const robot_driver_descriptor_t DRIVERS[] = {
 static const robot_driver_registry_t BUILTIN_REGISTRY = {
     .items = DRIVERS, .count = sizeof(DRIVERS) / sizeof(DRIVERS[0])};
 
-static const robot_profile_t CURRENT __attribute__((unused)) = {
+static const robot_profile_t CURRENT BOTFARMS_UNUSED = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "current_robot",
     .board = &BOARD,
@@ -92,7 +98,7 @@ static const robot_profile_t CURRENT __attribute__((unused)) = {
     },
 };
 
-static const robot_profile_t SINGLE_MOTOR __attribute__((unused)) = {
+static const robot_profile_t SINGLE_MOTOR BOTFARMS_UNUSED = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "bench_single_svd48_motor",
     .board = &BOARD,
@@ -109,7 +115,7 @@ static const robot_profile_t SINGLE_MOTOR __attribute__((unused)) = {
 /* Rafa's installed wheel mapping was qualified by the operator on the elevated
  * robot.  Keep M1/M2 in the stable endpoint names while encoding the physical
  * side and controller-RPM sign needed by the application kinematics. */
-static const robot_profile_t RAFA __attribute__((unused)) = {
+static const robot_profile_t RAFA BOTFARMS_UNUSED = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "rafa",
     .board = &BOARD,
@@ -233,7 +239,7 @@ static const robot_as5600_calibration_profile_t NEW_LEG_AS5600_CALIBRATION = {
 
 /* A deliberately isolated development profile.  GPIO14 is PWM here, so the
  * PPM/RC GPIO14 bus found in traction profiles is absent by construction. */
-static const robot_profile_t BENCH_STEERING_AS5600 __attribute__((unused)) = {
+static const robot_profile_t BENCH_STEERING_AS5600 BOTFARMS_UNUSED = {
     .schema_version = ROBOT_PROFILE_SCHEMA_VERSION,
     .name = "bench_single_steering_as5600",
     .board = &BOARD,

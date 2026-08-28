@@ -130,6 +130,16 @@ Typical SUTs:
 
 Whenever practical, a new component should have an L1 fake-backed test before it is physically exercised.
 
+### Native host-test entry point
+
+Run `python3 tools/run_host_tests.py` on Linux or `py tools\run_host_tests.py`
+on Windows. The runner deliberately does not invoke ESP-IDF: it configures the
+standalone `tests/` CMake project with Ninja, builds it in a short temporary
+directory and runs CTest. Linux requires CMake, Ninja, Python 3 and a native C
+compiler. Windows requires CMake, Ninja and the MSVC C++ Build Tools workload;
+the runner discovers ESP-IDF-managed CMake/Ninja when they are not on `PATH`.
+Use `BOTFARMS_HOST_TEST_SANITIZERS=ON` only with the GNU/Clang path.
+
 ---
 
 ## L2 — Electrical and communication bring-up

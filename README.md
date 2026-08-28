@@ -110,8 +110,8 @@ idf.py build
 Run the hardware-independent tests before building firmware:
 
 ```bash
-tools/run_host_tests.sh
-BOTFARMS_HOST_TEST_SANITIZERS=ON tools/run_host_tests.sh
+python3 tools/run_host_tests.py
+BOTFARMS_HOST_TEST_SANITIZERS=ON python3 tools/run_host_tests.py
 python3 tools/test_svd48_protocol.py
 python3 tools/test_dependency_contracts.py
 python3 tools/test_application_compatibility.py
@@ -119,6 +119,12 @@ python3 tools/test_firmware_identity.py
 python3 tools/test_as5600_linearity.py
 python3 -m unittest tests.hil.test_hil_runner
 ```
+
+The native host suite is separate from ESP-IDF: it discovers CMake and Ninja,
+uses the Ninja generator and creates its own short temporary build directory.
+On Windows run `py tools\run_host_tests.py`; it activates installed MSVC Build
+Tools automatically. On Linux install a C compiler, CMake, Ninja and Python 3.
+ASan/UBSan are currently supported by the GNU/Clang path, not the MSVC path.
 
 GitHub Actions is configured to repeat the host suite, ASan/UBSan suite and clean
 ESP-IDF 5.4.1 builds for every versioned profile fragment under `ci/`, including the

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -33,6 +34,18 @@ def read_defines(path: Path) -> dict[str, str]:
         if match:
             defines[match.group(1)] = match.group(2).strip().strip('"')
     return defines
+
+
+def write_fake_git(root: Path, body: str) -> Path:
+    """Create a tiny fake Git executable for the CMake identity contract."""
+    if os.name == "nt":
+        executable = root / "fake-git.cmd"
+        executable.write_text("@echo off\r\n" + body, encoding="utf-8")
+    else:
+        executable = root / "fake-git"
+        executable.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        executable.chmod(0o755)
+    return executable
 
 
 class FirmwareIdentityTests(unittest.TestCase):
@@ -119,22 +132,31 @@ class FirmwareIdentityTests(unittest.TestCase):
     def test_git_queries_scope_safe_directory_to_source_tree(self) -> None:
         with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
             root = Path(raw)
-            fake_git = root / "fake-git"
-            fake_git.write_text(
-                "#!/bin/sh\n"
-                "[ \"$1\" = '-c' ] || exit 10\n"
-                "case \"$2\" in safe.directory=*) ;; *) exit 11 ;; esac\n"
-                "[ \"$3\" = '-C' ] || exit 12\n"
-                "[ \"$4\" = \"${2#safe.directory=}\" ] || exit 13\n"
-                "case \"$5\" in\n"
-                "  rev-parse) printf '%s\\n' "
-                f"{'b' * 40}; exit 0 ;;\n"
-                "  status) exit 0 ;;\n"
-                "esac\n"
-                "exit 14\n",
-                encoding="utf-8",
-            )
-            fake_git.chmod(0o755)
+            if os.name == "nt":
+                fake_body = (
+                    "if not \"%~1\"==\"-c\" exit /b 10\r\n"
+                    # cmd.exe splits CMake's safe.directory=<path> argument
+                    # at '='; the path is therefore the next batch argument.
+                    "if not \"%~2\"==\"safe.directory\" exit /b 11\r\n"
+                    "if not \"%~4\"==\"-C\" exit /b 12\r\n"
+                    "if not \"%~3\"==\"%~5\" exit /b 13\r\n"
+                    "if \"%~6\"==\"rev-parse\" (echo " + "b" * 40 + "& exit /b 0)\r\n"
+                    "if \"%~6\"==\"status\" exit /b 0\r\n"
+                    "exit /b 14\r\n"
+                )
+            else:
+                fake_body = (
+                    "[ \"$1\" = '-c' ] || exit 10\n"
+                    "case \"$2\" in safe.directory=*) ;; *) exit 11 ;; esac\n"
+                    "[ \"$3\" = '-C' ] || exit 12\n"
+                    "[ \"$4\" = \"${2#safe.directory=}\" ] || exit 13\n"
+                    "case \"$5\" in\n"
+                    "  rev-parse) printf '%s\\n' " + "b" * 40 + "; exit 0 ;;\n"
+                    "  status) exit 0 ;;\n"
+                    "esac\n"
+                    "exit 14\n"
+                )
+            fake_git = write_fake_git(root, fake_body)
             output = root / "identity.h"
 
             result = self.generate_process(
@@ -249,18 +271,21 @@ class FirmwareIdentityTests(unittest.TestCase):
     def test_sha_override_with_failed_git_status_cannot_be_reported_as_clean(self) -> None:
         with tempfile.TemporaryDirectory(prefix="firmware-identity-") as raw:
             root = Path(raw)
-            fake_git = root / "fake-git"
-            fake_git.write_text(
-                "#!/bin/sh\n"
-                "case \" $* \" in\n"
-                "  *' rev-parse --verify HEAD '*) printf '%s\\n' "
-                f"{'a' * 40}; exit 0 ;;\n"
-                "  *' status --porcelain --untracked-files=normal '*) exit 2 ;;\n"
-                "esac\n"
-                "exit 2\n",
-                encoding="utf-8",
-            )
-            fake_git.chmod(0o755)
+            if os.name == "nt":
+                fake_body = (
+                    "if \"%~6\"==\"rev-parse\" (echo " + "a" * 40 + "& exit /b 0)\r\n"
+                    "if \"%~6\"==\"status\" exit /b 2\r\n"
+                    "exit /b 2\r\n"
+                )
+            else:
+                fake_body = (
+                    "case \" $* \" in\n"
+                    "  *' rev-parse --verify HEAD '*) printf '%s\\n' " + "a" * 40 + "; exit 0 ;;\n"
+                    "  *' status --porcelain --untracked-files=normal '*) exit 2 ;;\n"
+                    "esac\n"
+                    "exit 2\n"
+                )
+            fake_git = write_fake_git(root, fake_body)
             result = self.generate_process(
                 root,
                 root / "identity.h",

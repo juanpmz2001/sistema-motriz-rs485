@@ -1,7 +1,7 @@
 #include "host_test.h"
 
 #include <limits.h>
-#include <pthread.h>
+#include "host_threads.h"
 #include <stdint.h>
 #include <string.h>
 

@@ -1,7 +1,12 @@
 #include "serial_gateway_policy.h"
 
 #include <stddef.h>
+#if defined(_WIN32)
+#include <string.h>
+#define strcasecmp _stricmp
+#else
 #include <strings.h>
+#endif
 
 static bool arg_is(const char *value, const char *expected)
 {

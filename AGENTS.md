@@ -147,12 +147,15 @@ in the same change whenever behavior or a public contract changes.
 For hardware-independent changes, run:
 
 ```bash
-tools/run_host_tests.sh
-BOTFARMS_HOST_TEST_SANITIZERS=ON tools/run_host_tests.sh
+python3 tools/run_host_tests.py
+BOTFARMS_HOST_TEST_SANITIZERS=ON python3 tools/run_host_tests.py
 python3 tools/test_svd48_protocol.py
 python3 tools/test_dependency_contracts.py
 python3 tools/test_application_compatibility.py
 ```
+
+On Windows, use `py tools\run_host_tests.py`. The runner keeps native C tests
+separate from ESP-IDF and locates the required CMake/Ninja/MSVC tools itself.
 
 For firmware changes, additionally run with ESP-IDF 5.4.1:
 

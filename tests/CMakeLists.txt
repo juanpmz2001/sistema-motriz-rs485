@@ -1,11 +1,28 @@
 cmake_minimum_required(VERSION 3.16)
 
+if(POLICY CMP0141)
+    cmake_policy(SET CMP0141 NEW)
+endif()
+
 project(botfarms_firmware_host_tests LANGUAGES C)
+
+# Avoid per-target PDB paths for the standalone host tree.  MSVC can otherwise
+# receive a directory-only /Fd argument when a target lists sources above this
+# CMake project's root.  Embedded debug information is sufficient for these
+# short native tests and keeps their build independent of an IDE generator.
+if(MSVC)
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded" CACHE STRING
+        "MSVC debug information format for native host tests" FORCE)
+    set(BOTFARMS_HOST_MATH_LIBRARY)
+else()
+    set(BOTFARMS_HOST_MATH_LIBRARY m)
+endif()
 
 option(BOTFARMS_HOST_TEST_SANITIZERS "Enable AddressSanitizer and UBSan" OFF)
 set(BOTFARMS_HOST_TEST_TIMEOUT_SECONDS "10" CACHE STRING "Per-test timeout in seconds")
 
 enable_testing()
+find_package(Threads REQUIRED)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../cmake/host_tests")
 include(BotfarmsHostTest)
@@ -52,7 +69,7 @@ botfarms_add_host_test(
     INCLUDE_DIRS
         ../components/robot_kinematics/include
     LINK_LIBRARIES
-        m
+        ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -68,7 +85,7 @@ botfarms_add_host_test(
         ../components/robot_kinematics/include
         ../components/robot_capabilities/include
     LINK_LIBRARIES
-        m
+        ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -88,7 +105,7 @@ botfarms_add_host_test(
     INCLUDE_DIRS
         ../components/steering_position_controller/include
     LINK_LIBRARIES
-        m
+        ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -107,7 +124,7 @@ botfarms_add_host_test(
         ../components/steering_position_controller/include
         ../components/steering_position_endpoint_adapter/include
     LINK_LIBRARIES
-        m
+        ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -158,7 +175,7 @@ botfarms_add_host_test(
         ../components/bus_transport/bus_transport.c
     INCLUDE_DIRS
         ../components/bus_transport/include
-    LINK_LIBRARIES pthread
+    LINK_LIBRARIES Threads::Threads
 )
 
 botfarms_add_host_test(
@@ -172,7 +189,7 @@ botfarms_add_host_test(
     INCLUDE_DIRS
         ../components/bus_transport/include
         ../components/svd48/include
-    LINK_LIBRARIES pthread
+    LINK_LIBRARIES Threads::Threads
 )
 
 botfarms_add_host_test(
@@ -213,7 +230,7 @@ botfarms_add_host_test(
     INCLUDE_DIRS
         ../components/bus_transport/include
         ../components/svd48/include
-    LINK_LIBRARIES pthread
+    LINK_LIBRARIES Threads::Threads
 )
 
 botfarms_add_host_test(
@@ -231,7 +248,7 @@ botfarms_add_host_test(
         ../components/robot_capabilities/include
         ../components/svd48/include
         ../components/svd48_channel_endpoint_adapter/include
-    LINK_LIBRARIES pthread
+    LINK_LIBRARIES Threads::Threads
 )
 
 botfarms_add_host_test(
@@ -244,7 +261,7 @@ botfarms_add_host_test(
         ../components/robot_capabilities/include
         ../components/robot_driver_factory/include
         ../components/robot_profile/include
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -256,7 +273,7 @@ botfarms_add_host_test(
         ../components/robot_capabilities/include
         ../components/robot_profile/include
     COMPILE_DEFINITIONS CONFIG_BOTFARMS_PROFILE_CURRENT_ROBOT=1
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -270,7 +287,7 @@ botfarms_add_host_test(
     COMPILE_DEFINITIONS
         CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR=1
         BOTFARMS_EXPECT_BENCH_PROFILE=1
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -284,7 +301,7 @@ botfarms_add_host_test(
     COMPILE_DEFINITIONS
         CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600=1
         BOTFARMS_EXPECT_STEERING_PROFILE=1
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -298,7 +315,7 @@ botfarms_add_host_test(
     COMPILE_DEFINITIONS
         CONFIG_BOTFARMS_PROFILE_RAFA=1
         BOTFARMS_EXPECT_RAFA_PROFILE=1
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 botfarms_add_host_test(
@@ -314,7 +331,7 @@ botfarms_add_host_test(
     COMPILE_DEFINITIONS
         CONFIG_BOTFARMS_PROFILE_RAFA=1
         BOTFARMS_VERIFY_RAFA_COMPOSITION=1
-    LINK_LIBRARIES m
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY}
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -341,7 +358,7 @@ botfarms_add_host_test(
         ../components/robot_profile/include
         ../components/actuation_coordinator/include
         ../components/robot_control_endpoint_adapter/include
-    LINK_LIBRARIES m pthread
+    LINK_LIBRARIES ${BOTFARMS_HOST_MATH_LIBRARY} Threads::Threads
 )
 
 add_test(

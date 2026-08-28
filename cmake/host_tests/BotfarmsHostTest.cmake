@@ -9,7 +9,16 @@ function(botfarms_configure_host_c_target target)
     )
 
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX)
+        # CMake's Ninja rule always emits /Fd.  Give it a filename rather than
+        # the target directory when sources live outside tests/.
+        set_target_properties(${target} PROPERTIES COMPILE_PDB_NAME "${target}")
+    endif()
+
+    if(MSVC)
+        # MSVC's C11 atomics implementation remains opt-in.  Host tests exercise
+        # the same C11 atomics used by the driver, so enable it only for this
+        # native-test target; ESP-IDF builds keep their own compiler settings.
+        target_compile_options(${target} PRIVATE /W4 /WX /experimental:c11atomics)
     elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE
             -Wall

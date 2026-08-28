@@ -971,6 +971,12 @@ def _write_all(descriptor: int, payload: bytes) -> None:
 
 
 def _fsync_directory(directory: Path) -> None:
+    # Windows does not expose POSIX directory descriptors, so opening a
+    # directory with os.open() fails before fsync can be attempted.  Individual
+    # evidence and reservation files are still fsynced; directory durability is
+    # unavailable on that platform rather than silently approximated.
+    if os.name == "nt":
+        return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(directory, flags)
     try:
@@ -1187,6 +1193,12 @@ class EvidenceReservation:
                 raise EvidenceError(
                     "evidence reservation changed during finalization"
                 )
+            # Windows does not permit unlinking a file with this process's
+            # descriptor still open.  Closing here is final: the evidence has
+            # already been fsynced and published, and ownership is checked
+            # again immediately before the reservation is removed.
+            if os.name == "nt":
+                self.close(remove_reservation=False)
             try:
                 self.reservation_path.unlink()
             except OSError as exc:
@@ -1222,14 +1234,14 @@ class EvidenceReservation:
     def close(self, *, remove_reservation: bool) -> None:
         if self._closed:
             return
+        os.close(self._descriptor)
+        self._closed = True
         if remove_reservation and self._still_owns_reservation():
             try:
                 self.reservation_path.unlink()
                 _fsync_directory(self.path.parent)
             except OSError:
                 pass
-        os.close(self._descriptor)
-        self._closed = True
 
 
 def _error_payload(error: BaseException) -> dict[str, str]:

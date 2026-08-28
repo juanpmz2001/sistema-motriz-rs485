@@ -1,7 +1,7 @@
 #include "host_test.h"
 
 #include <math.h>
-#include <pthread.h>
+#include "host_threads.h"
 #include <string.h>
 
 #include "actuation_application_port.h"
@@ -22,6 +22,37 @@ typedef struct {
     bool release_stop;
     size_t lock_acquire_attempts;
 } fixture_t;
+
+static bool fixture_init(fixture_t *fixture)
+{
+    if (!fixture) {
+        return false;
+    }
+    memset(fixture, 0, sizeof(*fixture));
+    if (pthread_mutex_init(&fixture->lock, NULL) != 0) {
+        return false;
+    }
+    if (pthread_mutex_init(&fixture->gate_lock, NULL) != 0) {
+        pthread_mutex_destroy(&fixture->lock);
+        return false;
+    }
+    if (pthread_cond_init(&fixture->gate_changed, NULL) != 0) {
+        pthread_mutex_destroy(&fixture->gate_lock);
+        pthread_mutex_destroy(&fixture->lock);
+        return false;
+    }
+    return true;
+}
+
+static void fixture_deinit(fixture_t *fixture)
+{
+    if (!fixture) {
+        return;
+    }
+    pthread_cond_destroy(&fixture->gate_changed);
+    pthread_mutex_destroy(&fixture->gate_lock);
+    pthread_mutex_destroy(&fixture->lock);
+}
 
 typedef struct { fixture_t *fixture; uint8_t motor; } fake_context_t;
 
@@ -365,7 +396,8 @@ static bool position_capability_and_observation(void)
 
 static bool capabilities_and_registry(void)
 {
-    fixture_t fixture = {.lock = PTHREAD_MUTEX_INITIALIZER};
+    fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture));
     fake_context_t context = {.fixture = &fixture};
     robot_control_endpoint_adapter_t adapter;
     robot_endpoint_registry_t registry;
@@ -384,6 +416,7 @@ static bool capabilities_and_registry(void)
     HOST_TEST_CHECK(robot_endpoint_registry_find(&registry, 99) == NULL);
     HOST_TEST_CHECK(robot_endpoint_registry_add(&registry, &adapter.endpoint) ==
                     ROBOT_REGISTRY_DUPLICATE_ID);
+    fixture_deinit(&fixture);
     return true;
 }
 
@@ -718,12 +751,9 @@ static void *run_operation(void *argument)
 
 static bool coordinator_serialization(void)
 {
-    fixture_t fixture = {
-        .lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_changed = PTHREAD_COND_INITIALIZER,
-        .delay_stop = true,
-    };
+    fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture));
+    fixture.delay_stop = true;
     fake_context_t contexts[2] = {{.fixture = &fixture}, {.fixture = &fixture}};
     robot_control_endpoint_adapter_t adapters[2];
     robot_endpoint_registry_t registry;
@@ -757,9 +787,7 @@ static bool coordinator_serialization(void)
     fixture.fail_speed = 0;
     HOST_TEST_CHECK(actuation_coordinator_set_velocity_rpm(&coordinator, 1, 5, &report) ==
                     ACTUATION_RESULT_SUCCESS);
-    pthread_cond_destroy(&fixture.gate_changed);
-    pthread_mutex_destroy(&fixture.gate_lock);
-    pthread_mutex_destroy(&fixture.lock);
+    fixture_deinit(&fixture);
     return true;
 }
 
@@ -771,11 +799,8 @@ static bool coordinator_position_requests_roll_back_on_required_failure(void)
     static const robot_stoppable_ops_t stop_ops = {
         .stop = fake_stoppable_stop,
     };
-    fixture_t fixture = {
-        .lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_changed = PTHREAD_COND_INITIALIZER,
-    };
+    fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture));
     fake_position_t first_position = {0};
     fake_position_t second_position = {.result = ROBOT_CAP_IO_ERROR};
     fake_stoppable_t first_stop = {0};
@@ -861,9 +886,7 @@ static bool coordinator_position_requests_roll_back_on_required_failure(void)
     HOST_TEST_CHECK(second_stop.calls == 0U);
     HOST_TEST_CHECK(fixture.lock_acquire_attempts == 2U);
 
-    pthread_cond_destroy(&fixture.gate_changed);
-    pthread_mutex_destroy(&fixture.gate_lock);
-    pthread_mutex_destroy(&fixture.lock);
+    fixture_deinit(&fixture);
     return true;
 }
 
@@ -875,11 +898,8 @@ static bool coordinator_reference_stops_before_mapping(void)
     static const robot_stoppable_ops_t stop_ops = {
         .stop = fake_stoppable_stop,
     };
-    fixture_t fixture = {
-        .lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_changed = PTHREAD_COND_INITIALIZER,
-    };
+    fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture));
     fake_position_reference_t reference = {0};
     fake_stoppable_t stop = {0};
     robot_position_reference_port_t reference_port = {
@@ -928,19 +948,14 @@ static bool coordinator_reference_stops_before_mapping(void)
     HOST_TEST_CHECK(reference.set_calls == 1U);
     HOST_TEST_CHECK(report.endpoints[0].error == ROBOT_CAP_IO_ERROR);
 
-    pthread_cond_destroy(&fixture.gate_changed);
-    pthread_mutex_destroy(&fixture.gate_lock);
-    pthread_mutex_destroy(&fixture.lock);
+    fixture_deinit(&fixture);
     return true;
 }
 
 static bool zero_stoppable_is_failure(void)
 {
-    fixture_t fixture = {
-        .lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_lock = PTHREAD_MUTEX_INITIALIZER,
-        .gate_changed = PTHREAD_COND_INITIALIZER,
-    };
+    fixture_t fixture;
+    HOST_TEST_CHECK(fixture_init(&fixture));
     robot_endpoint_registry_t registry;
     robot_endpoint_registry_init(&registry);
     actuation_lock_port_t lock = {lock_acquire, lock_release, &fixture};
@@ -949,9 +964,7 @@ static bool zero_stoppable_is_failure(void)
     actuation_report_t report;
     HOST_TEST_CHECK(actuation_coordinator_stop_all(&coordinator, &report) ==
                     ACTUATION_RESULT_FAILURE);
-    pthread_cond_destroy(&fixture.gate_changed);
-    pthread_mutex_destroy(&fixture.gate_lock);
-    pthread_mutex_destroy(&fixture.lock);
+    fixture_deinit(&fixture);
     return true;
 }
 
