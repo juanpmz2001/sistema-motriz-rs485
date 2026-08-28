@@ -564,9 +564,11 @@ motion-service mailbox; it is not an SVD48 acknowledgement or proof of physical
 motion. The motion service independently checks safety and endpoint health. The
 client supplies no TTL: the immutable profile owns it (300 ms for `current_robot`,
 with profile validation bounded to 50–500 ms). Replayed/non-increasing commands do
-not refresh that lease. Deadman false is normalized by the Console to zero intent and
-causes the firmware to stop. Exact source expiry retires the stream and requests
-STOP; the old stream cannot silently resume.
+not refresh that lease. Deadman is operator authority, not a speed test:
+`deadman:true` with zero body velocity applies zero endpoint targets (the SVD48
+endpoint path is target zero plus `START`, i.e. HOLD 0). `deadman:false` causes the
+firmware to stop/freewheel. Exact source expiry retires the stream and requests STOP;
+the old stream cannot silently resume.
 
 STOP/DISARM are accepted as fail-safe terminal actions without requiring a matching
 active stream. A new ARM for another stream first publishes a source-switch STOP.
@@ -605,8 +607,11 @@ The immutable Rafa mapping is CH2 high = forward (`+vx`), CH4 high = right
 The receiver failsafe CH5=2000us leaves LAN eligible. The source needs a *new* valid
 PPM frame with CH2 and CH4 neutral (1500±30us) after PPM priority begins, after PPM
 loss, or after any external STOP before it can ARM. Each following fresh PPM frame
-publishes a bounded command with the profile TTL (300 ms); stale/missing PPM stops
-and retires the RC stream. The validity envelope is `750..2250us`; it is not axis
+publishes a bounded command with the profile TTL (300 ms). While a valid armed RC
+stream remains under CH5 priority, CH2/CH4 neutral publishes `deadman:true` and zero
+velocity, so both traction endpoints apply HOLD 0 rather than freewheel. Stale/missing
+PPM, CH5 release, external STOP, expiry and safety/fault paths still stop and retire
+the RC stream. The validity envelope is `750..2250us`; it is not axis
 calibration. CH2 and CH4 each use `1000/1500/2000us` min/centre/max with the same
 `±30us` neutral deadband. Values inside the validity envelope but beyond a calibrated
 axis endpoint saturate to `-1/+1`; values outside it invalidate the input. CH6 is the

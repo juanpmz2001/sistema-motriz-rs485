@@ -115,6 +115,9 @@ static bool test_axis_calibration_is_independent_from_validity_envelope(void)
 
     input = frame(4U, 1500U, 1500U, 1400U, 1500U);
     HOST_TEST_CHECK(ppm_motion_model_step(&model, &input, true, &output));
+    /* Neutral is a live deadman command, not a deadman release. */
+    HOST_TEST_CHECK(output.action == PPM_MOTION_ACTION_COMMAND);
+    HOST_TEST_CHECK(output.deadman);
     HOST_TEST_CHECK(output.normalized_vx == 0.0f);
     HOST_TEST_CHECK(output.normalized_wz == 0.0f);
     HOST_TEST_CHECK(output.speed_scale == 0.75f);

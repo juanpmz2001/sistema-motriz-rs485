@@ -63,9 +63,12 @@ power path.
 - A profile with validated differential endpoint geometry starts the continuous LAN
   path `control_lan → command_authority → motion_application → traction endpoints`.
   ARM creates a new nonzero stream, COMMAND requires an increasing sequence and
-  explicit deadman, and the client cannot select its TTL. The current profile uses
+  explicit deadman, and the client cannot select its TTL. An asserted deadman with
+  zero velocity applies zero endpoint targets (HOLD 0 for the current SVD48 adapter).
+  The current profile uses
   300 ms; profile validation constrains this contract to 50–500 ms. A released deadman
-  requests zero/global stop, and an expired source is retired before a stop is issued.
+  causes zero/global stop, and an expired source is
+  retired before a stop is issued.
   A retired stream cannot resume without a new ARM/stream.
 - STOP and DISARM evict older pending motion intent and STOP plans are consumed before
   APPLY plans. This is semantic priority, not physical preemption: an already-running

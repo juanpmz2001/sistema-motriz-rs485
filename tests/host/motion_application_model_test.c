@@ -155,6 +155,46 @@ static bool test_arm_command_deadman_and_disarm(void)
     return true;
 }
 
+static bool test_live_deadman_zero_velocity_applies_hold_zero(void)
+{
+    motion_application_model_t model;
+    motion_application_plan_t plan;
+    HOST_TEST_CHECK(init_model(&model));
+    HOST_TEST_CHECK(arm_model(&model, 12U, 0U));
+
+    motion_application_event_t moving =
+        event(MOTION_APPLICATION_EVENT_COMMAND, 12U, 2U, 10U);
+    moving.deadman = true;
+    moving.vx_mps = 0.1f;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &moving, true, 10U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_APPLY);
+    motion_application_model_record_actuation(&model, &plan, true);
+
+    motion_application_event_t neutral =
+        event(MOTION_APPLICATION_EVENT_COMMAND, 12U, 3U, 20U);
+    neutral.deadman = true;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &neutral, true, 20U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_APPLY);
+    HOST_TEST_CHECK(plan.target_count == 2U);
+    HOST_TEST_CHECK(plan.targets[0].rpm == 0);
+    HOST_TEST_CHECK(plan.targets[1].rpm == 0);
+    motion_application_model_record_actuation(&model, &plan, true);
+    HOST_TEST_CHECK(model.state == MOTION_CONTROL_ACTIVE);
+
+    neutral.sequence = 4U;
+    neutral.received_at_ms = 30U;
+    neutral.deadman = false;
+    HOST_TEST_CHECK(motion_application_model_submit(
+                        &model, &neutral, true, 30U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_STOP);
+    return true;
+}
+
 static bool test_expiry_stops_and_retires_stream(void)
 {
     motion_application_model_t model;
@@ -345,6 +385,7 @@ int main(void)
 {
     const host_test_case_t cases[] = {
         HOST_TEST_CASE(test_arm_command_deadman_and_disarm),
+        HOST_TEST_CASE(test_live_deadman_zero_velocity_applies_hold_zero),
         HOST_TEST_CASE(test_expiry_stops_and_retires_stream),
         HOST_TEST_CASE(test_replay_does_not_refresh_lease_and_safety_faults),
         HOST_TEST_CASE(

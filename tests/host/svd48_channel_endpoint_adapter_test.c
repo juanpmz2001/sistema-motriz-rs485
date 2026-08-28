@@ -267,6 +267,27 @@ static bool test_m2_velocity_uses_only_m2_registers(void)
     return true;
 }
 
+static bool test_zero_velocity_keeps_channel_enabled(void)
+{
+    adapter_fixture_t fixture;
+    svd48_channel_endpoint_adapter_t adapter;
+    HOST_TEST_CHECK(fixture_init(&fixture));
+    HOST_TEST_CHECK(init_adapter(&adapter,
+                                 &fixture,
+                                 SVD48_CHANNEL_M1,
+                                 ROBOT_CAPABILITY_VELOCITY_RPM |
+                                     ROBOT_CAPABILITY_STOPPABLE,
+                                 -15,
+                                 15));
+    HOST_TEST_CHECK(expect_write(&fixture, 0x5304U, 0U,
+                                BUS_TRANSPORT_OK, true));
+    HOST_TEST_CHECK(expect_write(&fixture, 0x5300U, 1U,
+                                BUS_TRANSPORT_OK, true));
+    HOST_TEST_CHECK(robot_velocity_set_rpm(&adapter.endpoint, 0) == ROBOT_CAP_OK);
+    HOST_TEST_CHECK(fake_bus_transport_all_expectations_met(&fixture.bus));
+    return true;
+}
+
 static bool test_target_failure_executes_stop_best_effort(void)
 {
     adapter_fixture_t fixture;
@@ -455,6 +476,7 @@ int main(void)
         HOST_TEST_CASE(test_invalid_and_unsupported_initialization),
         HOST_TEST_CASE(test_velocity_limits_include_both_boundaries),
         HOST_TEST_CASE(test_m2_velocity_uses_only_m2_registers),
+        HOST_TEST_CASE(test_zero_velocity_keeps_channel_enabled),
         HOST_TEST_CASE(test_target_failure_executes_stop_best_effort),
         HOST_TEST_CASE(test_enable_failure_executes_stop_best_effort),
         HOST_TEST_CASE(test_original_failure_wins_when_rollback_also_fails),

@@ -215,9 +215,9 @@ static motion_application_result_t convert_authority_decision(
     }
     model->last_dispatched_revision = cycle->command_revision;
     model->requested = cycle->output;
-    if (!model->deadman ||
-        !command_authority_velocity_is_moving(&model->authority.config,
-                                              cycle->output)) {
+    /* A live deadman with zero velocity is an APPLY plan: endpoints stay
+     * enabled at zero. STOP is reserved for authority/safety/fault loss. */
+    if (!model->deadman) {
         model->state = MOTION_CONTROL_ARMED;
         copy_detail(model->last_detail, "DEADMAN_RELEASED");
         stop_plan(plan, model->last_detail);

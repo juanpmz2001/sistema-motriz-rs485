@@ -282,8 +282,10 @@ bool ppm_motion_model_step(ppm_motion_model_t *model,
         output->speed_scale = speed_scale(
             model,
             input->channels[model->config.speed_scale_channel - 1U]);
-        output->deadman = output->normalized_vx != 0.0f ||
-                          output->normalized_wz != 0.0f;
+        /* Deadman means that the authorized RC operator is still present; it
+         * is deliberately independent of requested speed. A fresh neutral
+         * frame therefore asks the application to apply zero targets. */
+        output->deadman = true;
     }
     return true;
 }
