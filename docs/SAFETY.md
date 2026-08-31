@@ -88,15 +88,18 @@ power path.
 - Rafa has a profile-owned RC/LAN interlock on receiver CH5: an accepted CH5≤1500us
   begins a candidate and three consecutive accepted frames commit PPM priority,
   revoke any active LAN stream through `control_lan → motion_application`, and block
-  LAN ARM/COMMAND. A candidate never changes authority or increments the revocation
-  epoch. CH5=2000us is the reviewed receiver failsafe and allows a fresh LAN ARM
+LAN ARM/COMMAND. A candidate never changes authority or increments the revocation
+epoch: an already committed PPM source remains active through a transient failsafe
+candidate, while a PPM-priority candidate cannot begin RC motion. CH5=2000us is the
+reviewed receiver failsafe and allows a fresh LAN ARM
   after the same confirmation. Rafa accepts exactly eight PPM pulses; a malformed,
   short or extra frame cannot modify CH5, its valid sequence, or authority. Rafa's
   PPM source reaches traction
   only through `ppm_motion_source → motion_application → command_authority →
   robot_kinematics`; it never calls an SVD48 driver. A PPM takeover first stops and
   retires the prior stream, then requires a new CH2/CH4-neutral frame before RC ARM.
-  PPM loss, CH5 failsafe, or an external STOP requires that neutral handshake again.
+  PPM loss, a committed CH5 failsafe transition, or an external STOP requires that
+  neutral handshake again.
   Loss after PPM priority is surfaced as `PPM_LOST`; an old LAN or RC stream cannot
   resume automatically.
 - A nonzero error code from online, fresh legacy-projected SVD48 telemetry activates

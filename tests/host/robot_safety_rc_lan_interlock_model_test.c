@@ -71,6 +71,20 @@ static bool rafa_rc_lan_interlock_contract(void)
     HOST_TEST_CHECK(!snapshot.lan_allowed);
     HOST_TEST_CHECK(snapshot.priority_epoch == 1U);
 
+    /* A transient CH5 failsafe candidate retains the already committed PPM
+     * authority. Consumers that gate PPM motion must use lan_allowed, not
+     * the presentation candidate enum, or a single glitch becomes a STOP. */
+    HOST_TEST_CHECK(update(&model, failsafe, 9U, &snapshot));
+    HOST_TEST_CHECK(snapshot.state == ROBOT_SAFETY_RC_LAN_FAILSAFE_CANDIDATE);
+    HOST_TEST_CHECK(!snapshot.lan_allowed);
+    HOST_TEST_CHECK(snapshot.priority_epoch == 1U);
+    HOST_TEST_CHECK(update(&model, failsafe, 10U, &snapshot));
+    HOST_TEST_CHECK(snapshot.state == ROBOT_SAFETY_RC_LAN_FAILSAFE_CANDIDATE);
+    HOST_TEST_CHECK(!snapshot.lan_allowed);
+    HOST_TEST_CHECK(update(&model, failsafe, 11U, &snapshot));
+    HOST_TEST_CHECK(snapshot.state == ROBOT_SAFETY_RC_LAN_FAILSAFE);
+    HOST_TEST_CHECK(snapshot.lan_allowed);
+
     /* Stale/lost signal remains immediate relative to the existing receiver
      * timeout; confirmation never stretches its safety deadline. */
     HOST_TEST_CHECK(robot_safety_rc_lan_interlock_model_update(&model,

@@ -275,8 +275,9 @@ discarded atomically; they never replace channels, advance the valid-frame seque
 affect CH5, or reach `ppm_motion_source`. `robot_safety_rc_lan_interlock_model` owns
 the separate three-fresh-frame CH5 authority confirmation. Lack of accepted frames
 still follows the unchanged receiver/safety age deadline; confirmation never extends
-it. `ppm_motion_source` receives an explicit confirmed-priority gate and therefore
-cannot turn a candidate frame into RC motion.
+it. `ppm_motion_source` receives the committed-authority gate: it cannot turn a
+PPM-priority candidate into RC motion, while a transient failsafe candidate retains
+an already committed PPM source until the three-frame transition completes.
 
 `control_lan` keeps its existing command-authority/TTL path. Its status now reports
 accepted/rejected packets, sequence gaps, duplicate/out-of-order packets, schema and

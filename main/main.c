@@ -96,7 +96,11 @@ static bool ppm_priority_confirmed(void *context)
 {
     robot_safety_status_t status = {0};
     return context && robot_safety_get_status(context, &status) == ESP_OK &&
-           status.rc_lan_interlock_state == ROBOT_SAFETY_RC_LAN_PPM_PRIORITY;
+           /* ``lan_control_allowed`` is derived from the committed interlock
+            * authority. Candidate states deliberately preserve that authority
+            * while three distinct accepted CH5 frames are required to switch it.
+            * Do not turn a one-frame FAILSAFE_CANDIDATE into a PPM STOP. */
+           !status.lan_control_allowed;
 }
 
 static control_lan_callback_result_t control_lan_event_callback(
