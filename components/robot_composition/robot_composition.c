@@ -298,6 +298,16 @@ static robot_factory_result_t svd48_factory_construct(
         .response_timeout_ms = bus->response_timeout_ms,
         .retries = bus->retries,
         .stale_timeout_ms = bus->stale_timeout_ms,
+        .observation_quality_policy = {
+            /* High-rate velocity is scheduled at this bus cadence. One missed
+             * poll remains raw evidence; age stays the final liveness bound. */
+            .warning_age_ms = bus->telemetry_period_ms * 3U,
+            .stale_age_ms = bus->stale_timeout_ms,
+            .offline_age_ms = bus->stale_timeout_ms * 2U,
+            .suspect_failure_count = 2U,
+            .degraded_failure_count = 3U,
+            .recovery_confirm_count = 2U,
+        },
         .state_lock = {
             .acquire = acquire_device_state,
             .release = release_device_state,
@@ -1497,6 +1507,10 @@ static robot_endpoint_health_t workspace_health_from_svd48(
     switch (health) {
     case SVD48_CHANNEL_HEALTH_HEALTHY:
         return ROBOT_ENDPOINT_HEALTH_HEALTHY;
+    case SVD48_CHANNEL_HEALTH_SUSPECT:
+        /* Keep an operational endpoint usable while surfacing the raw
+         * communication quality separately in Workspace diagnostics. */
+        return ROBOT_ENDPOINT_HEALTH_HEALTHY;
     case SVD48_CHANNEL_HEALTH_DEGRADED:
         return ROBOT_ENDPOINT_HEALTH_DEGRADED;
     case SVD48_CHANNEL_HEALTH_OFFLINE:
@@ -1676,6 +1690,7 @@ static bool workspace_channel_telemetry(
     telemetry->valid_observations = snapshot.valid_observations;
     telemetry->failed_observations = snapshot.failed_observations;
     telemetry->stale_observations = snapshot.stale_observations;
+    telemetry->communication_quality = snapshot.communication_quality;
     telemetry->status = snapshot.status;
     telemetry->observed_speed_rpm = snapshot.observed_speed_rpm;
     telemetry->current_deciamp = snapshot.current_deciamp;

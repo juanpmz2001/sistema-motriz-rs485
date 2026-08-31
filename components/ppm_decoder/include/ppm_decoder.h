@@ -14,7 +14,12 @@ typedef struct ppm_decoder_t *ppm_decoder_handle_t;
 
 typedef struct {
     int ppm_pin;
+    /* A published frame has exactly this many valid channel pulses.  The
+     * decoder deliberately does not truncate extra pulses: PPM has no
+     * checksum, so a structural mismatch is not safe to reinterpret. */
     uint8_t channel_count;
+    /* Legacy spelling retained for source compatibility. It must equal
+     * channel_count; partial frames are never published. */
     uint8_t min_frame_channels;
     uint32_t sync_threshold_us;
     uint16_t min_pulse_us;
@@ -31,6 +36,7 @@ typedef struct {
     uint32_t incomplete_frames;
     uint32_t invalid_pulses;
     uint32_t overflow_pulses;
+    uint32_t rejected_frames;
     uint8_t channel_count;
     uint16_t channels[PPM_MAX_CHANNELS];
 } ppm_decoder_status_t;

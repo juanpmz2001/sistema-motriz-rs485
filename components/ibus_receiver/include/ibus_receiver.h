@@ -57,9 +57,11 @@ typedef struct {
     uint32_t valid_frames;
     uint32_t bad_header_frames;
     uint32_t bad_checksum_frames;
+    uint32_t consecutive_invalid_frames;
     uint32_t invalid_pulses;
     uint32_t incomplete_frames;
     uint32_t overflow_pulses;
+    uint32_t rejected_frames;
     uint8_t frame_channel_count;
     uint16_t channels[IBUS_RECEIVER_CHANNELS];
     uint8_t raw_sample[IBUS_RECEIVER_RAW_SAMPLE_SIZE];

@@ -120,7 +120,10 @@ static void ppm_motion_task(void *argument)
         ppm_motion_input_t input = {0};
         if (ibus_receiver_get_status(handle->config.receiver, &receiver) ==
             ESP_OK) {
-            input.signal_valid = receiver.signal_valid;
+            input.signal_valid = receiver.signal_valid &&
+                                 (!handle->config.priority_confirmed ||
+                                  handle->config.priority_confirmed(
+                                      handle->config.priority_context));
             input.valid_frame_sequence = receiver.valid_frames;
             input.channel_count = receiver.frame_channel_count;
             memcpy(input.channels,

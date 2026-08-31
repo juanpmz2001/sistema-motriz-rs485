@@ -167,7 +167,9 @@ static bool selected_profile_shape(void)
     HOST_TEST_CHECK(profile->rc_lan_interlock.enabled);
     HOST_TEST_CHECK(profile->rc_lan_interlock.channel == 5U);
     HOST_TEST_CHECK(profile->rc_lan_interlock.active_max_us == 1500U);
+    HOST_TEST_CHECK(profile->rc_lan_interlock.transition_confirm_good_frames == 3U);
     HOST_TEST_CHECK(profile->ppm_motion.enabled);
+    HOST_TEST_CHECK(profile->ppm_motion.expected_frame_channels == 8U);
     HOST_TEST_CHECK(profile->ppm_motion.throttle_channel == 2U);
     HOST_TEST_CHECK(profile->ppm_motion.steering_channel == 4U);
     HOST_TEST_CHECK(profile->ppm_motion.enable_channel == 5U);

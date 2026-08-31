@@ -5,6 +5,11 @@
 #define SVD48_DEFAULT_RESPONSE_TIMEOUT_MS 100U
 #define SVD48_DEFAULT_STALE_TIMEOUT_MS 1000U
 #define SVD48_POLL_SLOW_DIVIDER 20U
+#define SVD48_PRIMARY_WARNING_PERIODS 3U
+#define SVD48_PRIMARY_OFFLINE_STALE_MULTIPLIER 2U
+#define SVD48_PRIMARY_SUSPECT_FAILURES 2U
+#define SVD48_PRIMARY_DEGRADED_FAILURES 3U
+#define SVD48_PRIMARY_RECOVERY_GOODS 2U
 
 #define REG_M1_STATUS 0x5400U
 #define REG_M1_MOTOR_TEMP 0x5404U
@@ -508,9 +513,36 @@ static void mark_observation_failure(svd48_device_t *device,
     unlock_state(device);
 }
 
+static communication_quality_policy_t default_observation_quality_policy(
+    uint32_t stale_timeout_ms)
+{
+    return (communication_quality_policy_t){
+        /* The poll scheduler supplies the faster expected cadence. This
+         * fallback remains bounded when a direct device is constructed by a
+         * test or an isolated diagnostic. */
+        .warning_age_ms =
+            (stale_timeout_ms + SVD48_PRIMARY_WARNING_PERIODS - 1U) /
+            SVD48_PRIMARY_WARNING_PERIODS,
+        .stale_age_ms = stale_timeout_ms,
+        .offline_age_ms = stale_timeout_ms * SVD48_PRIMARY_OFFLINE_STALE_MULTIPLIER,
+        .suspect_failure_count = SVD48_PRIMARY_SUSPECT_FAILURES,
+        .degraded_failure_count = SVD48_PRIMARY_DEGRADED_FAILURES,
+        .recovery_confirm_count = SVD48_PRIMARY_RECOVERY_GOODS,
+    };
+}
+
+static bool observation_quality_policy_configured(
+    const communication_quality_policy_t *policy)
+{
+    return policy && policy->warning_age_ms > 0U && policy->stale_age_ms > 0U &&
+           policy->offline_age_ms > policy->stale_age_ms;
+}
+
 static void finish_poll(svd48_device_t *device,
                         svd48_device_result_t poll_result,
-                        svd48_device_result_t first_error)
+                        svd48_device_result_t first_error,
+                        bool primary_observations_good,
+                        svd48_device_result_t primary_error)
 {
     if (!lock_state(device)) {
         return;
@@ -523,6 +555,15 @@ static void finish_poll(svd48_device_t *device,
         snapshot->last_error = poll_result == SVD48_DEVICE_OK
                                    ? SVD48_DEVICE_OK
                                    : first_error;
+        if (primary_observations_good) {
+            communication_quality_model_record_good(
+                &device->observation_quality[index], timestamp);
+        } else {
+            communication_quality_model_record_failure(
+                &device->observation_quality[index],
+                timestamp,
+                (uint32_t)primary_error);
+        }
     }
     device->poll_in_progress = false;
     unlock_state(device);
@@ -561,6 +602,11 @@ bool svd48_device_init(svd48_device_t *device,
     if (device->config.stale_timeout_ms == 0U) {
         device->config.stale_timeout_ms = SVD48_DEFAULT_STALE_TIMEOUT_MS;
     }
+    if (!observation_quality_policy_configured(
+            &device->config.observation_quality_policy)) {
+        device->config.observation_quality_policy =
+            default_observation_quality_policy(device->config.stale_timeout_ms);
+    }
     for (size_t index = 0; index < SVD48_DEVICE_CHANNEL_COUNT; ++index) {
         device->channels[index].device = device;
         device->channels[index].id = (svd48_channel_id_t)index;
@@ -568,6 +614,12 @@ bool svd48_device_init(svd48_device_t *device,
         device->snapshots[index].last_error = SVD48_DEVICE_TIMEOUT;
         device->snapshots[index].last_poll_result = SVD48_DEVICE_TIMEOUT;
         device->snapshots[index].stale_observations = SVD48_OBSERVATION_ALL;
+        if (!communication_quality_model_init(
+                &device->observation_quality[index],
+                &device->config.observation_quality_policy)) {
+            memset(device, 0, sizeof(*device));
+            return false;
+        }
     }
     device->communication.last_error = SVD48_DEVICE_TIMEOUT;
     device->initialized = true;
@@ -842,9 +894,14 @@ bool svd48_channel_get_snapshot(svd48_channel_t *channel,
     }
     snapshot->stale = snapshot->stale_observations != 0U;
     snapshot->online = channel->device->communication.successful_transactions > 0U &&
-                       timestamp -
-                               channel->device->communication.last_success_ms <=
-                           channel->device->config.stale_timeout_ms;
+                       communication_quality_model_snapshot(
+                           &channel->device->observation_quality[channel->id],
+                           timestamp,
+                           &snapshot->communication_quality) &&
+                       snapshot->communication_quality.effective_state !=
+                           COMMUNICATION_HEALTH_OFFLINE &&
+                       snapshot->communication_quality.effective_state !=
+                           COMMUNICATION_HEALTH_UNKNOWN;
     unlock_state(channel->device);
     return true;
 }
@@ -855,7 +912,9 @@ svd48_channel_health_t svd48_channel_health_from_snapshot(
     if (!snapshot) {
         return SVD48_CHANNEL_HEALTH_UNKNOWN;
     }
-    if (!snapshot->online) {
+    if (!snapshot->online ||
+        snapshot->communication_quality.effective_state ==
+            COMMUNICATION_HEALTH_OFFLINE) {
         return SVD48_CHANNEL_HEALTH_OFFLINE;
     }
     if ((snapshot->valid_observations & SVD48_OBSERVATION_ERROR_CODE) != 0U &&
@@ -870,9 +929,17 @@ svd48_channel_health_t svd48_channel_health_from_snapshot(
          SVD48_OBSERVATION_VELOCITY_COMMUNICATION) != 0U) {
         return SVD48_CHANNEL_HEALTH_STALE;
     }
-    if ((snapshot->failed_observations &
-         SVD48_OBSERVATION_VELOCITY_COMMUNICATION) != 0U) {
+    if (snapshot->communication_quality.effective_state ==
+        COMMUNICATION_HEALTH_STALE) {
+        return SVD48_CHANNEL_HEALTH_STALE;
+    }
+    if (snapshot->communication_quality.effective_state ==
+        COMMUNICATION_HEALTH_DEGRADED) {
         return SVD48_CHANNEL_HEALTH_DEGRADED;
+    }
+    if (snapshot->communication_quality.effective_state ==
+        COMMUNICATION_HEALTH_SUSPECT) {
+        return SVD48_CHANNEL_HEALTH_SUSPECT;
     }
     return SVD48_CHANNEL_HEALTH_HEALTHY;
 }
@@ -894,6 +961,9 @@ svd48_device_result_t svd48_device_poll(svd48_device_t *device)
     uint16_t values4[4];
     size_t successful_reads = 0U;
     size_t failed_reads = 0U;
+    size_t primary_successes = 0U;
+    size_t primary_failures = 0U;
+    svd48_device_result_t primary_error = SVD48_DEVICE_OK;
     svd48_device_result_t first_error = SVD48_DEVICE_OK;
     bool slow_poll = false;
     if (!begin_poll(device, &slow_poll)) {
@@ -904,10 +974,13 @@ svd48_device_result_t svd48_device_poll(svd48_device_t *device)
     if (result == SVD48_DEVICE_OK) {
         update_pair_i32(device, values4, false);
         successful_reads++;
+        primary_successes++;
     } else {
         mark_observation_failure(device, SVD48_OBSERVATION_POSITION);
         first_error = result;
         failed_reads++;
+        primary_failures++;
+        primary_error = result;
     }
     result = read_registers_with_retries(device,
                                          REG_M1_ACTUAL_SPEED,
@@ -917,12 +990,15 @@ svd48_device_result_t svd48_device_poll(svd48_device_t *device)
     if (result == SVD48_DEVICE_OK) {
         update_pair_i16(device, PAIR_SPEED, values2);
         successful_reads++;
+        primary_successes++;
     } else {
         mark_observation_failure(device, SVD48_OBSERVATION_SPEED);
         if (first_error == SVD48_DEVICE_OK) {
             first_error = result;
         }
         failed_reads++;
+        primary_failures++;
+        if (primary_error == SVD48_DEVICE_OK) primary_error = result;
     }
     result = read_registers_with_retries(device,
                                          REG_M1_ACTUAL_CURRENT,
@@ -932,12 +1008,15 @@ svd48_device_result_t svd48_device_poll(svd48_device_t *device)
     if (result == SVD48_DEVICE_OK) {
         update_pair_i16(device, PAIR_CURRENT, values2);
         successful_reads++;
+        primary_successes++;
     } else {
         mark_observation_failure(device, SVD48_OBSERVATION_CURRENT);
         if (first_error == SVD48_DEVICE_OK) {
             first_error = result;
         }
         failed_reads++;
+        primary_failures++;
+        if (primary_error == SVD48_DEVICE_OK) primary_error = result;
     }
     if (slow_poll) {
         result = read_registers_with_retries(
@@ -1017,7 +1096,11 @@ svd48_device_result_t svd48_device_poll(svd48_device_t *device)
     if (failed_reads > 0U) {
         poll_result = successful_reads > 0U ? SVD48_DEVICE_PARTIAL : first_error;
     }
-    finish_poll(device, poll_result, first_error);
+    finish_poll(device,
+                poll_result,
+                first_error,
+                primary_successes == 3U && primary_failures == 0U,
+                primary_error);
     return poll_result;
 }
 

@@ -172,9 +172,11 @@ static const robot_profile_t RAFA BOTFARMS_UNUSED = {
         .enabled = true,
         .channel = 5U,
         .active_max_us = 1500U,
+        .transition_confirm_good_frames = 3U,
     },
     .ppm_motion = {
         .enabled = true,
+        .expected_frame_channels = 8U,
         .throttle_channel = 2U,
         .steering_channel = 4U,
         .enable_channel = 5U,
@@ -668,13 +670,16 @@ robot_profile_error_t robot_profile_validate_with_registry(
     if (profile->rc_lan_interlock.enabled &&
         (profile->rc_lan_interlock.channel == 0U ||
          profile->rc_lan_interlock.channel > 14U ||
-         profile->rc_lan_interlock.active_max_us == 0U)) {
+         profile->rc_lan_interlock.active_max_us == 0U ||
+         profile->rc_lan_interlock.transition_confirm_good_frames == 0U)) {
         return ROBOT_PROFILE_BAD_RC_LAN_INTERLOCK;
     }
     if (profile->ppm_motion.enabled) {
         const robot_ppm_motion_profile_t *ppm = &profile->ppm_motion;
         if (profile->application.kind != ROBOT_PROFILE_DIFFERENTIAL_GEOMETRY ||
             !profile->rc_lan_interlock.enabled ||
+            ppm->expected_frame_channels == 0U ||
+            ppm->expected_frame_channels > 14U ||
             ppm->throttle_channel == 0U || ppm->throttle_channel > 14U ||
             ppm->steering_channel == 0U || ppm->steering_channel > 14U ||
             ppm->enable_channel == 0U || ppm->enable_channel > 14U ||
@@ -686,6 +691,10 @@ robot_profile_error_t robot_profile_validate_with_registry(
             ppm->speed_scale_channel == ppm->throttle_channel ||
             ppm->speed_scale_channel == ppm->steering_channel ||
             ppm->speed_scale_channel == ppm->enable_channel ||
+            ppm->throttle_channel > ppm->expected_frame_channels ||
+            ppm->steering_channel > ppm->expected_frame_channels ||
+            ppm->enable_channel > ppm->expected_frame_channels ||
+            ppm->speed_scale_channel > ppm->expected_frame_channels ||
             ppm->enable_channel != profile->rc_lan_interlock.channel ||
             ppm->enable_active_max_us !=
                 profile->rc_lan_interlock.active_max_us ||

@@ -798,7 +798,7 @@ static void handle_safety_status(serial_gateway_handle_t handle, int argc, char 
     }
 
     print_locked(handle,
-                 "DATA SAFETY TASK:%s RC_AVAILABLE:%u RC_SEEN:%u RC_VALID:%u RC_LOSS:%u RC_LAST_AGE_MS:%lu RC_INTERLOCK:%s RC_CH5_US:%u LAN_ELIGIBLE:%u LAN_REVOCATION_EPOCH:%lu MOTOR_FAULT:%u STOP_REQUESTS:%lu LAST_STOP_REASON:%s LAST_STOP_ERR:0x%x LOOPS:%lu\n",
+                 "DATA SAFETY TASK:%s RC_AVAILABLE:%u RC_SEEN:%u RC_VALID:%u RC_LOSS:%u RC_LAST_AGE_MS:%lu RC_INTERLOCK:%s RC_CH5_US:%u LAN_ELIGIBLE:%u LAN_REVOCATION_EPOCH:%lu RC_CANDIDATE_FRAMES:%lu RC_CONFIRM_FRAMES:%u MOTOR_FAULT:%u STOP_REQUESTS:%lu LAST_STOP_REASON:%s LAST_STOP_ERR:0x%x LOOPS:%lu\n",
                  status.task_running ? "RUNNING" : "STOPPED",
                  status.rc_available ? 1 : 0,
                  status.rc_signal_seen ? 1 : 0,
@@ -810,6 +810,8 @@ static void handle_safety_status(serial_gateway_handle_t handle, int argc, char 
                  status.rc_lan_channel_us,
                  status.lan_control_allowed ? 1U : 0U,
                  (unsigned long)status.rc_lan_priority_epoch,
+                 (unsigned long)status.rc_lan_candidate_valid_frames,
+                 (unsigned)status.rc_lan_transition_confirm_good_frames,
                  status.motor_fault_active ? 1 : 0,
                  (unsigned long)status.stop_requests,
                  status.last_stop_reason[0] ? status.last_stop_reason : "NONE",
@@ -867,6 +869,21 @@ static void handle_control_status(serial_gateway_handle_t handle,
                                   : "UNAVAILABLE",
                  safety_available ? safety.rc_lan_channel_us : 0U,
                  (unsigned long)(safety_available ? safety.rc_lan_priority_epoch : 0U));
+    control_lan_status_t control_link = {0};
+    if (handle->config.control_lan &&
+        control_lan_get_status(handle->config.control_lan, &control_link) == ESP_OK) {
+        print_locked(handle,
+                     "DATA CONTROL_LINK TASK:%s ACCEPTED:%lu REJECTED:%lu GAPS:%lu DUPLICATE_OR_OOO:%lu INVALID_SCHEMA:%lu AUTH_FAILURES:%lu LAST_VALID_COMMAND_AGE_MS:%lu AUTHORITY:%s\n",
+                     control_link.task_running ? "RUNNING" : "STOPPED",
+                     (unsigned long)control_link.packets_accepted,
+                     (unsigned long)control_link.packets_rejected,
+                     (unsigned long)control_link.sequence_gaps,
+                     (unsigned long)control_link.duplicate_or_out_of_order,
+                     (unsigned long)control_link.invalid_schema,
+                     (unsigned long)control_link.auth_failures,
+                     (unsigned long)control_link.last_valid_command_age_ms,
+                     safe_text(control_link.authority_detail, "UNKNOWN"));
+    }
     for (size_t index = 0U; index < status.endpoint_count; ++index) {
         const motion_status_endpoint_t *endpoint = &status.endpoints[index];
         print_locked(
@@ -2512,7 +2529,7 @@ static void handle_get_svd48_channel_telemetry(serial_gateway_handle_t handle,
                                     : now_ms - telemetry.last_exception_ms;
     print_locked(
         handle,
-        "DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:%u CHANNEL:%s ENDPOINT_BOUND:%u ENDPOINT_ID:%u STATUS:%d RPM:%d CURRENT_DA:%d BUS_DV:%d MOTOR_TEMP_DC:%d MOS_TEMP_DC:%d POS:%ld ERROR:0x%08lx ONLINE:%u STALE:%u HEALTH:%s VALID_MASK:0x%08lx FAILED_MASK:0x%08lx STALE_MASK:0x%08lx COMM_ERR:%u EXC_FUNC:0x%02X EXC_CODE:0x%02X EXC_AGE_MS:%lu\n",
+        "DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:%u CHANNEL:%s ENDPOINT_BOUND:%u ENDPOINT_ID:%u STATUS:%d RPM:%d CURRENT_DA:%d BUS_DV:%d MOTOR_TEMP_DC:%d MOS_TEMP_DC:%d POS:%ld ERROR:0x%08lx ONLINE:%u STALE:%u HEALTH:%s VALID_MASK:0x%08lx FAILED_MASK:0x%08lx STALE_MASK:0x%08lx COMM_ERR:%u COMM_HEALTH:%s COMM_QUALITY:%s LKG_AGE_MS:%lu CONSEC_FAIL:%lu CONSEC_GOOD:%lu TOTAL_FAIL:%lu LAST_FAILURE:%lu EXC_FUNC:0x%02X EXC_CODE:0x%02X EXC_AGE_MS:%lu\n",
         (unsigned)telemetry.device_id,
         channel_name((uint8_t)telemetry.channel),
         telemetry.endpoint_bound ? 1U : 0U,
@@ -2532,6 +2549,14 @@ static void handle_get_svd48_channel_telemetry(serial_gateway_handle_t handle,
         (unsigned long)telemetry.failed_observations,
         (unsigned long)telemetry.stale_observations,
         (unsigned)telemetry.communication_error,
+        communication_health_name(
+            telemetry.communication_quality.effective_state),
+        communication_quality_name(telemetry.communication_quality.quality),
+        (unsigned long)telemetry.communication_quality.last_good_age_ms,
+        (unsigned long)telemetry.communication_quality.consecutive_failures,
+        (unsigned long)telemetry.communication_quality.consecutive_good,
+        (unsigned long)telemetry.communication_quality.total_failures,
+        (unsigned long)telemetry.communication_quality.last_failure_reason,
         telemetry.last_exception_function,
         telemetry.last_exception_code,
         (unsigned long)exception_age_ms);
@@ -3739,7 +3764,7 @@ static void print_ibus_status(serial_gateway_handle_t handle, bool include_chann
     }
 
     print_locked(handle,
-                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu PULSE_MIN_US:%u PULSE_MAX_US:%u LAST_AGE_MS:%lu BYTES_OR_EDGES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu FRAME_CHANNELS:%u INVALID_PULSES:%lu INCOMPLETE:%lu OVERFLOW:%lu",
+                 "DATA IBUS STATUS:%s MODE:%s UART:%d RX_GPIO:%d BAUD:%lu STALE_TIMEOUT_MS:%lu PULSE_MIN_US:%u PULSE_MAX_US:%u LAST_AGE_MS:%lu BYTES_OR_EDGES:%lu FRAMES:%lu VALID:%lu BAD_HEADER:%lu BAD_CHECKSUM:%lu CONSECUTIVE_INVALID:%lu FRAME_CHANNELS:%u INVALID_PULSES:%lu INCOMPLETE:%lu OVERFLOW:%lu REJECTED:%lu",
                  status.signal_valid ? "OK" : "NO_SIGNAL",
                  ibus_receiver_mode_to_string(status.mode),
                  status.uart_port,
@@ -3754,10 +3779,12 @@ static void print_ibus_status(serial_gateway_handle_t handle, bool include_chann
                  (unsigned long)status.valid_frames,
                  (unsigned long)status.bad_header_frames,
                  (unsigned long)status.bad_checksum_frames,
+                 (unsigned long)status.consecutive_invalid_frames,
                  status.frame_channel_count,
                  (unsigned long)status.invalid_pulses,
                  (unsigned long)status.incomplete_frames,
-                 (unsigned long)status.overflow_pulses);
+                 (unsigned long)status.overflow_pulses,
+                 (unsigned long)status.rejected_frames);
     if (include_channels) {
         for (uint8_t i = 0; i < IBUS_RECEIVER_CHANNELS; i++) {
             print_locked(handle, " CH%u:%u", i + 1, status.channels[i]);

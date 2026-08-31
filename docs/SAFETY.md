@@ -85,10 +85,14 @@ power path.
 - A priority-9 safety task runs every 20 ms. After a valid RC frame has been seen,
   invalid RC for at least 150 ms activates RC-loss observation. For profiles without
   an RC/LAN interlock it remains a global stop condition.
-- Rafa has a profile-owned RC/LAN interlock on receiver CH5: valid CH5≤1500us gives
-  PPM priority, revokes any active LAN stream through `control_lan →
-  motion_application`, and blocks LAN ARM/COMMAND. CH5=2000us is the reviewed
-  receiver failsafe and allows a fresh LAN ARM. Rafa's PPM source reaches traction
+- Rafa has a profile-owned RC/LAN interlock on receiver CH5: an accepted CH5≤1500us
+  begins a candidate and three consecutive accepted frames commit PPM priority,
+  revoke any active LAN stream through `control_lan → motion_application`, and block
+  LAN ARM/COMMAND. A candidate never changes authority or increments the revocation
+  epoch. CH5=2000us is the reviewed receiver failsafe and allows a fresh LAN ARM
+  after the same confirmation. Rafa accepts exactly eight PPM pulses; a malformed,
+  short or extra frame cannot modify CH5, its valid sequence, or authority. Rafa's
+  PPM source reaches traction
   only through `ppm_motion_source → motion_application → command_authority →
   robot_kinematics`; it never calls an SVD48 driver. A PPM takeover first stops and
   retires the prior stream, then requires a new CH2/CH4-neutral frame before RC ARM.
@@ -165,19 +169,23 @@ The Iteration 4 SVD48 driver keeps validity, timestamp and freshness per observa
 A successful current, temperature or position read cannot make a failed speed sample
 fresh.
 
-- **Complete poll cycle:** every observation scheduled for that cycle succeeded. A
-  fast cycle requires position, speed and current; a slow cycle requires those plus
-  status, both temperatures, bus voltage and error code.
-- **Partial poll:** the controller responded, but at least one required observation
-  failed. It is not counted as complete success and receives polling backoff. It
-  contributes to `DEGRADED` only after the higher-precedence `OFFLINE`, fresh `FAULT`
-  and `STALE` checks described below.
+- **Complete primary poll:** position, speed and current succeeded. Those fields are
+  the SVD48 velocity-liveness set. Slow status, both temperatures, bus voltage and
+  error code retain their own cadence and freshness.
+- **Raw attempt failure:** a timeout, bad CRC, incomplete response or bus-busy result
+  rejects only that attempt. It preserves each field's LKG value and acquisition time,
+  increments raw evidence, and does not by itself make a physical controller fault.
+- **Communication quality:** per-channel primary attempts remain healthy with one
+  transient failure, become `SUSPECT` after two failures, and `DEGRADED` after three.
+  A degraded/stale/offline link needs two complete primary polls to recover. These
+  source-owned count thresholds never extend an age deadline.
 - **Healthy velocity communication:** position, speed and current are valid and
   fresh, and no fresh controller error is present. Lower-rate diagnostic fields have
   their own freshness; their expiry is shown in the snapshot but does not by itself
   make a velocity endpoint unavailable.
 - **Degraded velocity communication:** communication remains available and prior
-  velocity feedback is still fresh, but position, speed or current has a failure bit.
+  velocity feedback is still fresh, but the configured persistent primary-failure
+  threshold has been reached.
 - **Stale observation:** its own age exceeds the configured freshness threshold,
   independently of later success for another field.
 - **Offline:** no successful device transaction remains within the configured
@@ -186,11 +194,12 @@ fresh.
   bus operation does not erase it.
 
 Velocity-channel health applies these states in order: `OFFLINE`, fresh `FAULT`,
-fast-feedback `STALE`, fast-feedback `DEGRADED`, then `HEALTHY`. Offline always
+fast-feedback `STALE`, quality `DEGRADED`/`SUSPECT`, then `HEALTHY`. Offline always
 wins; a fresh nonzero error yields `FAULT` even if a lower-rate diagnostic is stale,
 while a stale error observation no longer yields `FAULT`. A totally failed poll can
 be degraded during the window in which prior observations and the last successful
-transaction remain fresh.
+transaction remain fresh, but the first failed poll remains raw quality evidence
+rather than an automatic health flap.
 
 These driver facts are diagnostic foundations. The active `robot_safety` task still
 reads the legacy projection and ignores offline/stale telemetry rather than applying

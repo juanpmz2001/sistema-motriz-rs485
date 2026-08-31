@@ -1,2 +1,3 @@
 idf_component_register(SRCS "robot_capabilities.c" "motion_status_port.c"
-                    INCLUDE_DIRS "include")
+                    INCLUDE_DIRS "include"
+                    REQUIRES communication_quality)

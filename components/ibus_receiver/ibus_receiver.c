@@ -23,8 +23,8 @@ static const char *TAG = "ibus_receiver";
 #define IBUS_TASK_STACK 4096
 #define IBUS_TASK_PRIORITY 5
 #define IBUS_LOCK_TIMEOUT_MS 100
-#define PPM_DEFAULT_CHANNEL_COUNT 10
-#define PPM_DEFAULT_MIN_FRAME_CHANNELS 4
+#define PPM_DEFAULT_CHANNEL_COUNT 8
+#define PPM_DEFAULT_MIN_FRAME_CHANNELS PPM_DEFAULT_CHANNEL_COUNT
 #define PPM_DEFAULT_SYNC_THRESHOLD_US 3000
 #define PPM_DEFAULT_MIN_PULSE_US 750
 #define PPM_DEFAULT_MAX_PULSE_US 2250
@@ -43,6 +43,7 @@ struct ibus_receiver_t {
     uint32_t valid_frames;
     uint32_t bad_header_frames;
     uint32_t bad_checksum_frames;
+    uint32_t consecutive_invalid_frames;
     uint16_t channels[IBUS_RECEIVER_CHANNELS];
     uint8_t raw_sample[IBUS_RECEIVER_RAW_SAMPLE_SIZE];
     uint8_t raw_sample_index;
@@ -92,6 +93,12 @@ static uint16_t ibus_checksum(const uint8_t frame[IBUS_FRAME_LENGTH])
     return checksum;
 }
 
+static bool mode_is_implemented(ibus_receiver_mode_t mode)
+{
+    return mode != IBUS_RECEIVER_MODE_SBUS &&
+           mode != IBUS_RECEIVER_MODE_SBUS_NON_INVERTED;
+}
+
 static void reset_runtime_state(ibus_receiver_handle_t handle)
 {
     handle->last_frame_ms = 0;
@@ -100,6 +107,7 @@ static void reset_runtime_state(ibus_receiver_handle_t handle)
     handle->valid_frames = 0;
     handle->bad_header_frames = 0;
     handle->bad_checksum_frames = 0;
+    handle->consecutive_invalid_frames = 0;
     memset(handle->channels, 0, sizeof(handle->channels));
     memset(handle->raw_sample, 0, sizeof(handle->raw_sample));
     handle->raw_sample_index = 0;
@@ -140,17 +148,10 @@ static esp_err_t apply_uart_mode(ibus_receiver_handle_t handle, ibus_receiver_mo
         inverse_mask = UART_SIGNAL_RXD_INV;
         break;
     case IBUS_RECEIVER_MODE_SBUS:
-        uart_config.baud_rate = 100000;
-        uart_config.parity = UART_PARITY_EVEN;
-        uart_config.stop_bits = UART_STOP_BITS_2;
-        inverse_mask = UART_SIGNAL_RXD_INV;
-        break;
     case IBUS_RECEIVER_MODE_SBUS_NON_INVERTED:
-        uart_config.baud_rate = 100000;
-        uart_config.parity = UART_PARITY_EVEN;
-        uart_config.stop_bits = UART_STOP_BITS_2;
-        inverse_mask = UART_SIGNAL_INV_DISABLE;
-        break;
+        /* UART setup alone was never an SBUS parser. Reject it explicitly
+         * rather than accepting frames through the i-BUS checksum grammar. */
+        return ESP_ERR_NOT_SUPPORTED;
     default:
         return ESP_ERR_INVALID_ARG;
     }
@@ -177,6 +178,7 @@ static void record_bad_header(ibus_receiver_handle_t handle)
         return;
     }
     handle->bad_header_frames++;
+    handle->consecutive_invalid_frames++;
     xSemaphoreGive(handle->lock);
 }
 
@@ -189,6 +191,7 @@ static void process_frame(ibus_receiver_handle_t handle, const uint8_t frame[IBU
     handle->frames_seen++;
     if (frame[0] != IBUS_FRAME_HEADER_LENGTH || frame[1] != IBUS_FRAME_COMMAND_CHANNELS) {
         handle->bad_header_frames++;
+        handle->consecutive_invalid_frames++;
         xSemaphoreGive(handle->lock);
         return;
     }
@@ -198,6 +201,7 @@ static void process_frame(ibus_receiver_handle_t handle, const uint8_t frame[IBU
                         ((uint16_t)frame[IBUS_FRAME_LENGTH - 1] << 8);
     if (received != expected) {
         handle->bad_checksum_frames++;
+        handle->consecutive_invalid_frames++;
         xSemaphoreGive(handle->lock);
         return;
     }
@@ -207,6 +211,7 @@ static void process_frame(ibus_receiver_handle_t handle, const uint8_t frame[IBU
         handle->channels[i] = (uint16_t)frame[offset] | ((uint16_t)frame[offset + 1] << 8);
     }
     handle->valid_frames++;
+    handle->consecutive_invalid_frames = 0U;
     handle->last_frame_ms = now_ms();
     xSemaphoreGive(handle->lock);
 }
@@ -293,6 +298,10 @@ esp_err_t ibus_receiver_init(const ibus_receiver_config_t *config, ibus_receiver
         mode = IBUS_RECEIVER_MODE_IBUS_INVERTED;
     }
     handle->config.mode = mode;
+    if (!mode_is_implemented(mode)) {
+        free(handle);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (handle->config.stale_timeout_ms == 0) {
         handle->config.stale_timeout_ms = mode == IBUS_RECEIVER_MODE_PPM
                                               ? PPM_DEFAULT_STALE_TIMEOUT_MS
@@ -435,7 +444,9 @@ esp_err_t ibus_receiver_set_mode(ibus_receiver_handle_t handle, ibus_receiver_mo
     }
     const bool current_is_ppm = handle->config.mode == IBUS_RECEIVER_MODE_PPM;
     const bool requested_is_ppm = mode == IBUS_RECEIVER_MODE_PPM;
-    if (current_is_ppm || requested_is_ppm) {
+    if (!mode_is_implemented(mode)) {
+        err = ESP_ERR_NOT_SUPPORTED;
+    } else if (current_is_ppm || requested_is_ppm) {
         err = current_is_ppm && requested_is_ppm ? ESP_OK : ESP_ERR_NOT_SUPPORTED;
     } else {
         err = apply_uart_mode(handle, mode);
@@ -481,6 +492,7 @@ esp_err_t ibus_receiver_get_status(ibus_receiver_handle_t handle, ibus_receiver_
         status->invalid_pulses = ppm_status.invalid_pulses;
         status->incomplete_frames = ppm_status.incomplete_frames;
         status->overflow_pulses = ppm_status.overflow_pulses;
+        status->rejected_frames = ppm_status.rejected_frames;
         status->frame_channel_count = ppm_status.channel_count;
         memcpy(status->channels, ppm_status.channels, sizeof(status->channels));
         xSemaphoreGive(handle->lock);
@@ -492,6 +504,7 @@ esp_err_t ibus_receiver_get_status(ibus_receiver_handle_t handle, ibus_receiver_
     status->valid_frames = handle->valid_frames;
     status->bad_header_frames = handle->bad_header_frames;
     status->bad_checksum_frames = handle->bad_checksum_frames;
+    status->consecutive_invalid_frames = handle->consecutive_invalid_frames;
     status->frame_channel_count = handle->valid_frames > 0 ? IBUS_RECEIVER_CHANNELS : 0;
     memcpy(status->channels, handle->channels, sizeof(status->channels));
     status->raw_sample_count = handle->raw_sample_count;

@@ -153,6 +153,9 @@ typedef struct {
     bool enabled;
     uint8_t channel;
     uint16_t active_max_us;
+    /* PPM has no checksum. A valid CH5 level must persist across this many
+     * distinct accepted frames before it changes source authority. */
+    uint8_t transition_confirm_good_frames;
 } robot_rc_lan_interlock_profile_t;
 
 /* Profile-owned mapping from a validated PPM receiver frame to differential
@@ -164,6 +167,8 @@ typedef struct {
  * broad valid frame never silently becomes a broad full-scale command. */
 typedef struct {
     bool enabled;
+    /* Exact structural frame contract for this receiver profile. */
+    uint8_t expected_frame_channels;
     uint8_t throttle_channel;
     uint8_t steering_channel;
     uint8_t enable_channel;

@@ -58,6 +58,8 @@ static robot_endpoint_health_t map_health(svd48_channel_health_t health)
     switch (health) {
     case SVD48_CHANNEL_HEALTH_HEALTHY:
         return ROBOT_ENDPOINT_HEALTH_HEALTHY;
+    case SVD48_CHANNEL_HEALTH_SUSPECT:
+        return ROBOT_ENDPOINT_HEALTH_HEALTHY;
     case SVD48_CHANNEL_HEALTH_DEGRADED:
         return ROBOT_ENDPOINT_HEALTH_DEGRADED;
     case SVD48_CHANNEL_HEALTH_OFFLINE:

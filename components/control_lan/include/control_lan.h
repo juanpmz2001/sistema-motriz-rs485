@@ -92,6 +92,11 @@ typedef struct {
     uint32_t packets_seen;
     uint32_t packets_accepted;
     uint32_t packets_rejected;
+    uint32_t sequence_gaps;
+    uint32_t duplicate_or_out_of_order;
+    uint32_t invalid_schema;
+    uint32_t auth_failures;
+    uint32_t last_valid_command_age_ms;
     char last_sender[CONTROL_LAN_SENDER_MAX];
     char last_action[CONTROL_LAN_ACTION_MAX];
     char last_detail[CONTROL_LAN_DETAIL_MAX];

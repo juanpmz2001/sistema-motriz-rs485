@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "communication_quality_model.h"
 #include "robot_capabilities.h"
 
 #ifdef __cplusplus
@@ -110,6 +111,7 @@ typedef struct {
     uint32_t valid_observations;
     uint32_t failed_observations;
     uint32_t stale_observations;
+    communication_quality_snapshot_t communication_quality;
     int16_t status;
     int16_t observed_speed_rpm;
     int16_t current_deciamp;

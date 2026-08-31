@@ -938,7 +938,10 @@ static bool test_partial_poll_preserves_independent_speed_freshness(void)
     HOST_TEST_CHECK((snapshot.failed_observations & SVD48_OBSERVATION_CURRENT) == 0U);
     HOST_TEST_CHECK(snapshot.last_poll_result == SVD48_DEVICE_PARTIAL);
     HOST_TEST_CHECK(snapshot.online && !snapshot.stale);
-    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_DEGRADED);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_HEALTHY);
+    HOST_TEST_CHECK(snapshot.communication_quality.quality ==
+                    COMMUNICATION_QUALITY_TRANSIENT_FAILURE);
+    HOST_TEST_CHECK(snapshot.communication_quality.consecutive_failures == 1U);
 
     fixture.now_ms = 1201U;
     HOST_TEST_CHECK(queue_read_response(&fixture.bus, 1U, 0x5418U, position, 4U));
@@ -955,7 +958,7 @@ static bool test_partial_poll_preserves_independent_speed_freshness(void)
     return true;
 }
 
-static bool test_total_poll_failure_degrades_then_goes_offline(void)
+static bool test_total_poll_failure_uses_quality_thresholds_and_age(void)
 {
     device_fixture_t fixture;
     HOST_TEST_CHECK(fixture_init(&fixture, 0U, 1000U));
@@ -994,14 +997,57 @@ static bool test_total_poll_failure_degrades_then_goes_offline(void)
                     (SVD48_OBSERVATION_POSITION |
                      SVD48_OBSERVATION_SPEED |
                      SVD48_OBSERVATION_CURRENT));
-    HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
-                    SVD48_CHANNEL_HEALTH_DEGRADED);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_HEALTHY);
+    HOST_TEST_CHECK(snapshot.communication_quality.quality ==
+                    COMMUNICATION_QUALITY_TRANSIENT_FAILURE);
 
-    fixture.now_ms = 1101U;
+    /* A second failed primary poll is suspect but remains last-known-good. */
+    fixture.now_ms = 300U;
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5418U, 4U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5410U, 2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5414U, 2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_TIMEOUT);
     HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
-    HOST_TEST_CHECK(!snapshot.online && snapshot.stale);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_SUSPECT);
+
+    /* Three consecutive primary failures are an effective degradation. */
+    fixture.now_ms = 400U;
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5418U, 4U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5410U, 2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(queue_read_result(&fixture.bus, 1U, 0x5414U, 2U,
+                                     BUS_TRANSPORT_TIMEOUT));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_TIMEOUT);
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_DEGRADED);
+
+    /* One good primary poll starts recovery but does not erase the derived
+     * degraded state; the configured second good poll restores HEALTHY. */
+    fixture.now_ms = 450U;
+    HOST_TEST_CHECK(queue_fast_poll(&fixture.bus, 51, -51, 12, 13));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_SUSPECT);
+    HOST_TEST_CHECK(snapshot.communication_quality.quality ==
+                    COMMUNICATION_QUALITY_RECOVERING);
+    fixture.now_ms = 500U;
+    HOST_TEST_CHECK(queue_fast_poll(&fixture.bus, 52, -52, 14, 15));
+    HOST_TEST_CHECK(svd48_device_poll(&fixture.device) == SVD48_DEVICE_OK);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_HEALTHY);
+
+    fixture.now_ms = 1501U;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(snapshot.online && snapshot.stale);
     HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
-                    SVD48_CHANNEL_HEALTH_OFFLINE);
+                    SVD48_CHANNEL_HEALTH_STALE);
+    fixture.now_ms = 2501U;
+    HOST_TEST_CHECK(svd48_channel_get_snapshot(m1, &snapshot));
+    HOST_TEST_CHECK(!snapshot.online);
+    HOST_TEST_CHECK(svd48_channel_get_health(m1) == SVD48_CHANNEL_HEALTH_OFFLINE);
     return true;
 }
 
@@ -1025,7 +1071,7 @@ static bool test_slow_diagnostics_do_not_make_live_velocity_communication_stale(
     snapshot.stale_observations = 0U;
     snapshot.failed_observations = SVD48_OBSERVATION_CURRENT;
     HOST_TEST_CHECK(svd48_channel_health_from_snapshot(&snapshot) ==
-                    SVD48_CHANNEL_HEALTH_DEGRADED);
+                    SVD48_CHANNEL_HEALTH_HEALTHY);
     return true;
 }
 
@@ -1100,7 +1146,7 @@ static bool test_successful_read_clears_failed_observation(void)
     HOST_TEST_CHECK((snapshot.failed_observations &
                      SVD48_OBSERVATION_SPEED) != 0U);
     HOST_TEST_CHECK(svd48_channel_get_health(m1) ==
-                    SVD48_CHANNEL_HEALTH_DEGRADED);
+                    SVD48_CHANNEL_HEALTH_HEALTHY);
 
     fixture.now_ms = 230U;
     HOST_TEST_CHECK(queue_fast_poll(&fixture.bus, 55, -55, 22, 23));
@@ -1197,7 +1243,7 @@ int main(void)
         HOST_TEST_CASE(test_modbus_response_validation),
         HOST_TEST_CASE(test_successful_poll_has_rpm_and_fresh_observations),
         HOST_TEST_CASE(test_partial_poll_preserves_independent_speed_freshness),
-        HOST_TEST_CASE(test_total_poll_failure_degrades_then_goes_offline),
+        HOST_TEST_CASE(test_total_poll_failure_uses_quality_thresholds_and_age),
         HOST_TEST_CASE(test_slow_diagnostics_do_not_make_live_velocity_communication_stale),
         HOST_TEST_CASE(test_fresh_fault_clears_after_zero_error_poll),
         HOST_TEST_CASE(test_successful_read_clears_failed_observation),

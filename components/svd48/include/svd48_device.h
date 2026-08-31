@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "bus_transport.h"
+#include "communication_quality_model.h"
 #include "svd48_protocol.h"
 
 #ifdef __cplusplus
@@ -50,6 +51,7 @@ typedef enum {
 typedef enum {
     SVD48_CHANNEL_HEALTH_UNKNOWN = 0,
     SVD48_CHANNEL_HEALTH_HEALTHY,
+    SVD48_CHANNEL_HEALTH_SUSPECT,
     SVD48_CHANNEL_HEALTH_DEGRADED,
     SVD48_CHANNEL_HEALTH_OFFLINE,
     SVD48_CHANNEL_HEALTH_FAULT,
@@ -112,6 +114,9 @@ typedef struct {
     uint32_t observation_update_ms[SVD48_OBSERVATION_COUNT];
     uint32_t last_poll_ms;
     svd48_device_result_t last_poll_result;
+    /* Effective primary velocity-observation quality. It is deliberately
+     * separate from a raw field's latest failed attempt. */
+    communication_quality_snapshot_t communication_quality;
     uint8_t last_exception_function;
     uint8_t last_exception_code;
     uint32_t last_exception_ms;
@@ -174,6 +179,7 @@ typedef struct {
     uint32_t response_timeout_ms;
     uint8_t retries;
     uint32_t stale_timeout_ms;
+    communication_quality_policy_t observation_quality_policy;
     svd48_device_lock_t state_lock;
     svd48_device_clock_ms_fn clock_ms;
     void *clock_context;
@@ -208,6 +214,8 @@ struct svd48_device {
     svd48_channel_t channels[SVD48_DEVICE_CHANNEL_COUNT];
     svd48_channel_snapshot_t snapshots[SVD48_DEVICE_CHANNEL_COUNT];
     svd48_device_communication_t communication;
+    communication_quality_model_t
+        observation_quality[SVD48_DEVICE_CHANNEL_COUNT];
     uint32_t poll_count;
     bool poll_in_progress;
     bool initialized;

@@ -64,6 +64,10 @@ static void record_status(robot_safety_handle_t handle,
         handle->status.rc_lan_channel_us = interlock->channel_us;
         handle->status.rc_lan_priority_epoch = interlock->priority_epoch;
         handle->status.rc_lan_interlock_state = interlock->state;
+        handle->status.rc_lan_candidate_valid_frames =
+            interlock->candidate_valid_frames;
+        handle->status.rc_lan_transition_confirm_good_frames =
+            interlock->transition_confirm_good_frames;
     }
     handle->status.rc_last_frame_age_ms = rc_last_frame_age_ms;
     handle->status.loop_count++;
@@ -139,6 +143,7 @@ static void safety_task(void *arg)
         const robot_safety_rc_lan_observation_t interlock_observation = {
             .receiver_available = rc_available,
             .signal_valid = rc_signal_valid,
+            .valid_frame_sequence = have_ibus_status ? ibus_status.valid_frames : 0U,
             .channel_count = have_ibus_status ? ibus_status.frame_channel_count : 0U,
             .channels = have_ibus_status ? ibus_status.channels : NULL,
         };

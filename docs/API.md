@@ -75,9 +75,12 @@ READ_REG 1 0x5018 1
 
 `IBUS_STATUS` is a read-only cached receiver snapshot. In PPM mode it includes
 `PULSE_MIN_US` and `PULSE_MAX_US`, the active decoder acceptance window, alongside
-mode, GPIO, freshness, frame counters and channel values. It does not sample the pin
-or wait for a new frame. Use it for bounded host monitoring; do not place the
-blocking `PPM_CAPTURE` diagnostic in a live monitoring path.
+mode, GPIO, freshness, frame counters and channel values. It also includes `REJECTED`
+and `CONSECUTIVE_INVALID` as raw integrity evidence. Rafa accepts exactly eight
+pulses: a short or extra frame increments counters but never replaces cached channels
+or the valid-frame count. It does not sample the pin or wait for a new frame. Use it
+for bounded host monitoring; do not place the blocking `PPM_CAPTURE` diagnostic in a
+live monitoring path.
 
 Logical motor numbers depend on the selected build profile. `current_robot` exposes
 `0..3`; `bench_single_svd48_motor` exposes only `0`, and rejects `1`. The mapping is
@@ -111,7 +114,7 @@ must not turn the bus address into logical robot identity.
 existing cached driver snapshot. It performs no immediate RS485 transaction:
 
 ```text
-DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> STATUS:<n> RPM:<rpm> CURRENT_DA:<n> BUS_DV:<n> MOTOR_TEMP_DC:<n> MOS_TEMP_DC:<n> POS:<n> ERROR:0x<hex> ONLINE:<0|1> STALE:<0|1> HEALTH:<health> VALID_MASK:0x<hex> FAILED_MASK:0x<hex> STALE_MASK:0x<hex> COMM_ERR:<n> EXC_FUNC:0x<hex> EXC_CODE:0x<hex> EXC_AGE_MS:<n>
+DATA SVD48_CHANNEL_TELEMETRY DEVICE_ID:<id> CHANNEL:<M1|M2> ENDPOINT_BOUND:<0|1> ENDPOINT_ID:<id|0> STATUS:<n> RPM:<rpm> CURRENT_DA:<n> BUS_DV:<n> MOTOR_TEMP_DC:<n> MOS_TEMP_DC:<n> POS:<n> ERROR:0x<hex> ONLINE:<0|1> STALE:<0|1> HEALTH:<health> VALID_MASK:0x<hex> FAILED_MASK:0x<hex> STALE_MASK:0x<hex> COMM_HEALTH:<health> COMM_QUALITY:<quality> LKG_AGE_MS:<n> CONSEC_FAIL:<n> CONSEC_GOOD:<n> TOTAL_FAIL:<n> LAST_FAILURE:<result> COMM_ERR:<n> EXC_FUNC:0x<hex> EXC_CODE:0x<hex> EXC_AGE_MS:<n>
 ```
 
 The five typed bench operations are:
@@ -585,9 +588,15 @@ of endpoint lines:
 
 ```text
 DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:<NONE|LAN|RC> DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
-DATA CONTROL_AUTHORITY LAN_ELIGIBLE:<0|1> RC_INTERLOCK:<DISABLED|RC_NO_SIGNAL|RC_FAILSAFE|PPM_PRIORITY|PPM_LOST|RC_CHANNEL_UNAVAILABLE> RC_CH5_US:<n|0> LAN_REVOCATION_EPOCH:<n>
+DATA CONTROL_AUTHORITY LAN_ELIGIBLE:<0|1> RC_INTERLOCK:<DISABLED|RC_NO_SIGNAL|RC_FAILSAFE|PPM_PRIORITY|PPM_LOST|RC_CHANNEL_UNAVAILABLE|PPM_PRIORITY_CANDIDATE|RC_FAILSAFE_CANDIDATE> RC_CH5_US:<n|0> LAN_REVOCATION_EPOCH:<n>
+DATA CONTROL_LINK TASK:<RUNNING|STOPPED> ACCEPTED:<n> REJECTED:<n> GAPS:<n> DUPLICATE_OR_OOO:<n> INVALID_SCHEMA:<n> AUTH_FAILURES:<n> LAST_VALID_COMMAND_AGE_MS:<n|4294967295>
 DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> OBSERVED_RPM:<rpm> OBSERVATION_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<health>
 ```
+
+`DATA CONTROL_LINK` is transport-quality evidence only. A sequence gap is counted but
+does not stop a still-fresh stream; a duplicate/out-of-order packet is rejected and
+does not refresh it. The existing `TTL_MS`, deadman and explicit STOP/DISARM rules
+remain the only continuous-motion deadline and authority contract.
 
 Profiles without qualified differential geometry return `ERR CONTROL_UNAVAILABLE`.
 The current `rafa` profile carries its operator-qualified M1/M2 side/sign mapping and

@@ -250,6 +250,46 @@ CH6 linearly scales both axes from 0.50 to 1.00. Differential v1 consumes track 
 and radius, not wheelbase. These are the profile values in Rafa's OTA-verified build
 35, not physical motion evidence.
 
+## Communication reliability ownership
+
+The firmware distinguishes one raw wire attempt from an operational conclusion.
+`communication_quality_model` is a small pure temporal primitive used by the SVD48
+primary velocity observations. It retains last-good timestamp, raw failure reason,
+consecutive/total good and failure counters, source-owned age thresholds, and an
+effective state. It does not parse CRCs, frames or device faults: those remain in
+their protocol owners.
+
+For each SVD48 M1/M2 channel, position, speed and current are the high-rate liveness
+set. A bad CRC, timeout or incomplete primary transaction preserves their cached
+values and timestamps, then updates quality as `TRANSIENT_FAILURE` (one failure),
+`SUSPECT` (two), or `DEGRADED` (three). A last-good age beyond the configured stale or
+offline threshold wins regardless of count; recovery from degraded/stale/offline
+requires two complete primary observations. Slow status, temperature and bus fields
+retain independent timestamps and may be stale without making the velocity endpoint
+stale. A fresh, valid nonzero SVD48 controller error remains an immediate `FAULT` and
+does not pass through this debounce.
+
+PPM has no checksum, so its integrity boundary is `ppm_decoder`: Rafa's profile
+requires exactly eight pulses. Frames with fewer or extra pulses are counted and
+discarded atomically; they never replace channels, advance the valid-frame sequence,
+affect CH5, or reach `ppm_motion_source`. `robot_safety_rc_lan_interlock_model` owns
+the separate three-fresh-frame CH5 authority confirmation. Lack of accepted frames
+still follows the unchanged receiver/safety age deadline; confirmation never extends
+it. `ppm_motion_source` receives an explicit confirmed-priority gate and therefore
+cannot turn a candidate frame into RC motion.
+
+`control_lan` keeps its existing command-authority/TTL path. Its status now reports
+accepted/rejected packets, sequence gaps, duplicate/out-of-order packets, schema and
+authentication rejects, and last-valid-command age. These are link-quality evidence;
+they do not create a second deadline or relax the existing TTL/deadman STOP behavior.
+
+The read-only maintenance projection exposes resulting SVD48 quality, LKG age,
+streaks and raw last failure alongside existing field masks. It is a cached diagnostic
+view; it does not start an RS485 transaction or become an actuation owner. See
+[Communication reliability audit](COMMUNICATION_RELIABILITY_AUDIT.md) and
+[communication safety matrix](COMMUNICATION_SAFETY_MATRIX.md) for the full
+cross-vertical contract.
+
 The transitional legacy `MOVE_VEL` facade remains a distinct four-wheel implementation
 and is enabled only when four legacy SVD48 bindings and a positive wheelbase exist.
 Rafa's two-endpoint geometry activates only the dedicated `motion_application` path;

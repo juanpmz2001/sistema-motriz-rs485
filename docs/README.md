@@ -23,6 +23,11 @@ Physical observations are evidence only for the conditions and artifact they nam
 - [Architecture](ARCHITECTURE.md) is the as-built runtime, composition and
   concurrency description.
 - [Safety](SAFETY.md) is the safety contract and release-gate source.
+- [Communication reliability audit](COMMUNICATION_RELIABILITY_AUDIT.md) is the
+  Phase-0 current-main matrix for integrity, delivery, freshness, quality,
+  health and presentation across firmware and Console paths.
+- [Communication safety matrix](COMMUNICATION_SAFETY_MATRIX.md) defines which
+  events are immediate safety facts versus quality, confirmation or age states.
 - [API](API.md), [SVD48](SVD48.md), and [OTA](OTA.md) own their respective public
   and operational contracts.
 - [Testing guide](TESTING_ARCHITECTURE_GUIDE.md) owns test levels, evidence classes

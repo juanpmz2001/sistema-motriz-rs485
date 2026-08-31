@@ -92,6 +92,13 @@ static control_lan_authority_status_t control_lan_authority_status(
     return status;
 }
 
+static bool ppm_priority_confirmed(void *context)
+{
+    robot_safety_status_t status = {0};
+    return context && robot_safety_get_status(context, &status) == ESP_OK &&
+           status.rc_lan_interlock_state == ROBOT_SAFETY_RC_LAN_PPM_PRIORITY;
+}
+
 static control_lan_callback_result_t control_lan_event_callback(
     control_lan_event_t event,
     void *context)
@@ -178,6 +185,8 @@ static esp_err_t start_control_plane(void)
             .motion_application = motion_application,
             .period_ms = PPM_MOTION_SOURCE_DEFAULT_PERIOD_MS,
             .task_priority = PPM_MOTION_SOURCE_DEFAULT_TASK_PRIORITY,
+            .priority_confirmed = ppm_priority_confirmed,
+            .priority_context = robot_safety,
         };
         error = ppm_motion_source_init(&ppm_config, &ppm_motion_source);
         if (error == ESP_OK) {
@@ -533,8 +542,12 @@ void app_main(void)
             .stale_timeout_ms = 300,
             .invert_rx = false,
             .mode = IBUS_RECEIVER_MODE_PPM,
-            .ppm_channel_count = 10,
-            .ppm_min_frame_channels = 4,
+            .ppm_channel_count = profile->ppm_motion.enabled
+                                     ? profile->ppm_motion.expected_frame_channels
+                                     : 8U,
+            .ppm_min_frame_channels = profile->ppm_motion.enabled
+                                         ? profile->ppm_motion.expected_frame_channels
+                                         : 8U,
             .ppm_sync_threshold_us = 3000,
             .ppm_min_pulse_us = profile->ppm_motion.enabled
                                     ? profile->ppm_motion.valid_min_us
@@ -571,6 +584,8 @@ void app_main(void)
             .enabled = profile->rc_lan_interlock.enabled,
             .channel = profile->rc_lan_interlock.channel,
             .active_max_us = profile->rc_lan_interlock.active_max_us,
+            .transition_confirm_good_frames =
+                profile->rc_lan_interlock.transition_confirm_good_frames,
         },
     };
     err = robot_safety_init(&safety_config, &robot_safety);
@@ -633,6 +648,7 @@ void app_main(void)
             motion_application),
         .motion_status = motion_application_service_status_port(
             motion_application),
+        .control_lan = control_lan,
         .svd48_workspace =
             robot_composition_svd48_workspace_port(&composition),
         .as5600_diagnostics =

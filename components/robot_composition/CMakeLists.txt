@@ -3,7 +3,7 @@ idf_component_register(SRCS "robot_composition.c"
                        REQUIRES freertos esp_timer esp_driver_uart
                                 actuation_coordinator robot_capabilities
                                 robot_profile robot_driver_factory robot_control
-                                bus_transport rs485_transport svd48
+                                bus_transport rs485_transport svd48 communication_quality
                                 svd48_channel_endpoint_adapter
                                 as5600_device as5600_position_endpoint_adapter
                                 i2c_bitbang_transport motor_mode_pwm

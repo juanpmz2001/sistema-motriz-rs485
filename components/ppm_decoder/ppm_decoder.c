@@ -133,6 +133,7 @@ bool ppm_decoder_get_status(ppm_decoder_handle_t handle, ppm_decoder_status_t *s
     status->incomplete_frames = model_status.incomplete_frames;
     status->invalid_pulses = model_status.invalid_pulses;
     status->overflow_pulses = model_status.overflow_pulses;
+    status->rejected_frames = model_status.rejected_frames;
     status->channel_count = model_status.channel_count;
     memcpy(status->channels, model_status.channels, sizeof(status->channels));
     return true;

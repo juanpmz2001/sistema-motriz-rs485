@@ -1,4 +1,5 @@
 #include "control_lan.h"
+#include "control_lan_sequence_model.h"
 
 #include <errno.h>
 #include <float.h>
@@ -34,6 +35,7 @@ struct control_lan_t {
     bool stream_active;
     uint64_t active_stream_hash;
     uint64_t last_sequence;
+    uint64_t last_valid_command_us;
     uint32_t active_authority_epoch;
     control_lan_status_t status;
 };
@@ -446,6 +448,18 @@ static void record_packet(control_lan_handle_t handle,
         handle->status.packets_accepted++;
     } else {
         handle->status.packets_rejected++;
+        if (detail && strcmp(detail, "AUTH_FAILED") == 0) {
+            handle->status.auth_failures++;
+        } else if (detail && strcmp(detail, "SEQUENCE_NOT_INCREASING") == 0) {
+            handle->status.duplicate_or_out_of_order++;
+        } else if (detail && (strncmp(detail, "BAD_", 4U) == 0 ||
+                              strncmp(detail, "JSON_", 5U) == 0 ||
+                              strcmp(detail, "PACKET_TOO_LARGE") == 0)) {
+            /* The detailed raw reason remains in last_detail. Source
+             * authority and motion-application rejections are intentionally
+             * not mislabelled as malformed schema. */
+            handle->status.invalid_schema++;
+        }
     }
     copy_text(handle->status.last_sender, sizeof(handle->status.last_sender), sender);
     copy_text(handle->status.last_action, sizeof(handle->status.last_action), action);
@@ -519,14 +533,18 @@ static const char *validate_event_order(control_lan_handle_t handle,
         if (event->stream_id_hash != handle->active_stream_hash) {
             return "STREAM_MISMATCH";
         }
-        return event->sequence > handle->last_sequence ? NULL
-                                                       : "SEQUENCE_NOT_INCREASING";
+        return control_lan_sequence_is_increasing(handle->last_sequence,
+                                                  event->sequence)
+                   ? NULL
+                   : "SEQUENCE_NOT_INCREASING";
     }
 
     if (handle->stream_active &&
         event->stream_id_hash == handle->active_stream_hash) {
-        return event->sequence > handle->last_sequence ? NULL
-                                                       : "SEQUENCE_NOT_INCREASING";
+        return control_lan_sequence_is_increasing(handle->last_sequence,
+                                                  event->sequence)
+                   ? NULL
+                   : "SEQUENCE_NOT_INCREASING";
     }
     return NULL;
 }
@@ -588,6 +606,22 @@ static void commit_event_order(control_lan_handle_t handle,
     if (!callback_accepted) {
         return;
     }
+    const bool same_stream_command =
+        handle->stream_active &&
+        event->stream_id_hash == handle->active_stream_hash &&
+        (event->action == CONTROL_LAN_ACTION_ARM ||
+         event->action == CONTROL_LAN_ACTION_COMMAND);
+    const uint32_t gap = same_stream_command
+                             ? control_lan_sequence_gap_count(handle->last_sequence,
+                                                              event->sequence)
+                             : 0U;
+    if (gap > 0U) {
+        state_lock(handle);
+        handle->status.sequence_gaps = UINT32_MAX - handle->status.sequence_gaps < gap
+                                           ? UINT32_MAX
+                                           : handle->status.sequence_gaps + gap;
+        state_unlock(handle);
+    }
     if (event->action == CONTROL_LAN_ACTION_ARM &&
         (!handle->stream_active ||
          event->stream_id_hash != handle->active_stream_hash)) {
@@ -597,6 +631,9 @@ static void commit_event_order(control_lan_handle_t handle,
         handle->active_authority_epoch = authority_epoch;
     }
     handle->last_sequence = event->sequence;
+    if (event->action == CONTROL_LAN_ACTION_COMMAND) {
+        handle->last_valid_command_us = event->timestamp_us;
+    }
 }
 
 static void handle_packet(control_lan_handle_t handle,
@@ -1056,6 +1093,7 @@ esp_err_t control_lan_init(const control_lan_config_t *config, control_lan_handl
     handle->config.task_priority = task_priority;
     handle->socket_fd = -1;
     handle->status.listen_port = handle->config.listen_port;
+    handle->status.last_valid_command_age_ms = UINT32_MAX;
     copy_text(handle->status.last_detail, sizeof(handle->status.last_detail), "NEVER_RUN");
     handle->status.lan_allowed = true;
     copy_text(handle->status.authority_detail,
@@ -1152,6 +1190,11 @@ esp_err_t control_lan_get_status(control_lan_handle_t handle, control_lan_status
 
     state_lock(handle);
     *status = handle->status;
+    status->last_valid_command_age_ms = handle->last_valid_command_us == 0U
+                                            ? UINT32_MAX
+                                            : (uint32_t)((uint64_t)esp_timer_get_time() -
+                                                         handle->last_valid_command_us) /
+                                                  1000U;
     state_unlock(handle);
     return ESP_OK;
 }

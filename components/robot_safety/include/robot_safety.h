@@ -39,6 +39,8 @@ typedef struct {
     bool lan_control_allowed;
     uint16_t rc_lan_channel_us;
     uint32_t rc_lan_priority_epoch;
+    uint32_t rc_lan_candidate_valid_frames;
+    uint8_t rc_lan_transition_confirm_good_frames;
     robot_safety_rc_lan_interlock_state_t rc_lan_interlock_state;
     uint32_t rc_last_frame_age_ms;
     uint32_t loop_count;

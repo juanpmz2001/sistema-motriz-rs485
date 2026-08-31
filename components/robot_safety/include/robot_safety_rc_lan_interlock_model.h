@@ -17,6 +17,8 @@ typedef enum {
     ROBOT_SAFETY_RC_LAN_PPM_PRIORITY,
     ROBOT_SAFETY_RC_LAN_PPM_LOST,
     ROBOT_SAFETY_RC_LAN_CHANNEL_UNAVAILABLE,
+    ROBOT_SAFETY_RC_LAN_PPM_PRIORITY_CANDIDATE,
+    ROBOT_SAFETY_RC_LAN_FAILSAFE_CANDIDATE,
 } robot_safety_rc_lan_interlock_state_t;
 
 typedef struct {
@@ -25,11 +27,15 @@ typedef struct {
     uint8_t channel;
     /* A valid pulse at or below this value means PPM has priority. */
     uint16_t active_max_us;
+    uint8_t transition_confirm_good_frames;
 } robot_safety_rc_lan_interlock_config_t;
 
 typedef struct {
     bool receiver_available;
     bool signal_valid;
+    /* Sequence from accepted receiver frames. Re-reading last-known-good
+     * channels must not count as another confirmation. */
+    uint32_t valid_frame_sequence;
     uint8_t channel_count;
     const uint16_t *channels;
 } robot_safety_rc_lan_observation_t;
@@ -37,6 +43,10 @@ typedef struct {
 typedef struct {
     robot_safety_rc_lan_interlock_config_t config;
     robot_safety_rc_lan_interlock_state_t state;
+    robot_safety_rc_lan_interlock_state_t committed_state;
+    robot_safety_rc_lan_interlock_state_t candidate_state;
+    uint32_t candidate_valid_frames;
+    uint32_t last_observed_frame_sequence;
     uint32_t priority_epoch;
     bool initialized;
 } robot_safety_rc_lan_interlock_model_t;
@@ -46,6 +56,8 @@ typedef struct {
     bool lan_allowed;
     uint16_t channel_us;
     uint32_t priority_epoch;
+    uint32_t candidate_valid_frames;
+    uint8_t transition_confirm_good_frames;
     char detail[ROBOT_SAFETY_RC_LAN_DETAIL_MAX];
 } robot_safety_rc_lan_interlock_snapshot_t;
 

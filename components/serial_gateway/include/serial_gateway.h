@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "actuation_application_port.h"
 #include "config_manager.h"
+#include "control_lan.h"
 #include "esp_err.h"
 #include "ibus_receiver.h"
 #include "motion_control_port.h"
@@ -41,6 +42,8 @@ typedef struct {
      * may observe state and revoke motion, but never publish velocity intent. */
     motion_control_port_t *motion_control;
     motion_status_port_t *motion_status;
+    /* Read-only Control LAN link-quality projection. */
+    control_lan_handle_t control_lan;
     /* Optional typed SVD48 inventory/cached-observation boundary. */
     svd48_workspace_port_t *svd48_workspace;
     /* Optional concrete L2/L3 read-only sensor diagnostic path. It is not an

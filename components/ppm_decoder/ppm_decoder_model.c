@@ -8,8 +8,7 @@ bool ppm_decoder_model_init(ppm_decoder_model_t *model,
 {
     if (!model || !config || config->channel_count == 0 ||
         config->channel_count > PPM_MAX_CHANNELS ||
-        config->min_frame_channels == 0 ||
-        config->min_frame_channels > config->channel_count ||
+        config->min_frame_channels != config->channel_count ||
         config->sync_threshold_us == 0 ||
         config->min_pulse_us == 0 ||
         config->max_pulse_us < config->min_pulse_us ||
@@ -42,10 +41,8 @@ bool ppm_decoder_model_feed_rising_edge(ppm_decoder_model_t *model, uint32_t now
     if (pulse_us >= model->config.sync_threshold_us) {
         model->sync_gaps++;
         bool published = false;
-        if (model->working_channel_count >= model->config.min_frame_channels) {
-            const uint8_t count = model->working_channel_count > model->config.channel_count
-                                      ? model->config.channel_count
-                                      : model->working_channel_count;
+        if (model->working_channel_count == model->config.channel_count) {
+            const uint8_t count = model->config.channel_count;
             memcpy(model->channels,
                    model->working_channels,
                    (size_t)count * sizeof(model->channels[0]));
@@ -54,6 +51,9 @@ bool ppm_decoder_model_feed_rising_edge(ppm_decoder_model_t *model, uint32_t now
             model->valid_frames++;
             published = true;
         } else if (model->working_channel_count > 0) {
+            /* Never publish a short or extended PPM frame.  Keep the prior
+             * atomically published frame and record the raw anomaly. */
+            model->rejected_frames++;
             model->incomplete_frames++;
         }
         model->working_channel_count = 0;
@@ -95,6 +95,7 @@ bool ppm_decoder_model_snapshot(const ppm_decoder_model_t *model,
     status->incomplete_frames = model->incomplete_frames;
     status->invalid_pulses = model->invalid_pulses;
     status->overflow_pulses = model->overflow_pulses;
+    status->rejected_frames = model->rejected_frames;
     status->channel_count = model->published_channel_count;
     memcpy(status->channels, model->channels, sizeof(status->channels));
     return true;

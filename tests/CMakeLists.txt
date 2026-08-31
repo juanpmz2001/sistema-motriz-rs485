@@ -62,6 +62,24 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME communication_quality_model_test
+    SOURCES
+        host/communication_quality_model_test.c
+        ../components/communication_quality/communication_quality_model.c
+    INCLUDE_DIRS
+        ../components/communication_quality/include
+)
+
+botfarms_add_host_test(
+    NAME control_lan_sequence_model_test
+    SOURCES
+        host/control_lan_sequence_model_test.c
+        ../components/control_lan/control_lan_sequence_model.c
+    INCLUDE_DIRS
+        ../components/control_lan/include
+)
+
+botfarms_add_host_test(
     NAME robot_kinematics_test
     SOURCES
         host/robot_kinematics_test.c
@@ -184,10 +202,12 @@ botfarms_add_host_test(
         host/svd48_device_test.c
         fakes/fake_bus_transport.c
         ../components/bus_transport/bus_transport.c
+        ../components/communication_quality/communication_quality_model.c
         ../components/svd48/svd48_device.c
         ../components/svd48/svd48_protocol.c
     INCLUDE_DIRS
         ../components/bus_transport/include
+        ../components/communication_quality/include
         ../components/svd48/include
     LINK_LIBRARIES Threads::Threads
 )
@@ -224,11 +244,13 @@ botfarms_add_host_test(
         host/svd48_poll_service_test.c
         fakes/fake_bus_transport.c
         ../components/bus_transport/bus_transport.c
+        ../components/communication_quality/communication_quality_model.c
         ../components/svd48/svd48_device.c
         ../components/svd48/svd48_poll_service.c
         ../components/svd48/svd48_protocol.c
     INCLUDE_DIRS
         ../components/bus_transport/include
+        ../components/communication_quality/include
         ../components/svd48/include
     LINK_LIBRARIES Threads::Threads
 )
@@ -239,12 +261,14 @@ botfarms_add_host_test(
         host/svd48_channel_endpoint_adapter_test.c
         fakes/fake_bus_transport.c
         ../components/bus_transport/bus_transport.c
+        ../components/communication_quality/communication_quality_model.c
         ../components/robot_capabilities/robot_capabilities.c
         ../components/svd48/svd48_device.c
         ../components/svd48/svd48_protocol.c
         ../components/svd48_channel_endpoint_adapter/svd48_channel_endpoint_adapter.c
     INCLUDE_DIRS
         ../components/bus_transport/include
+        ../components/communication_quality/include
         ../components/robot_capabilities/include
         ../components/svd48/include
         ../components/svd48_channel_endpoint_adapter/include

@@ -33,6 +33,7 @@ typedef struct {
     uint32_t incomplete_frames;
     uint32_t invalid_pulses;
     uint32_t overflow_pulses;
+    uint32_t rejected_frames;
 } ppm_decoder_model_t;
 
 typedef struct {
@@ -43,6 +44,7 @@ typedef struct {
     uint32_t incomplete_frames;
     uint32_t invalid_pulses;
     uint32_t overflow_pulses;
+    uint32_t rejected_frames;
     uint8_t channel_count;
     uint16_t channels[PPM_MAX_CHANNELS];
 } ppm_decoder_model_status_t;
