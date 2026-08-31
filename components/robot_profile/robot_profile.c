@@ -17,6 +17,13 @@
 #define RAFA_MAX_VX_MPS 0.80f
 /* pi / 6: 30 degrees per second. */
 #define RAFA_MAX_WZ_RADPS 0.5235988f
+/*
+ * Temporary B42 LAN-input diagnostic lease.  This remains inside the shared
+ * 50..500 ms profile contract: it gives a phone/browser heartbeat a bounded
+ * margin while preserving firmware expiry as the motion deadline.  Restore
+ * the qualified 300 ms Rafa value after the diagnostic comparison.
+ */
+#define RAFA_CONTROL_TTL_MS 500U
 
 static const robot_board_profile_t BOARD = {
     .id = "botfarms_esp32s3_rev1",
@@ -164,7 +171,7 @@ static const robot_profile_t RAFA BOTFARMS_UNUSED = {
         .max_vx_mps = RAFA_MAX_VX_MPS,
         .max_vy_mps = 0.0001f,
         .max_wz_radps = RAFA_MAX_WZ_RADPS,
-        .control_ttl_ms = 300U,
+        .control_ttl_ms = RAFA_CONTROL_TTL_MS,
     },
     /* The receiver's configured failsafe is CH5=2000us, so CH5>1500 leaves a
      * fresh LAN session eligible while CH5<=1500 grants PPM source priority. */

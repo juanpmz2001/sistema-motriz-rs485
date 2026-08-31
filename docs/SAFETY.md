@@ -65,15 +65,17 @@ power path.
   ARM creates a new nonzero stream, COMMAND requires an increasing sequence and
   explicit deadman, and the client cannot select its TTL. An asserted deadman with
   zero velocity applies zero endpoint targets (HOLD 0 for the current SVD48 adapter).
-  The current profile uses
-  300 ms; profile validation constrains this contract to 50–500 ms. A released deadman
+  Rafa build 42 temporarily uses 500 ms for the LAN-input diagnostic; profile
+  validation still constrains this contract to 50–500 ms. This is not a relaxed
+  deadman, RC-priority, STOP or expiry rule, and the qualified 300 ms value must be
+  restored after that comparison. A released deadman
   causes zero/global stop, and an expired source is
   retired before a stop is issued.
   A retired stream cannot resume without a new ARM/stream.
 - STOP and DISARM evict older pending motion intent and STOP plans are consumed before
   APPLY plans. This is semantic priority, not physical preemption: an already-running
   coordinator/driver transaction completes before the service can execute the next
-  stop. The 300 ms value and physical stop latency remain workshop-qualification
+  stop. The bounded TTL value and physical stop latency remain workshop-qualification
   gates. Rafa now carries the operator-qualified M1/M2 side and direction mapping;
   enabling the software path does not close its elevated expiry/stop or floor-motion
   gates.
@@ -137,7 +139,7 @@ all hazards are controlled.
 | `STOP n`, `STOP ALL` | application port → coordinator → direct SVD48 or steering endpoint adapter | Migrated for constructed stoppable endpoints |
 | `SET_ENDPOINT_SPEED`, `STOP_ENDPOINT` | application port → coordinator → direct SVD48 or steering adapter | Migrated; serial only |
 | `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP` | device/channel inventory lookup → application port → coordinator → direct SVD48 adapter | Migrated bench-only maintenance path; no lease/deadman, not `/control` |
-| `/control` LAN intent | `control_lan` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | Active only for validated differential profiles; fixed 300 ms current-profile TTL, software-tested, not physically qualified |
+| `/control` LAN intent | `control_lan` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | Active only for validated differential profiles; Rafa B42 temporarily uses the bounded 500 ms profile TTL for LAN-input diagnosis (normally 300 ms), software-tested, not physically qualified |
 | Rafa PPM intent | `ibus_receiver` → `ppm_motion_source` → `motion_application` (`command_authority` + `robot_kinematics`) → application port → coordinator → traction endpoints | CH5 source priority, neutral-before-arm, profile TTL; software-tested, not physically qualified |
 | Boot and safety stop | application port → coordinator → constructed stoppable adapters | Migrated; physical effectiveness remains unqualified |
 | `ENABLE` | gateway → `robot_control` compatibility facade | Bypass |
