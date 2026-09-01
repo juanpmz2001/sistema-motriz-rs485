@@ -301,6 +301,16 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME robot_runtime_authority_policy_test
+    SOURCES
+        host/robot_runtime_authority_policy_test.c
+        ../components/robot_profile/robot_runtime_authority_policy.c
+    INCLUDE_DIRS
+        ../components/robot_profile/include
+        ../components/robot_capabilities/include
+)
+
+botfarms_add_host_test(
     NAME robot_profile_bench_test
     SOURCES
         host/robot_profile_shape_test.c

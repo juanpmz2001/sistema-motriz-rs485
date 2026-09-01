@@ -18,6 +18,7 @@
 #include "robot_control.h"
 #include "robot_composition.h"
 #include "robot_profile.h"
+#include "robot_runtime_authority_policy.h"
 #include "robot_safety.h"
 #include "serial_gateway.h"
 #include "wifi_manager.h"
@@ -39,6 +40,23 @@ static motion_application_service_handle_t motion_application = NULL;
 static control_lan_handle_t control_lan = NULL;
 static ppm_motion_source_handle_t ppm_motion_source = NULL;
 static robot_composition_t composition;
+static robot_runtime_authority_policy_t runtime_authority_policy;
+
+static bool rafa_lan_only_diagnostic_requested(void)
+{
+#if defined(CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC) && \
+    CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
+    return true;
+#else
+    return false;
+#endif
+}
+
+static const char *runtime_profile_name(void)
+{
+    return robot_runtime_authority_profile_name(profile,
+                                                &runtime_authority_policy);
+}
 
 static bool motion_safety_gate(void *context,
                                char *detail,
@@ -58,8 +76,7 @@ static bool motion_safety_gate(void *context,
         snprintf(detail, detail_size, "%s", "MOTOR_FAULT");
         return false;
     }
-    if ((!profile || !profile->rc_lan_interlock.enabled) &&
-        status.rc_loss_active) {
+    if (runtime_authority_policy.stop_on_rc_loss && status.rc_loss_active) {
         snprintf(detail, detail_size, "%s", "RC_LOSS");
         return false;
     }
@@ -182,7 +199,7 @@ static esp_err_t start_control_plane(void)
         deinit_control_plane();
         return error;
     }
-    if (profile->ppm_motion.enabled) {
+    if (runtime_authority_policy.ppm_motion_active) {
         const ppm_motion_source_config_t ppm_config = {
             .profile = profile,
             .receiver = ibus_receiver,
@@ -349,7 +366,7 @@ static esp_err_t start_safe_diagnostic_gateway(
         .default_stream_period_ms = 200,
         .print_prompt = false,
         .diagnostic_only = true,
-        .profile_name = profile ? profile->name : robot_profile_selected_name(),
+        .profile_name = runtime_profile_name(),
         .board_name = profile && profile->board ? profile->board->id : "UNKNOWN",
         .profile_schema_valid = diagnostics->schema_valid,
         .composition_supported = diagnostics->composition_supported,
@@ -438,7 +455,13 @@ void app_main(void)
     }
 
     profile = robot_profile_selected();
+    runtime_authority_policy = robot_runtime_authority_policy_for(
+        profile, rafa_lan_only_diagnostic_requested());
     ESP_LOGI(TAG, "Selected robot profile:%s", robot_profile_selected_name());
+    if (runtime_authority_policy.lan_only_diagnostic_active) {
+        ESP_LOGW(TAG,
+                 "RAFA LAN-ONLY DIAGNOSTIC active: PPM observed only; RC authority disabled");
+    }
     const robot_bus_profile_t *rc_bus = robot_profile_find_bus_type(profile, ROBOT_BUS_GPIO);
     err = robot_composition_init(&composition, profile);
     if (err != ESP_OK) {
@@ -582,10 +605,10 @@ void app_main(void)
         /* Rafa's receiver failsafe is a source-selection input (CH5), not a
          * global reason to stop a valid LAN lease.  Legacy profiles retain
          * their existing generic RC-loss stop behavior. */
-        .stop_on_rc_loss = !profile->rc_lan_interlock.enabled,
+        .stop_on_rc_loss = runtime_authority_policy.stop_on_rc_loss,
         .stop_on_motor_fault = true,
         .rc_lan_interlock = {
-            .enabled = profile->rc_lan_interlock.enabled,
+            .enabled = runtime_authority_policy.rc_lan_interlock_active,
             .channel = profile->rc_lan_interlock.channel,
             .active_max_us = profile->rc_lan_interlock.active_max_us,
             .transition_confirm_good_frames =
@@ -671,7 +694,7 @@ void app_main(void)
         .fw_git_dirty = FW_GIT_DIRTY != 0,
         .default_stream_period_ms = 200,
         .print_prompt = false,
-        .profile_name = profile->name,
+        .profile_name = runtime_profile_name(),
         .board_name = profile->board->id,
         .profile_schema_valid = true,
         .composition_supported = true,

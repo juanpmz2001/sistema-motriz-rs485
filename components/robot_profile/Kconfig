@@ -14,3 +14,15 @@ config BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600
 config BOTFARMS_PROFILE_RAFA
     bool "Rafa sprayer (one dual-channel SVD48 and PPM RC)"
 endchoice
+
+config BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
+    bool "Temporary Rafa LAN-only authority diagnostic"
+    depends on BOTFARMS_PROFILE_RAFA
+    default n
+    help
+        Keep PPM decoding available for read-only receiver diagnostics, but do
+        not start the PPM motion source or let the RC/LAN interlock arbitrate
+        continuous control. LAN remains subject to its normal 300 ms profile
+        TTL, deadman, STOP and SVD/motor-fault safety paths. This is a
+        build-selected diagnostic mode, not a runtime command; rebuild Rafa
+        without this option after the comparison.

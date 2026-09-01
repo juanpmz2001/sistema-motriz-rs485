@@ -1,0 +1,3 @@
+# Temporary authority-isolation build. It does not authorize OTA or motion.
+CONFIG_BOTFARMS_PROFILE_RAFA=y
+CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC=y

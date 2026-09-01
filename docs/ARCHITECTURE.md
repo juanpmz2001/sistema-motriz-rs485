@@ -228,7 +228,7 @@ The supported profiles are:
 | `current_robot` | One referenced RS485 bus, devices at addresses 1 and 2 | Four logical endpoints, IDs 1–4, ordered drive 1 M1/M2 then drive 2 M1/M2 | Differential |
 | `bench_single_svd48_motor` | One referenced RS485 bus, one device at address 1 | Endpoint ID 1, `bench_motor`, at legacy index 0 and physical channel M1 | None |
 | `bench_single_steering_as5600` | One motor-mode PWM device, one AS5600 on its own I2C bus and one local steering controller | ID 1 `bench_steering_position` (`POSITION` + `POSITION_REFERENCE` + `STOPPABLE`); independent ID 2 `bench_steering_position_feedback` (`POSITION_OBSERVATION`) | None; development bench only |
-| `rafa` | One RS485 bus, one SVD48 at address 2; PPM source on GPIO14 | ID 1 `rafa_traction_m1`: right/+1; ID 2 `rafa_traction_m2`: left/−1; both direct-drive and ±40 RPM | Differential: radius 0.20 m, track 1.52 m, max vx 0.8 m/s, max wz pi/6 rad/s, temporary B42 TTL 500 ms (normally 300 ms) |
+| `rafa` | One RS485 bus, one SVD48 at address 2; PPM source on GPIO14 | ID 1 `rafa_traction_m1`: right/+1; ID 2 `rafa_traction_m2`: left/−1; both direct-drive and ±40 RPM | Differential: radius 0.20 m, track 1.52 m, max vx 0.8 m/s, max wz pi/6 rad/s, TTL 300 ms |
 
 The SVD48 bench profile does not invent a second controller. `SET_SPEED 0`, `STOP 0`
 and `STOP ALL` are routable; index 1 is invalid and `MOVE_VEL` is unsupported because
@@ -244,13 +244,20 @@ and CH4 high maps to a right turn. Its mandatory neutral-before-arm handshake is
 by the source; the source has no driver or transport dependency. Its
 operator-qualified differential profile maps M1 to right/+1 and M2 to left/−1 with
 direct drive, 0.20 m radius and 1.52 m track. Body limits are 0.8 m/s and pi/6 rad/s
-with a temporary B42 500 ms TTL (normally 300 ms); endpoint limits remain ±40 RPM.
-The diagnostic changes no deadman, STOP or RC-priority rule. CH2/CH4 calibration is
+with a 300 ms TTL; endpoint limits remain ±40 RPM. CH2/CH4 calibration is
 1000/1500/2000us inside a separate 750..2250us validity envelope, while profile-owned
 CH6 linearly scales both axes from 0.50 to 1.00. Differential v1 consumes track width
 and radius, not wheelbase. The geometry and mapping are the profile values in Rafa's
-OTA-verified build 35; B42 changes only its temporary diagnostic TTL. None of these
-are physical motion evidence.
+OTA-verified build 35. None of these are physical motion evidence.
+
+The separate build-selected `BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC` configuration keeps
+the same Rafa hardware profile and PPM decoder observations, but reports
+`PROFILE_STATUS NAME:rafa_lan_only_diagnostic`. It deliberately does not start
+`ppm_motion_source` and passes a disabled RC/LAN interlock to `robot_safety`; PPM
+cannot claim `SOURCE:RC`, revoke a LAN stream, or make observed RC loss issue a LAN
+STOP. It does not alter Control LAN's 300 ms TTL, endpoint limits, SVD48 fault path,
+or STOP/DISARM semantics. The only supported selection is the dedicated Rafa build
+fragment, not a Maintenance LAN command.
 
 ## Communication reliability ownership
 

@@ -163,8 +163,7 @@ static bool selected_profile_shape(void)
                     0.000001f);
     HOST_TEST_CHECK(fabsf(profile->application.max_wz_radps - 0.5235988f) <
                     0.000001f);
-    /* B42 is the bounded Rafa LAN-input diagnostic profile. */
-    HOST_TEST_CHECK(profile->application.control_ttl_ms == 500U);
+    HOST_TEST_CHECK(profile->application.control_ttl_ms == 300U);
     HOST_TEST_CHECK(profile->rc_lan_interlock.enabled);
     HOST_TEST_CHECK(profile->rc_lan_interlock.channel == 5U);
     HOST_TEST_CHECK(profile->rc_lan_interlock.active_max_us == 1500U);

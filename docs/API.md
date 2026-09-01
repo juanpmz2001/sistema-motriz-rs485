@@ -616,8 +616,7 @@ The immutable Rafa mapping is CH2 high = forward (`+vx`), CH4 high = right
 The receiver failsafe CH5=2000us leaves LAN eligible. The source needs a *new* valid
 PPM frame with CH2 and CH4 neutral (1500±30us) after PPM priority begins, after PPM
 loss, or after any external STOP before it can ARM. Each following fresh PPM frame
-publishes a bounded command with the profile TTL (temporarily 500 ms for Rafa B42,
-normally 300 ms). While a valid armed RC
+publishes a bounded command with the profile TTL (300 ms). While a valid armed RC
 stream remains under CH5 priority, CH2/CH4 neutral publishes `deadman:true` and zero
 velocity, so both traction endpoints apply HOLD 0 rather than freewheel. Stale/missing
 PPM, CH5 release, external STOP, expiry and safety/fault paths still stop and retire
@@ -632,3 +631,13 @@ unchanged.
 `SAFETY_STATUS` appends the same `RC_INTERLOCK`, `RC_CH5_US`, `LAN_ELIGIBLE` and
 `LAN_REVOCATION_EPOCH` fields. Consumers must continue to parse by key and ignore
 unknown additions, as required by the ASCII v1 framing contract.
+
+### Rafa LAN-only diagnostic build
+
+`CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC=y` is a build-only, temporary diagnostic
+selection. `PROFILE_STATUS` identifies it as `NAME:rafa_lan_only_diagnostic`.
+`IBUS_STATUS` and PPM capture remain read-only evidence, but PPM cannot publish
+motion, claim RC authority or revoke LAN; `CONTROL_STATUS` therefore remains LAN
+eligible with `RC_INTERLOCK:DISABLED`. It preserves the profile-owned 300 ms LAN
+TTL, stream/sequence/deadman checks, SVD48 motor-fault behavior, STOP and DISARM.
+There is no Maintenance LAN command that enables this mode.
