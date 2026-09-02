@@ -162,14 +162,8 @@ one shared target through the application coordinator; `SVD48_BENCH_HOLD` uses z
 never selects target/control registers itself. These commands are bench maintenance,
 not a continuous control plane.
 
-`SVD48_CLEAR_FAULT <device_id> <M1|M2> CONFIRM` is a separate typed workspace
-operation for controller fault acknowledgement. It resolves a configured device and
-physical channel through composition, then calls the driver-owned clear-fault action.
-It does not enable a channel or write a speed target; an accepted controller reply is
-not evidence that the fault cause, wiring or mechanical condition has been corrected.
-
-The gateway rejects bench set-speed/hold and typed fault clear while continuous control
-is `ARMED` or `ACTIVE`. Stop/disable remain callable. The same firmware interlock blocks SVD48
+The gateway rejects bench set-speed/hold while continuous control is `ARMED` or
+`ACTIVE`. Stop/disable remain callable. The same firmware interlock blocks SVD48
 configuration writes and save operations during those two states; profiles without
 continuous control and disarmed sessions retain the existing maintenance workflow.
 

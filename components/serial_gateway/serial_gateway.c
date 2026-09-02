@@ -2383,7 +2383,7 @@ static void handle_apply_py6514_config(serial_gateway_handle_t handle, int argc,
 static void print_help(serial_gateway_handle_t handle)
 {
     print_locked(handle,
-                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,CONTROL_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_INVENTORY,GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2,SVD48_BENCH_SET_SPEED device_id M1|M2 rpm,SVD48_BENCH_HOLD device_id M1|M2,SVD48_BENCH_DISABLE device_id M1|M2,SVD48_BENCH_STOP device_id M1|M2,SVD48_CLEAR_FAULT device_id M1|M2 CONFIRM,SVD48_HALL_CALIBRATE device_id M1|M2 CONFIRM,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
+                 "DATA HELP COMMANDS:PING,VERSION,PROFILE_STATUS,COMPOSITION_STATUS,PLATFORM_STATUS,SAFETY_STATUS,CONTROL_STATUS,HELP,CONFIG_STATUS,CONFIG_CLEAR,WIFI_SET \"ssid\" \"password\",WIFI_CLEAR,WIFI_STATUS,WIFI_CONNECT,WIFI_DISCONNECT,MAINT_LAN_STATUS,MAINT_TOKEN_SET token,MAINT_TOKEN_CLEAR,OTA_CONFIG,OTA_SET_SERVER host port,OTA_SET_MANIFEST path,OTA_ANNOUNCE_TOKEN_SET token,OTA_ANNOUNCE_TOKEN_CLEAR,OTA_ANNOUNCE_STATUS,OTA_CHECK,OTA_DOWNLOAD_TEST,OTA_UPDATE,OTA_ROLLBACK_STATUS,OTA_ROLLBACK_TEST NONE|NO_CONFIRM_ONCE|SELF_TEST_FAIL_ONCE,OTA_AUTO_STATUS,OTA_AUTO_FORCE_CHECK,OTA_AUTO_INTERVAL [ms],OTA_AUTO_CHECK ON|OFF,OTA_AUTO_UPDATE OFF,TRACE ON|OFF|STATUS,POLL_ONCE,SVD48_INVENTORY,GET_SVD48_CHANNEL_TELEMETRY device_id M1|M2,SVD48_BENCH_SET_SPEED device_id M1|M2 rpm,SVD48_BENCH_HOLD device_id M1|M2,SVD48_BENCH_DISABLE device_id M1|M2,SVD48_BENCH_STOP device_id M1|M2,SVD48_HALL_CALIBRATE device_id M1|M2 CONFIRM,SVD48_PROBE address,READ_REG drive reg [count],WRITE_REG drive reg value CONFIRM,WRITE_REGS drive start value [value...] CONFIRM,SAVE_SVD48_CONFIG drive CONFIRM,SET_SVD48_GEAR_RATIO drive motor_teeth wheel_teeth CONFIRM,SVD48_IDENTIFY_STATUS drive M1|M2,SVD48_IDENTIFY drive M1|M2 START|STOP CONFIRM,GET_SVD48_CONFIG drive [M1|M2|ALL],APPLY_PY6514_CONFIG drive [M1|M2|ALL] CONFIRM,IBUS_MODE [mode],IBUS_STATUS,IBUS_CHANNELS,IBUS_RAW,IBUS_PIN,PPM_CAPTURE [duration_ms] [interval_us],GET_SPEED n,GET_MOTOR n,SET_SPEED n rpm,ENABLE n|ALL,STOP n|ALL,CLEAR_FAULT n|ALL,MOVE_VEL vx vy wz,ENDPOINTS,SET_ENDPOINT_SPEED id rpm,SET_ENDPOINT_POSITION id degrees,SET_ENDPOINT_POSITION_REFERENCE id degrees CONFIRM,STOP_ENDPOINT id,GET_ENDPOINT_OBSERVATION id,GET_ENDPOINT_POSITION_OBSERVATION id,GET_AS5600_DIAGNOSTICS device_id,STREAM ON|OFF [period_ms]\n");
     print_locked(handle,
                  "DATA HELP EXTRA_COMMAND:SVD48_BENCH_SET_SPEED_PAIR device_id rpm\n");
 }
@@ -3103,36 +3103,6 @@ static void handle_svd48_bench_operation(serial_gateway_handle_t handle,
         (unsigned)device_id,
         channel_name((uint8_t)channel_id),
         application_result_name(result));
-}
-
-static void handle_svd48_clear_fault(serial_gateway_handle_t handle,
-                                     int argc,
-                                     char *argv[])
-{
-    uint16_t device_id = 0U;
-    svd48_workspace_channel_id_t channel_id = SVD48_WORKSPACE_CHANNEL_M1;
-    if (!parse_svd48_workspace_target(argc, argv, 4, &device_id, &channel_id) ||
-        strcasecmp(argv[3], "CONFIRM") != 0) {
-        print_locked(handle,
-                     "ERR USAGE SVD48_CLEAR_FAULT device_id M1|M2 CONFIRM\n");
-        return;
-    }
-    if (reject_continuous_control_conflict(handle, "SVD48_CLEAR_FAULT")) {
-        return;
-    }
-    if (!svd48_workspace_clear_fault(handle->config.svd48_workspace,
-                                     device_id,
-                                     channel_id)) {
-        print_locked(handle,
-                     "ERR SVD48_CLEAR_FAULT_FAILED DEVICE_ID:%u CHANNEL:%s\n",
-                     (unsigned)device_id,
-                     channel_name((uint8_t)channel_id));
-        return;
-    }
-    print_locked(handle,
-                 "OK SVD48_CLEAR_FAULT DEVICE_ID:%u CHANNEL:%s\n",
-                 (unsigned)device_id,
-                 channel_name((uint8_t)channel_id));
 }
 
 static bool validate_svd48_bench_speed_channel(
@@ -4423,8 +4393,6 @@ static void handle_command(serial_gateway_handle_t handle, char *line, serial_ga
         handle_svd48_bench_operation(handle, argc, argv, SVD48_BENCH_DISABLE);
     } else if (strcasecmp(argv[0], "SVD48_BENCH_STOP") == 0) {
         handle_svd48_bench_operation(handle, argc, argv, SVD48_BENCH_STOP);
-    } else if (strcasecmp(argv[0], "SVD48_CLEAR_FAULT") == 0) {
-        handle_svd48_clear_fault(handle, argc, argv);
     } else if (strcasecmp(argv[0], "READ_REG") == 0) {
         handle_read_reg(handle, argc, argv);
     } else if (strcasecmp(argv[0], "SVD48_PROBE") == 0) {

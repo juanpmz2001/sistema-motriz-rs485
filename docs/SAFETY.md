@@ -137,12 +137,6 @@ all hazards are controlled.
 
 ## Current actuation ownership
 
-`SVD48_CLEAR_FAULT <device_id> <M1|M2> CONFIRM` is a typed workspace
-controller-fault acknowledgement. It resolves one configured physical channel and
-does not enable the controller, assign a speed target or arm `/control`; it is
-rejected while continuous control is `ARMED` or `ACTIVE`. An accepted reply is not
-evidence that the fault cause has been removed.
-
 | Path | Current physical write path | Status |
 | --- | --- | --- |
 | `SET_SPEED` | application port → coordinator → direct SVD48 channel adapter | Migrated |
@@ -162,8 +156,8 @@ evidence that the fault cause has been removed.
 | Maintenance register/config writes | gateway → `robot_control`/legacy SVD48 view | Bypass |
 
 The gateway now enforces a narrow cross-path interlock: continuous-control `ARMED` or
-`ACTIVE` rejects SVD48 bench set-speed/hold, typed fault clear and SVD48
-register/configuration writes or save. Channel disable/stop and global `STOP ALL` stay available. This closes concurrent
+`ACTIVE` rejects SVD48 bench set-speed/hold and SVD48 register/configuration writes or
+save. Channel disable/stop and global `STOP ALL` stay available. This closes concurrent
 session preparation/use through those Maintenance-LAN operations; it does not turn
 Maintenance LAN into a leased control path or migrate the remaining bypasses.
 

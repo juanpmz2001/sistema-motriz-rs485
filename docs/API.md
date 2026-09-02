@@ -34,7 +34,7 @@ its `raw` subcommand.
 | OTA policy/test | `OTA_ROLLBACK_STATUS`, `OTA_ROLLBACK_TEST`, `OTA_AUTO_STATUS`, `OTA_AUTO_FORCE_CHECK`, `OTA_AUTO_INTERVAL`, `OTA_AUTO_CHECK`, `OTA_AUTO_UPDATE` |
 | RC diagnostics | `IBUS_MODE`, `IBUS_STATUS`, `IBUS_CHANNELS`, `IBUS_RAW`, `IBUS_PIN`, `PPM_CAPTURE` |
 | Bus diagnostics | `TRACE`, `POLL_ONCE`, `SVD48_PROBE`, `READ_REG`, `GET_SPEED`, `GET_MOTOR` |
-| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP`, `SVD48_CLEAR_FAULT`, `SVD48_HALL_CALIBRATE`, `SVD48_HALL_DIAG` |
+| SVD48 workspace | `SVD48_INVENTORY`, `GET_SVD48_CHANNEL_TELEMETRY`, `SVD48_BENCH_SET_SPEED`, `SVD48_BENCH_SET_SPEED_PAIR`, `SVD48_BENCH_HOLD`, `SVD48_BENCH_DISABLE`, `SVD48_BENCH_STOP`, `SVD48_HALL_CALIBRATE`, `SVD48_HALL_DIAG` |
 | AS5600 L2/L3 diagnostics | `GET_AS5600_DIAGNOSTICS device_id` |
 | Endpoint discovery/observation | `ENDPOINTS`, `GET_ENDPOINT_OBSERVATION`, `GET_ENDPOINT_POSITION_OBSERVATION` |
 | Drive configuration | `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO`, `SVD48_IDENTIFY_STATUS`, `SVD48_IDENTIFY`, `GET_SVD48_CONFIG`, `APPLY_PY6514_CONFIG` |
@@ -127,17 +127,6 @@ SVD48_BENCH_DISABLE <device_id> <M1|M2>
 SVD48_BENCH_STOP <device_id> <M1|M2>
 ```
 
-Controller fault acknowledgement is a separate typed operation:
-
-```text
-SVD48_CLEAR_FAULT <device_id> <M1|M2> CONFIRM
-```
-
-It resolves a configured physical device/channel and acknowledges the controller
-fault only. It never enables the channel, changes its speed target, arms `/control`
-or claims that the fault cause has disappeared. Firmware rejects it while continuous
-control is `ARMED` or `ACTIVE`.
-
 Hall calibration is a separate controller-owned, one-shot maintenance operation:
 
 ```text
@@ -221,8 +210,7 @@ When continuous control reports `ARMED` or `ACTIVE`, firmware rejects
 `WRITE_REG`, `WRITE_REGS`, `SAVE_SVD48_CONFIG`, `SET_SVD48_GEAR_RATIO` and
 `APPLY_PY6514_CONFIG`. `DISARMED` and profiles where continuous control is
 `UNAVAILABLE` remain eligible, subject to every existing stopped/safety/write gate.
-`SVD48_CLEAR_FAULT` and `SVD48_HALL_CALIBRATE` have the same `ARMED`/`ACTIVE`
-exclusion. Hall calibration additionally
+`SVD48_HALL_CALIBRATE` has the same `ARMED`/`ACTIVE` exclusion and additionally
 requires `SAFE_IDLE`, a running safety task with no motor fault, and a bound,
 available, `HEALTHY` channel that reports `STOPPED`. A zero-RPM `HOLD` is not
 `STOPPED` for this operation because it leaves the controller enabled. Its
