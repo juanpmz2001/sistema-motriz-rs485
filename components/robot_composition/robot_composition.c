@@ -1706,6 +1706,30 @@ static bool workspace_channel_telemetry(
     return true;
 }
 
+static bool workspace_clear_fault(svd48_workspace_port_t *port,
+                                  uint16_t device_id,
+                                  svd48_workspace_channel_id_t channel)
+{
+    robot_composition_t *composition = port ? port->context : NULL;
+    if (!composition || !composition->constructed || !composition->profile ||
+        channel >= SVD48_WORKSPACE_CHANNEL_COUNT) {
+        return false;
+    }
+    const robot_device_profile_t *device = find_device_profile(
+        composition->profile, device_id);
+    robot_composition_device_slot_t *slot =
+        device && device->driver_id == ROBOT_DRIVER_SVD48
+            ? find_device_slot(composition, device_id)
+            : NULL;
+    svd48_channel_t *physical_channel = slot
+                                            ? svd48_device_channel(
+                                                  &slot->svd48,
+                                                  (svd48_channel_id_t)channel)
+                                            : NULL;
+    return physical_channel &&
+           svd48_channel_clear_fault(physical_channel) == SVD48_DEVICE_OK;
+}
+
 static svd48_workspace_hall_calibration_status_t
 workspace_hall_calibration_status_from_device(
     svd48_hall_calibration_status_t status)
@@ -2227,6 +2251,7 @@ static const svd48_workspace_ops_t SVD48_WORKSPACE_OPS = {
     .controller_at = workspace_controller_at,
     .channel_telemetry = workspace_channel_telemetry,
     .hall_calibrate = workspace_hall_calibrate,
+    .clear_fault = workspace_clear_fault,
     .stop_diagnostic_arm = workspace_stop_diagnostic_arm,
     .stop_diagnostic_before_stop = workspace_stop_diagnostic_before_stop,
     .stop_diagnostic_after_stop = workspace_stop_diagnostic_after_stop,

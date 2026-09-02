@@ -80,6 +80,10 @@ bool serial_gateway_lan_command_allowed(int argc, const char *const argv[])
         arg_is(argv[3], "CONFIRM")) {
         return true;
     }
+    if (arg_is(argv[0], "SVD48_CLEAR_FAULT") && argc == 4 &&
+        arg_is(argv[3], "CONFIRM")) {
+        return true;
+    }
     if (arg_is(argv[0], "SVD48_HALL_DIAG") &&
         ((argc == 2 && arg_is(argv[1], "STATUS")) ||
          (argc == 4 && (arg_is(argv[1], "TRACE") ||

@@ -249,6 +249,11 @@ typedef struct {
         uint16_t device_id,
         svd48_workspace_channel_id_t channel,
         svd48_workspace_hall_calibration_result_t *result);
+    /* Typed controller-fault acknowledgement for one configured channel.  It
+     * does not enable the channel or alter any speed target. */
+    bool (*clear_fault)(svd48_workspace_port_t *port,
+                        uint16_t device_id,
+                        svd48_workspace_channel_id_t channel);
     bool (*stop_diagnostic_arm)(svd48_workspace_port_t *port,
                                 uint32_t *diagnostic_id);
     /* These hooks only observe the gateway's existing STOP ALL path. */
@@ -303,6 +308,16 @@ static inline bool svd48_workspace_hall_calibrate(
 {
     return port && port->ops && port->ops->hall_calibrate
                ? port->ops->hall_calibrate(port, device_id, channel, result)
+               : false;
+}
+
+static inline bool svd48_workspace_clear_fault(
+    svd48_workspace_port_t *port,
+    uint16_t device_id,
+    svd48_workspace_channel_id_t channel)
+{
+    return port && port->ops && port->ops->clear_fault
+               ? port->ops->clear_fault(port, device_id, channel)
                : false;
 }
 

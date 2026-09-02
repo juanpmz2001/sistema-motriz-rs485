@@ -341,6 +341,12 @@ static bool test_gateway_lan_maintenance_policy(void)
         "SVD48_HALL_CALIBRATE", "1", "M1"};
     const char *svd48_hall_calibrate_bad_confirm[] = {
         "SVD48_HALL_CALIBRATE", "1", "M1", "NO"};
+    const char *svd48_clear_fault[] = {
+        "SVD48_CLEAR_FAULT", "1", "M2", "CONFIRM"};
+    const char *svd48_clear_fault_missing_confirm[] = {
+        "SVD48_CLEAR_FAULT", "1", "M2"};
+    const char *svd48_clear_fault_bad_confirm[] = {
+        "SVD48_CLEAR_FAULT", "1", "M2", "NO"};
     const char *hall_diag_status[] = {"SVD48_HALL_DIAG", "STATUS"};
     const char *hall_diag_trace[] = {"SVD48_HALL_DIAG", "TRACE", "0", "4"};
     const char *hall_diag_bad[] = {"SVD48_HALL_DIAG", "TRACE", "0"};
@@ -400,6 +406,11 @@ static bool test_gateway_lan_maintenance_policy(void)
         3, svd48_hall_calibrate_missing_confirm));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
         4, svd48_hall_calibrate_bad_confirm));
+    HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, svd48_clear_fault));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        3, svd48_clear_fault_missing_confirm));
+    HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(
+        4, svd48_clear_fault_bad_confirm));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(2, hall_diag_status));
     HOST_TEST_CHECK(serial_gateway_lan_command_allowed(4, hall_diag_trace));
     HOST_TEST_CHECK(!serial_gateway_lan_command_allowed(3, hall_diag_bad));

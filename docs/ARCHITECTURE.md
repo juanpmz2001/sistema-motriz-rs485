@@ -84,10 +84,12 @@ is retained only for host characterization and is not wired by `robot_compositio
 does not depend on profile, composition or the coordinator implementation. It can
 enumerate endpoints, command velocity or position, stop by logical endpoint ID, and
 read typed velocity or position observations without exposing the concrete controller
-or sensor to its client. The separate `svd48_workspace_port` is a concrete read-only
-maintenance projection: it enumerates configured SVD48 device IDs, bus/addresses,
-physical M1/M2 bindings and cached channel snapshots. It exposes no actuation method;
-workspace writes re-enter the application/coordinator boundary by endpoint ID.
+or sensor to its client. The separate `svd48_workspace_port` projects configured
+SVD48 device IDs, bus/addresses, physical M1/M2 bindings and cached channel snapshots.
+Its typed Hall-calibration and controller-fault acknowledgement operations are narrowly
+bounded driver-maintenance actions; the latter never enables a channel or assigns a
+target. Bench motion still re-enters the application/coordinator boundary by endpoint
+ID.
 
 For a profile with validated differential geometry, `main` also creates one
 `motion_application` service and starts `control_lan` on UDP `32322`. The transport
