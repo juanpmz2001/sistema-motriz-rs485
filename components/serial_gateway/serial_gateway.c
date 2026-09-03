@@ -873,8 +873,9 @@ static void handle_control_status(serial_gateway_handle_t handle,
     if (handle->config.control_lan &&
         control_lan_get_status(handle->config.control_lan, &control_link) == ESP_OK) {
         print_locked(handle,
-                     "DATA CONTROL_LINK TASK:%s ACCEPTED:%lu REJECTED:%lu GAPS:%lu DUPLICATE_OR_OOO:%lu INVALID_SCHEMA:%lu AUTH_FAILURES:%lu LAST_VALID_COMMAND_AGE_MS:%lu AUTHORITY:%s\n",
+                     "DATA CONTROL_LINK TASK:%s SEEN:%lu ACCEPTED:%lu REJECTED:%lu GAPS:%lu DUPLICATE_OR_OOO:%lu INVALID_SCHEMA:%lu AUTH_FAILURES:%lu LAST_VALID_COMMAND_AGE_MS:%lu LAST_SENDER:%s LAST_ACTION:%s LAST_DETAIL:%s AUTHORITY:%s\n",
                      control_link.task_running ? "RUNNING" : "STOPPED",
+                     (unsigned long)control_link.packets_seen,
                      (unsigned long)control_link.packets_accepted,
                      (unsigned long)control_link.packets_rejected,
                      (unsigned long)control_link.sequence_gaps,
@@ -882,6 +883,9 @@ static void handle_control_status(serial_gateway_handle_t handle,
                      (unsigned long)control_link.invalid_schema,
                      (unsigned long)control_link.auth_failures,
                      (unsigned long)control_link.last_valid_command_age_ms,
+                     safe_text(control_link.last_sender, "NONE"),
+                     safe_text(control_link.last_action, "NONE"),
+                     safe_text(control_link.last_detail, "NONE"),
                      safe_text(control_link.authority_detail, "UNKNOWN"));
     }
     for (size_t index = 0U; index < status.endpoint_count; ++index) {
