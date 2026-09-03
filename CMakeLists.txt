@@ -76,6 +76,7 @@ set(COMPONENTS
     ota_announce
     maintenance_lan
     control_lan
+    web_direct_control
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

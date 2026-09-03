@@ -259,6 +259,18 @@ STOP. It does not alter Control LAN's 300 ms TTL, endpoint limits, SVD48 fault p
 or STOP/DISARM semantics. The only supported selection is the dedicated Rafa build
 fragment, not a Maintenance LAN command.
 
+The separate branch-only `BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL` selection is a
+different, temporary experiment. It reports
+`PROFILE_STATUS NAME:rafa_web_joystick_experimental`, starts an ESP-IDF HTTP server
+at `GET /` and accepts browser intent only on the same-device WebSocket `/control`.
+Its explicit `WEB_DIRECT` source submits typed ARM, DISARM, STOP and bounded body
+commands to `motion_application`; it has no SVD48 register or RS485 API. The selected
+build starts neither `control_lan` UDP control nor `ppm_motion_source`; PPM remains
+observation-only and the RC/LAN interlock is disabled only by this experimental
+projection. The existing safety gate, semantic STOP, endpoint health, cached SVD48
+polling and 300 ms lease continue to own their respective contracts. The experimental
+web page is not the Engineering Console and is not part of normal Rafa firmware.
+
 ## Communication reliability ownership
 
 The firmware distinguishes one raw wire attempt from an operational conclusion.

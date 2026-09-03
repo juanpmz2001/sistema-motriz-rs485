@@ -53,6 +53,8 @@ static motion_control_source_t status_source(
         return MOTION_CONTROL_SOURCE_LAN;
     case COMMAND_AUTHORITY_SOURCE_RC:
         return MOTION_CONTROL_SOURCE_RC;
+    case COMMAND_AUTHORITY_SOURCE_WEB_DIRECT:
+        return MOTION_CONTROL_SOURCE_WEB_DIRECT;
     default:
         return MOTION_CONTROL_SOURCE_NONE;
     }

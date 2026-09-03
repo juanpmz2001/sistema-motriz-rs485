@@ -4,19 +4,23 @@
 
 robot_runtime_authority_policy_t robot_runtime_authority_policy_for(
     const robot_profile_t *profile,
-    bool request_rafa_lan_only_diagnostic)
+    bool request_rafa_lan_only_diagnostic,
+    bool request_rafa_web_joystick_experimental)
 {
     const bool is_rafa = profile && profile->name &&
                          strcmp(profile->name, "rafa") == 0;
     const bool lan_only = request_rafa_lan_only_diagnostic && is_rafa;
+    const bool web_joystick = request_rafa_web_joystick_experimental && is_rafa;
     const bool profile_interlock = profile && profile->rc_lan_interlock.enabled;
 
     return (robot_runtime_authority_policy_t){
         .lan_only_diagnostic_active = lan_only,
-        .ppm_motion_active = profile && profile->ppm_motion.enabled && !lan_only,
-        .rc_lan_interlock_active = profile_interlock && !lan_only,
+        .web_joystick_experimental_active = web_joystick,
+        .ppm_motion_active = profile && profile->ppm_motion.enabled && !lan_only && !web_joystick,
+        .control_lan_active = !web_joystick,
+        .rc_lan_interlock_active = profile_interlock && !lan_only && !web_joystick,
         /* The diagnostic must not turn observed PPM loss into a LAN STOP. */
-        .stop_on_rc_loss = !lan_only && !profile_interlock,
+        .stop_on_rc_loss = !lan_only && !web_joystick && !profile_interlock,
     };
 }
 
@@ -26,6 +30,9 @@ const char *robot_runtime_authority_profile_name(
 {
     if (policy && policy->lan_only_diagnostic_active) {
         return "rafa_lan_only_diagnostic";
+    }
+    if (policy && policy->web_joystick_experimental_active) {
+        return "rafa_web_joystick_experimental";
     }
     return profile && profile->name ? profile->name : "UNKNOWN";
 }

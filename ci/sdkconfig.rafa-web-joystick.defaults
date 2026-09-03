@@ -1,0 +1,13 @@
+# Isolated direct browser experiment. This selects Rafa's existing hardware
+# composition but does not alter its normal profile or the B43 build.
+# CONFIG_BOTFARMS_PROFILE_CURRENT_ROBOT is not set
+# CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR is not set
+# CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600 is not set
+CONFIG_BOTFARMS_PROFILE_RAFA=y
+CONFIG_BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL=y
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# Keep native USB Serial/JTAG available for the established diagnostic path.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is not set

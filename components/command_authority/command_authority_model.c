@@ -13,7 +13,7 @@ static command_authority_velocity_t zero_velocity(void)
 static bool source_is_valid(command_authority_source_t source)
 {
     return source >= COMMAND_AUTHORITY_SOURCE_BLUETOOTH &&
-           source <= COMMAND_AUTHORITY_SOURCE_RC;
+           source < COMMAND_AUTHORITY_SOURCE_COUNT;
 }
 
 static bool scalar_is_finite(float value)
@@ -105,7 +105,7 @@ static command_authority_source_t highest_fresh_source(
     uint64_t now_ms)
 {
     int source;
-    for (source = (int)COMMAND_AUTHORITY_SOURCE_RC;
+    for (source = (int)COMMAND_AUTHORITY_SOURCE_COUNT - 1;
          source >= (int)COMMAND_AUTHORITY_SOURCE_BLUETOOTH;
          source--) {
         if (mailbox_is_fresh(&model->mailboxes[source], now_ms)) {
@@ -510,7 +510,7 @@ command_authority_decision_t command_authority_model_stop(
         model->has_observed_time = true;
     }
     for (source = (int)COMMAND_AUTHORITY_SOURCE_BLUETOOTH;
-         source <= (int)COMMAND_AUTHORITY_SOURCE_RC;
+         source < (int)COMMAND_AUTHORITY_SOURCE_COUNT;
          source++) {
         model->mailboxes[source].command.valid = false;
     }
@@ -568,7 +568,7 @@ command_authority_result_t command_authority_model_snapshot(
     snapshot->last_publish_result = model->last_publish_result;
 
     for (source = (int)COMMAND_AUTHORITY_SOURCE_BLUETOOTH;
-         source <= (int)COMMAND_AUTHORITY_SOURCE_RC;
+         source < (int)COMMAND_AUTHORITY_SOURCE_COUNT;
          source++) {
         const command_authority_mailbox_t *mailbox = &model->mailboxes[source];
         command_authority_mailbox_snapshot_t *mailbox_snapshot =
@@ -597,6 +597,8 @@ const char *command_authority_source_name(command_authority_source_t source)
         return "LAN";
     case COMMAND_AUTHORITY_SOURCE_RC:
         return "RC";
+    case COMMAND_AUTHORITY_SOURCE_WEB_DIRECT:
+        return "WEB_DIRECT";
     default:
         return "UNKNOWN";
     }

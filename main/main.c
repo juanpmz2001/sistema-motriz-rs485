@@ -22,6 +22,7 @@
 #include "robot_safety.h"
 #include "serial_gateway.h"
 #include "wifi_manager.h"
+#include "web_direct_control.h"
 
 static const char *TAG = "main";
 
@@ -38,6 +39,7 @@ static ibus_receiver_handle_t ibus_receiver = NULL;
 static robot_safety_handle_t robot_safety = NULL;
 static motion_application_service_handle_t motion_application = NULL;
 static control_lan_handle_t control_lan = NULL;
+static web_direct_control_handle_t web_direct_control = NULL;
 static ppm_motion_source_handle_t ppm_motion_source = NULL;
 static robot_composition_t composition;
 static robot_runtime_authority_policy_t runtime_authority_policy;
@@ -46,6 +48,16 @@ static bool rafa_lan_only_diagnostic_requested(void)
 {
 #if defined(CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC) && \
     CONFIG_BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
+    return true;
+#else
+    return false;
+#endif
+}
+
+static bool rafa_web_joystick_experimental_requested(void)
+{
+#if defined(CONFIG_BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL) && \
+    CONFIG_BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL
     return true;
 #else
     return false;
@@ -166,6 +178,8 @@ static control_lan_callback_result_t control_lan_event_callback(
 
 static void deinit_control_plane(void)
 {
+    web_direct_control_deinit(web_direct_control);
+    web_direct_control = NULL;
     ppm_motion_source_deinit(ppm_motion_source);
     ppm_motion_source = NULL;
     control_lan_deinit(control_lan);
@@ -247,18 +261,39 @@ static esp_err_t start_control_plane(void)
         .authority_status_callback = control_lan_authority_status,
         .authority_context = robot_safety,
     };
-    error = control_lan_init(&control_config, &control_lan);
-    if (error == ESP_OK) {
-        error = control_lan_start(control_lan);
+    if (runtime_authority_policy.control_lan_active) {
+        error = control_lan_init(&control_config, &control_lan);
+        if (error == ESP_OK) {
+            error = control_lan_start(control_lan);
+        }
+        if (error != ESP_OK) {
+            deinit_control_plane();
+            return error;
+        }
+        ESP_LOGI(TAG,
+                 "Continuous LAN control active on UDP:%u ttl:%lums",
+                 CONTROL_LAN_DEFAULT_PORT,
+                 (unsigned long)profile->application.control_ttl_ms);
+    } else {
+        ESP_LOGW(TAG, "UDP Control LAN disabled by WEB_DIRECT experimental profile");
     }
-    if (error != ESP_OK) {
-        deinit_control_plane();
-        return error;
+    if (runtime_authority_policy.web_joystick_experimental_active) {
+        const web_direct_control_config_t web_config = {
+            .motion_application = motion_application,
+            .motion_status = motion_application_service_status_port(motion_application),
+            .svd48_workspace = robot_composition_svd48_workspace_port(&composition),
+            .max_vx_mps = max_vx_mps,
+            .max_wz_radps = max_wz_radps,
+            .admission_gate = motion_safety_gate,
+            .admission_context = robot_safety,
+        };
+        error = web_direct_control_init(&web_config, &web_direct_control);
+        if (error == ESP_OK) error = web_direct_control_start(web_direct_control);
+        if (error != ESP_OK) {
+            deinit_control_plane();
+            return error;
+        }
     }
-    ESP_LOGI(TAG,
-             "Continuous LAN control active on UDP:%u ttl:%lums",
-             CONTROL_LAN_DEFAULT_PORT,
-             (unsigned long)profile->application.control_ttl_ms);
     return ESP_OK;
 }
 
@@ -456,11 +491,16 @@ void app_main(void)
 
     profile = robot_profile_selected();
     runtime_authority_policy = robot_runtime_authority_policy_for(
-        profile, rafa_lan_only_diagnostic_requested());
+        profile, rafa_lan_only_diagnostic_requested(),
+        rafa_web_joystick_experimental_requested());
     ESP_LOGI(TAG, "Selected robot profile:%s", robot_profile_selected_name());
     if (runtime_authority_policy.lan_only_diagnostic_active) {
         ESP_LOGW(TAG,
                  "RAFA LAN-ONLY DIAGNOSTIC active: PPM observed only; RC authority disabled");
+    }
+    if (runtime_authority_policy.web_joystick_experimental_active) {
+        ESP_LOGW(TAG,
+                 "RAFA WEB_DIRECT EXPERIMENT active: PPM observed only; UDP Control LAN disabled");
     }
     const robot_bus_profile_t *rc_bus = robot_profile_find_bus_type(profile, ROBOT_BUS_GPIO);
     err = robot_composition_init(&composition, profile);

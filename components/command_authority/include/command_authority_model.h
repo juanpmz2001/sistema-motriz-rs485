@@ -15,6 +15,9 @@ typedef enum {
     COMMAND_AUTHORITY_SOURCE_BLUETOOTH,
     COMMAND_AUTHORITY_SOURCE_LAN,
     COMMAND_AUTHORITY_SOURCE_RC,
+    /* Build-selected direct browser control. It is still semantic motion
+     * intent, never a transport path to a motor controller. */
+    COMMAND_AUTHORITY_SOURCE_WEB_DIRECT,
     COMMAND_AUTHORITY_SOURCE_COUNT,
 } command_authority_source_t;
 

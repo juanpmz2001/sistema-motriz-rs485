@@ -23,6 +23,7 @@ typedef enum {
     MOTION_CONTROL_SOURCE_NONE = 0,
     MOTION_CONTROL_SOURCE_LAN,
     MOTION_CONTROL_SOURCE_RC,
+    MOTION_CONTROL_SOURCE_WEB_DIRECT,
 } motion_control_source_t;
 
 typedef struct {

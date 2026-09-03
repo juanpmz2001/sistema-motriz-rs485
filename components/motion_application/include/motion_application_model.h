@@ -29,6 +29,9 @@ typedef struct {
     float vy_mps;
     float wz_radps;
     bool deadman;
+    /* WEB_DIRECT may preserve enabled zero-speed HOLD while its browser
+     * deadman is released. Other sources retain their existing release STOP. */
+    bool hold_zero_when_deadman_released;
 } motion_application_event_t;
 
 typedef struct {
@@ -92,6 +95,7 @@ typedef struct {
     command_authority_source_t source;
     uint32_t command_ttl_ms;
     bool deadman;
+    bool hold_zero_when_deadman_released;
     uint64_t stream_id;
     uint64_t sequence;
     uint64_t last_received_ms;
@@ -113,6 +117,7 @@ typedef struct {
     uint64_t retired_streams[MOTION_APPLICATION_RETIRED_STREAMS];
     uint8_t retired_stream_count;
     bool deadman;
+    bool hold_zero_when_deadman_released;
     command_authority_velocity_t requested;
     motion_application_target_t targets[MOTION_APPLICATION_MAX_ENDPOINTS];
     char last_detail[MOTION_STATUS_DETAIL_MAX];

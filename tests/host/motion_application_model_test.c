@@ -88,6 +88,35 @@ static bool test_rc_source_is_explicit_and_cannot_mix_with_lan(void)
     return true;
 }
 
+static bool test_web_direct_released_deadman_holds_zero_only_for_that_source(void)
+{
+    motion_application_model_t model;
+    motion_application_plan_t plan;
+    HOST_TEST_CHECK(init_model(&model));
+    motion_application_event_t arm = event(MOTION_APPLICATION_EVENT_ARM, 99U, 1U, 0U);
+    arm.source = COMMAND_AUTHORITY_SOURCE_WEB_DIRECT;
+    HOST_TEST_CHECK(motion_application_model_submit(&model, &arm, true, 0U, &plan) ==
+                    MOTION_APPLICATION_RESULT_OK);
+    motion_application_event_t released =
+        event(MOTION_APPLICATION_EVENT_COMMAND, 99U, 2U, 10U);
+    released.source = COMMAND_AUTHORITY_SOURCE_WEB_DIRECT;
+    released.deadman = false;
+    released.hold_zero_when_deadman_released = true;
+    HOST_TEST_CHECK(motion_application_model_submit(&model, &released, true, 10U,
+                                                    &plan) == MOTION_APPLICATION_RESULT_OK);
+    HOST_TEST_CHECK(plan.action == MOTION_APPLICATION_PLAN_APPLY);
+    HOST_TEST_CHECK(plan.target_count == 2U && plan.targets[0].rpm == 0 &&
+                    plan.targets[1].rpm == 0);
+
+    motion_application_event_t invalid = released;
+    invalid.source = COMMAND_AUTHORITY_SOURCE_LAN;
+    invalid.sequence = 3U;
+    HOST_TEST_CHECK(motion_application_model_submit(&model, &invalid, true, 20U,
+                                                    &plan) ==
+                    MOTION_APPLICATION_RESULT_INVALID_ARGUMENT);
+    return true;
+}
+
 static bool init_model(motion_application_model_t *model)
 {
     motion_application_model_config_t config = standard_config();
@@ -392,6 +421,7 @@ int main(void)
             test_stop_has_global_priority_and_stream_history_is_bounded),
         HOST_TEST_CASE(test_rafa_qualified_geometry_targets_and_ttl),
         HOST_TEST_CASE(test_rc_source_is_explicit_and_cannot_mix_with_lan),
+        HOST_TEST_CASE(test_web_direct_released_deadman_holds_zero_only_for_that_source),
     };
     host_test_summary_t summary =
         host_test_run_cases(cases, HOST_TEST_ARRAY_COUNT(cases), stdout);

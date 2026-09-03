@@ -47,6 +47,8 @@ const char *motion_control_source_name(motion_control_source_t source)
         return "LAN";
     case MOTION_CONTROL_SOURCE_RC:
         return "RC";
+    case MOTION_CONTROL_SOURCE_WEB_DIRECT:
+        return "WEB_DIRECT";
     default:
         return "UNKNOWN";
     }

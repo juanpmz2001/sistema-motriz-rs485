@@ -587,7 +587,7 @@ observation, not intent. It returns one session line followed by the declared nu
 of endpoint lines:
 
 ```text
-DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:<NONE|LAN|RC> DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
+DATA CONTROL TASK:<RUNNING|STOPPED> STATE:<DISARMED|ARMED|ACTIVE|EXPIRED|FAULT> SOURCE:<NONE|LAN|RC|WEB_DIRECT> DEADMAN:<0|1> TTL_MS:<n> LEASE_FRESH:<0|1> LEASE_AGE_MS:<n> LEASE_REMAINING_MS:<n> STREAM_HASH:<hex> SEQUENCE:<n> MAX_VX_MPS:<n> MAX_VY_MPS:<n> MAX_WZ_RADPS:<n> REQUESTED_VX_MPS:<n> REQUESTED_VY_MPS:<n> REQUESTED_WZ_RADPS:<n> ENDPOINTS:<n> DETAIL:<token>
 DATA CONTROL_AUTHORITY LAN_ELIGIBLE:<0|1> RC_INTERLOCK:<DISABLED|RC_NO_SIGNAL|RC_FAILSAFE|PPM_PRIORITY|PPM_LOST|RC_CHANNEL_UNAVAILABLE|PPM_PRIORITY_CANDIDATE|RC_FAILSAFE_CANDIDATE> RC_CH5_US:<n|0> LAN_REVOCATION_EPOCH:<n>
 DATA CONTROL_LINK TASK:<RUNNING|STOPPED> ACCEPTED:<n> REJECTED:<n> GAPS:<n> DUPLICATE_OR_OOO:<n> INVALID_SCHEMA:<n> AUTH_FAILURES:<n> LAST_VALID_COMMAND_AGE_MS:<n|4294967295>
 DATA CONTROL_ENDPOINT ID:<id> NAME:<name> TARGET_RPM:<rpm> OBSERVED_VALID:<0|1> OBSERVED_RPM:<rpm> OBSERVATION_MS:<n> ONLINE:<0|1> STALE:<0|1> HEALTH:<health>
@@ -641,3 +641,34 @@ motion, claim RC authority or revoke LAN; `CONTROL_STATUS` therefore remains LAN
 eligible with `RC_INTERLOCK:DISABLED`. It preserves the profile-owned 300 ms LAN
 TTL, stream/sequence/deadman checks, SVD48 motor-fault behavior, STOP and DISARM.
 There is no Maintenance LAN command that enables this mode.
+
+### Rafa direct ESP web joystick experimental build
+
+`CONFIG_BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL=y` is a branch-only build selection,
+identified by `PROFILE_STATUS NAME:rafa_web_joystick_experimental`. It is not enabled
+by a Maintenance LAN command, and it does not expose an arbitrary HTTP, register or
+Modbus endpoint.
+
+The ESP32 serves the self-contained control page at `GET /` and one same-device
+WebSocket endpoint at `ws://<esp-ip>/control`. WebSocket JSON accepts only these
+typed messages:
+
+```text
+{"type":"arm"}
+{"type":"disarm"}
+{"type":"stop"}
+{"type":"command","forward":[-1,1],"turn":[-1,1],"deadman":true|false}
+```
+
+`forward` and `turn` are normalized semantic intent. The adapter applies its 0.10
+deadzone, maps them only to the profile body limits, and publishes `WEB_DIRECT`
+events through `motion_application`; differential mixing, limits, signs and SVD48
+operations remain below that boundary. Only one ephemeral WebSocket session may arm.
+A valid command renews an ESP-owned 300 ms lease; release yields zero/deadman false,
+and stale, disconnect, DISARM, STOP or a safety fault withdraws motion through the
+existing application/safety path. Browser telemetry is a 5 Hz view of cached M1/M2
+SVD48 observations, never a browser-triggered poll. Torque is explicitly `N/D`.
+
+This selected experiment does not start UDP Control LAN or `ppm_motion_source`; it
+therefore cannot accept an old UDP stream or PPM authority. It preserves normal
+endpoint/SVD faults and software STOP semantics, but it is not an E-stop.

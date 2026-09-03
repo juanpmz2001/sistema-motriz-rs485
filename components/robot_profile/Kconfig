@@ -26,3 +26,14 @@ config BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
         TTL, deadman, STOP and SVD/motor-fault safety paths. This is a
         build-selected diagnostic mode, not a runtime command; rebuild Rafa
         without this option after the comparison.
+
+config BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL
+    bool "Temporary Rafa direct ESP web joystick experiment"
+    depends on BOTFARMS_PROFILE_RAFA && !BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
+    default n
+    help
+        Serve an isolated direct-browser control UI from the ESP32. PPM remains
+        observation-only and UDP Control LAN is not started. Movement enters
+        only as typed WEB_DIRECT semantic intent with the normal application,
+        endpoint, SVD and safety owners. This is a build-selected experiment;
+        rebuild Rafa without this option to restore the normal profile.

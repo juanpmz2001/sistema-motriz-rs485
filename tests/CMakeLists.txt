@@ -62,6 +62,17 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME web_direct_control_model_test
+    SOURCES
+        host/web_direct_control_model_test.c
+        ../components/web_direct_control/web_direct_control_model.c
+    INCLUDE_DIRS
+        ../components/web_direct_control/include
+    LINK_LIBRARIES
+        ${BOTFARMS_HOST_MATH_LIBRARY}
+)
+
+botfarms_add_host_test(
     NAME communication_quality_model_test
     SOURCES
         host/communication_quality_model_test.c

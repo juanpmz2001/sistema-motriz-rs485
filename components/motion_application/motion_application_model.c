@@ -62,6 +62,7 @@ static bool retire_active_stream(motion_application_model_t *model)
     model->active_source = COMMAND_AUTHORITY_SOURCE_NONE;
     model->sequence = 0U;
     model->deadman = false;
+    model->hold_zero_when_deadman_released = false;
     model->requested = zero_velocity();
     return true;
 }
@@ -69,7 +70,8 @@ static bool retire_active_stream(motion_application_model_t *model)
 static bool event_source_supported(command_authority_source_t source)
 {
     return source == COMMAND_AUTHORITY_SOURCE_LAN ||
-           source == COMMAND_AUTHORITY_SOURCE_RC;
+           source == COMMAND_AUTHORITY_SOURCE_RC ||
+           source == COMMAND_AUTHORITY_SOURCE_WEB_DIRECT;
 }
 
 static bool config_valid(const motion_application_model_config_t *config)
@@ -217,7 +219,7 @@ static motion_application_result_t convert_authority_decision(
     model->requested = cycle->output;
     /* A live deadman with zero velocity is an APPLY plan: endpoints stay
      * enabled at zero. STOP is reserved for authority/safety/fault loss. */
-    if (!model->deadman) {
+    if (!model->deadman && !model->hold_zero_when_deadman_released) {
         model->state = MOTION_CONTROL_ARMED;
         copy_detail(model->last_detail, "DEADMAN_RELEASED");
         stop_plan(plan, model->last_detail);
@@ -334,6 +336,7 @@ static motion_application_result_t handle_arm(
     model->sequence = event->sequence;
     model->last_received_ms = event->received_at_ms;
     model->deadman = false;
+    model->hold_zero_when_deadman_released = false;
     model->requested = zero_velocity();
     model->state = MOTION_CONTROL_ARMED;
     model->last_dispatched_revision = 0U;
@@ -358,6 +361,11 @@ static motion_application_result_t handle_command(
     }
     if (!event_source_supported(event->source)) {
         return MOTION_APPLICATION_RESULT_SOURCE_INVALID;
+    }
+    if (event->hold_zero_when_deadman_released &&
+        (event->source != COMMAND_AUTHORITY_SOURCE_WEB_DIRECT || event->deadman ||
+         event->vx_mps != 0.0f || event->vy_mps != 0.0f || event->wz_radps != 0.0f)) {
+        return MOTION_APPLICATION_RESULT_INVALID_ARGUMENT;
     }
     if (event->source != model->active_source) {
         return MOTION_APPLICATION_RESULT_SOURCE_MISMATCH;
@@ -394,6 +402,7 @@ static motion_application_result_t handle_command(
     model->sequence = event->sequence;
     model->last_received_ms = event->received_at_ms;
     model->deadman = event->deadman;
+    model->hold_zero_when_deadman_released = event->hold_zero_when_deadman_released;
     command_authority_cycle_result_t cycle;
     (void)command_authority_model_arbitrate(&model->authority, now_ms, &cycle);
     return convert_authority_decision(model, &cycle, now_ms, plan);
@@ -511,6 +520,8 @@ bool motion_application_model_snapshot(
     snapshot->source = model->active_source;
     snapshot->command_ttl_ms = model->config.command_ttl_ms;
     snapshot->deadman = model->deadman;
+    snapshot->hold_zero_when_deadman_released =
+        model->hold_zero_when_deadman_released;
     snapshot->stream_id = model->active_stream_id;
     snapshot->sequence = model->sequence;
     snapshot->last_received_ms = model->last_received_ms;
