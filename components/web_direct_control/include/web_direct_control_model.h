@@ -56,6 +56,11 @@ bool web_direct_control_model_claim_session(web_direct_control_model_t *model,
                                             uint64_t session_id);
 void web_direct_control_model_release_session(web_direct_control_model_t *model,
                                               uint64_t session_id);
+/* Releases a disconnected owner only when no armed lease remains.  An armed
+ * owner deliberately stays claimed until the normal TTL expiry path withdraws
+ * its motion, so a reconnect cannot take over a live stream early. */
+bool web_direct_control_model_release_disarmed_session(web_direct_control_model_t *model,
+                                                        uint64_t session_id);
 web_direct_control_model_result_t web_direct_control_model_arm(
     web_direct_control_model_t *model, uint64_t session_id, uint64_t now_ms);
 web_direct_control_model_result_t web_direct_control_model_disarm(

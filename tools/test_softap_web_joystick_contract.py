@@ -22,6 +22,11 @@ def reject(text: str, fragment: str, label: str) -> None:
         raise AssertionError(f"{label}: unexpected {fragment!r}")
 
 
+def require_compact(text: str, fragment: str, label: str) -> None:
+    """Assert JavaScript structure without coupling the contract to whitespace."""
+    require("".join(text.split()), "".join(fragment.split()), label)
+
+
 def source_section(text: str, start: str, end: str) -> str:
     begin = text.find(start)
     finish = text.find(end, begin)
@@ -82,7 +87,25 @@ def main() -> int:
     require(start, "config.close_fn = server_close_handler", "WebSocket close hook")
     close_hook = source_section(web_server, "static void server_close_handler", "static void send_status_async")
     require(close_hook, "handle->active_fd = -1", "WebSocket close hook")
+    require(close_hook, "web_direct_control_model_release_disarmed_session", "WebSocket close release")
     require(close_hook, "WEB_SOCKET_DISCONNECTED", "WebSocket close log")
+
+    model = (ROOT / "components/web_direct_control/web_direct_control_model.c").read_text(encoding="utf-8")
+    require(model, "web_direct_control_model_release_disarmed_session", "disarmed close model")
+    require(web_server, '\\"action\\":\\"%s\\"', "typed WebSocket result action")
+
+    for fragment in (
+        "sessionReady",
+        "WEB_SOCKET_CONNECTED",
+        "MAX_RECONNECT_ATTEMPTS",
+        "SESSION_BUSY",
+        "if(x.action==='arm'){pending='';armed=true",
+    ):
+        require(page, fragment, "browser session acknowledgement")
+    require_compact(page,
+                    "if (!sessionReady || !armed || pending)",
+                    "browser heartbeat requires acknowledged arm")
+    reject(page, "else{send({type:'arm'});armed=true", "optimistic browser arming")
 
     print("softap web joystick source contract: PASS")
     return 0

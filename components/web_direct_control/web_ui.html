@@ -10,8 +10,8 @@
     body{margin:0;padding:max(16px,env(safe-area-inset-top)) 18px 24px;overscroll-behavior:none}
     header{display:flex;justify-content:space-between;gap:12px;align-items:center}.tag{font-size:12px;color:#ffd166;border:1px solid #705d20;padding:5px 8px;border-radius:999px}
     h1{margin:0;font-size:21px}.state{margin:18px 0 8px;padding:14px;border-radius:12px;background:#102534;font-weight:700}.link{color:#9cc5dc;font-size:13px;margin-bottom:16px}
-    .controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}button{min-height:58px;border:0;border-radius:12px;font-size:17px;font-weight:700;background:#235a79;color:white}button.stop{background:#9d3333}
-    .joy-wrap{display:grid;place-items:center;margin:6px 0 18px}.joy{width:min(76vw,340px);height:min(76vw,340px);border-radius:50%;background:#112d3f;border:3px solid #407a98;position:relative;touch-action:none}.knob{width:92px;height:92px;position:absolute;left:calc(50% - 46px);top:calc(50% - 46px);border-radius:50%;background:#3fb8e5;box-shadow:0 3px 14px #0008;pointer-events:none}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}button{min-height:58px;border:0;border-radius:12px;font-size:17px;font-weight:700;background:#235a79;color:white}button.stop{background:#9d3333}button:disabled{opacity:.45}
+    .joy-wrap{display:grid;place-items:center;margin:6px 0 18px}.joy{width:min(76vw,340px);height:min(76vw,340px);border-radius:50%;background:#112d3f;border:3px solid #407a98;position:relative;touch-action:none}.joy.disabled{opacity:.45}.knob{width:92px;height:92px;position:absolute;left:calc(50% - 46px);top:calc(50% - 46px);border-radius:50%;background:#3fb8e5;box-shadow:0 3px 14px #0008;pointer-events:none}
     .hint{text-align:center;color:#9cc5dc;font-size:13px;margin:0 0 15px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.card{background:#10202b;border-radius:10px;padding:10px;min-height:62px}.wide{grid-column:1 / -1}.label{font-size:11px;color:#8da8b8}.value{font-size:17px;font-weight:650;margin-top:4px}.nd{color:#8da8b8}footer{font-size:11px;color:#8da8b8;margin-top:18px;text-align:center}
   </style>
 </head>
@@ -39,20 +39,46 @@
   <script>
   (()=>{
     const $=id=>document.getElementById(id),joy=$('joy'),knob=$('knob'),state=$('state'),link=$('link'),arm=$('arm');
-    let ws,armed=false,forward=0,turn=0,pointer=null;
+    const MAX_RECONNECT_ATTEMPTS=5;
+    let ws,armed=false,sessionReady=false,pending='',forward=0,turn=0,pointer=null,reconnectAttempts=0,retryTimer=null,pageClosing=false,lastSessionDetail='';
     const reset=()=>{forward=turn=0;knob.style.transform='translate(0,0)'};
-    const send=o=>{if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))};
+    const updateControls=()=>{const ready=sessionReady&&!pending;arm.disabled=!ready;$('stop').disabled=!sessionReady;joy.classList.toggle('disabled',!ready||!armed)};
+    const disarmLocal=()=>{armed=false;pending='';arm.textContent='ARMAR';reset();updateControls()};
+    const send=o=>{if(!sessionReady||!ws||ws.readyState!==WebSocket.OPEN)return false;ws.send(JSON.stringify(o));return true};
     const setLink=(kind,age)=>{link.textContent=age===undefined?`WEBSOCKET: ${kind}`:`WEBSOCKET: ${kind} - ultimo comando ${age} ms`};
+    function scheduleReconnect(){
+      if(pageClosing||retryTimer)return;
+      if(reconnectAttempts>=MAX_RECONNECT_ATTEMPTS){state.textContent='SESION NO DISPONIBLE - CIERRE OTRA PESTAÑA Y RECARGUE';setLink('SESSION BUSY');return}
+      const delay=Math.min(5000,1000*(reconnectAttempts+1));reconnectAttempts++;
+      retryTimer=setTimeout(()=>{retryTimer=null;connect()},delay);
+    }
     function connect(){
+      if(pageClosing||(ws&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(ws.readyState)))return;
       const socket=new WebSocket(`ws://${location.host}/control`);ws=socket;
-      socket.onopen=()=>setLink('CONNECTED');
-      socket.onclose=()=>{if(ws!==socket)return;armed=false;arm.textContent='ARMAR';state.textContent='CONEXION PERDIDA';setLink('DISCONNECTED');reset();setTimeout(connect,1000)};
-      socket.onerror=()=>setLink('STALE');
+      socket.onopen=()=>{if(ws===socket)setLink('SOCKET OPEN - ESPERANDO SESION')};
+      socket.onclose=()=>{if(ws!==socket)return;ws=null;sessionReady=false;disarmLocal();state.textContent=lastSessionDetail?`RECHAZADO: ${lastSessionDetail}`:'CONEXION PERDIDA';setLink(lastSessionDetail?'SESSION BUSY':'DISCONNECTED');scheduleReconnect()};
+      socket.onerror=()=>{if(ws===socket)setLink('STALE')};
       socket.onmessage=e=>{
+        if(ws!==socket)return;
         let x;try{x=JSON.parse(e.data)}catch{return}
-        if(x.type==='result'&&!x.accepted){state.textContent='RECHAZADO: '+x.detail;return}
+        if(x.type==='result'){
+          if(x.action==='session'){
+            if(x.accepted&&x.detail==='WEB_SOCKET_CONNECTED'){lastSessionDetail='';sessionReady=true;reconnectAttempts=0;pending='';state.textContent='DISARMED';setLink('SESSION READY');updateControls();return}
+            lastSessionDetail=x.detail;sessionReady=false;disarmLocal();state.textContent='RECHAZADO: '+x.detail;setLink('SESSION BUSY');if(ws===socket&&socket.readyState===WebSocket.OPEN)socket.close();return;
+          }
+          if(!x.accepted){
+            if(x.action==='arm'||x.action==='disarm'||x.action==='stop')disarmLocal();
+            state.textContent='RECHAZADO: '+x.detail;
+            if(x.detail==='SESSION_BUSY'){lastSessionDetail=x.detail;sessionReady=false;disarmLocal();updateControls();if(ws===socket&&socket.readyState===WebSocket.OPEN)socket.close()}
+            return;
+          }
+          if(x.action==='arm'){pending='';armed=true;arm.textContent='DESARMAR';state.textContent='ARM REQUEST ACKED';updateControls();return}
+          if(x.action==='disarm'||x.action==='stop'){disarmLocal();state.textContent=x.action==='stop'?'STOP REQUEST ACKED':'DISARM REQUEST ACKED';return}
+          return;
+        }
         if(x.type!=='status')return;
         state.textContent=x.state;setLink(x.link,x.last_command_ms);$('age').textContent=x.last_command_ms+' ms';
+        if(x.state==='EXPIRED'||x.state==='FAULT')disarmLocal();
         if(x.network){
           $('network').textContent=`Modo ${x.network.mode} - ${x.network.ssid} - ${x.network.ip} - clientes ${x.network.clients} - DHCP ${x.network.dhcp?'ON':'OFF'}`;
           $('modeTag').textContent=x.network.mode==='AP'?'EXPERIMENTAL - SOFTAP AP-ONLY - WEB_DIRECT':'EXPERIMENTAL - WEB_DIRECT';
@@ -61,13 +87,15 @@
         $('prpm').textContent=x.peaks.rpm_m1+' / '+x.peaks.rpm_m2+' RPM';$('pa').textContent=x.peaks.current_m1.toFixed(1)+' / '+x.peaks.current_m2.toFixed(1)+' A';
       };
     }
-    function command(){send({type:'command',forward,turn,deadman:Math.abs(forward)>=.10||Math.abs(turn)>=.10})}
-    function move(e){if(pointer!==e.pointerId)return;const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=(e.clientX-cx)/(r.width/2),dy=(e.clientY-cy)/(r.height/2),m=Math.hypot(dx,dy);if(m>1){dx/=m;dy/=m}turn=dx;forward=-dy;knob.style.transform=`translate(${dx*(r.width/2-46)}px,${dy*(r.height/2-46)}px)`;command()}
-    joy.addEventListener('pointerdown',e=>{pointer=e.pointerId;joy.setPointerCapture(pointer);move(e)});joy.addEventListener('pointermove',move);
+    function command(){if(!sessionReady||!armed||pending)return;send({type:'command',forward,turn,deadman:Math.abs(forward)>=.10||Math.abs(turn)>=.10})}
+    function move(e){if(pointer!==e.pointerId||!sessionReady||!armed||pending)return;const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=(e.clientX-cx)/(r.width/2),dy=(e.clientY-cy)/(r.height/2),m=Math.hypot(dx,dy);if(m>1){dx/=m;dy/=m}turn=dx;forward=-dy;knob.style.transform=`translate(${dx*(r.width/2-46)}px,${dy*(r.height/2-46)}px)`;command()}
+    joy.addEventListener('pointerdown',e=>{if(!sessionReady||!armed||pending)return;pointer=e.pointerId;joy.setPointerCapture(pointer);move(e)});joy.addEventListener('pointermove',move);
     ['pointerup','pointercancel','lostpointercapture'].forEach(t=>joy.addEventListener(t,e=>{if(pointer===e.pointerId){pointer=null;reset();command()}}));
-    arm.onclick=()=>{if(armed){send({type:'disarm'});armed=false;arm.textContent='ARMAR';reset();command()}else{send({type:'arm'});armed=true;arm.textContent='DESARMAR'}};
-    $('stop').onclick=()=>{send({type:'stop'});armed=false;arm.textContent='ARMAR';reset()};
-    setInterval(()=>{if(armed)command()},100);addEventListener('pagehide',()=>{reset();command();if(ws)ws.close()});connect();
+    arm.onclick=()=>{if(!sessionReady||pending)return;if(armed){if(send({type:'disarm'})){pending='disarm';updateControls()}}else if(send({type:'arm'})){pending='arm';updateControls()}};
+    $('stop').onclick=()=>{if(!sessionReady||pending==='stop')return;if(send({type:'stop'})){pending='stop';updateControls()}};
+    setInterval(()=>{if(sessionReady&&armed&&!pending)command()},100);
+    addEventListener('pagehide',()=>{pageClosing=true;if(retryTimer)clearTimeout(retryTimer);if(sessionReady&&armed){reset();command()}if(ws)ws.close()});
+    updateControls();connect();
   })();
   </script>
 </body>

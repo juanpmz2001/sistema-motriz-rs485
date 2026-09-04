@@ -128,16 +128,22 @@ static void server_close_handler(httpd_handle_t server, int fd)
 {
     web_direct_control_handle_t handle = httpd_get_global_user_ctx(server);
     bool websocket_closed = false;
+    bool session_released = false;
     if (handle) {
         lock(handle);
         if (handle->active_fd == fd) {
+            const uint64_t session = handle->model.session_id;
             handle->active_fd = -1;
             websocket_closed = true;
+            session_released = web_direct_control_model_release_disarmed_session(
+                &handle->model, session);
         }
         unlock(handle);
     }
     if (websocket_closed) {
-        ESP_LOGI(TAG, "WEB_SOCKET_DISCONNECTED");
+        ESP_LOGI(TAG,
+                 "WEB_SOCKET_DISCONNECTED session_released=%u",
+                 session_released ? 1U : 0U);
     }
     (void)close(fd);
 }
@@ -242,11 +248,19 @@ static bool json_number(cJSON *root, const char *key, float *out)
     return true;
 }
 
-static void send_result(web_direct_control_handle_t handle, int fd, bool accepted, const char *detail)
+static void send_result(web_direct_control_handle_t handle,
+                        int fd,
+                        const char *action,
+                        bool accepted,
+                        const char *detail)
 {
-    char payload[128];
-    snprintf(payload, sizeof(payload), "{\"type\":\"result\",\"accepted\":%s,\"detail\":\"%s\"}",
-             accepted ? "true" : "false", detail ? detail : "UNKNOWN");
+    char payload[160];
+    snprintf(payload,
+             sizeof(payload),
+             "{\"type\":\"result\",\"action\":\"%s\",\"accepted\":%s,\"detail\":\"%s\"}",
+             action ? action : "unknown",
+             accepted ? "true" : "false",
+             detail ? detail : "UNKNOWN");
     httpd_ws_frame_t frame = {.type = HTTPD_WS_TYPE_TEXT, .payload = (uint8_t *)payload, .len = strlen(payload)};
     (void)httpd_ws_send_frame_async(handle->server, fd, &frame);
 }
@@ -261,7 +275,11 @@ static esp_err_t control_handler(httpd_req_t *request)
         const bool claimed = web_direct_control_model_claim_session(&handle->model, session);
         if (claimed) handle->active_fd = fd;
         unlock(handle);
-        send_result(handle, fd, claimed, claimed ? "WEB_SOCKET_CONNECTED" : "SESSION_BUSY");
+        send_result(handle,
+                    fd,
+                    "session",
+                    claimed,
+                    claimed ? "WEB_SOCKET_CONNECTED" : "SESSION_BUSY");
         if (claimed) ESP_LOGI(TAG, "WEB_SOCKET_CONNECTED");
         return ESP_OK;
     }
@@ -274,19 +292,24 @@ static esp_err_t control_handler(httpd_req_t *request)
     err = httpd_ws_recv_frame(request, &frame, frame.len);
     if (err != ESP_OK) return err;
     cJSON *root = cJSON_ParseWithLength((const char *)data, frame.len);
-    if (!root) { send_result(handle, fd, false, "BAD_JSON"); return ESP_OK; }
+    if (!root) {
+        send_result(handle, fd, "unknown", false, "BAD_JSON");
+        return ESP_OK;
+    }
     bool accepted = false;
     char detail[48] = "REJECTED";
+    const char *action = "unknown";
     lock(handle);
     if (fd != handle->active_fd) {
         snprintf(detail, sizeof(detail), "%s", "SESSION_BUSY");
         unlock(handle);
         cJSON_Delete(root);
-        send_result(handle, fd, false, detail);
+        send_result(handle, fd, action, false, detail);
         return ESP_OK;
     }
     const uint64_t session = handle->model.session_id;
     if (json_text_equals(root, "type", "arm")) {
+        action = "arm";
         if (!admitted(handle, detail, sizeof(detail))) {
             accepted = false;
         } else if (web_direct_control_model_arm(&handle->model, session, now_ms()) == WEB_DIRECT_MODEL_ACCEPTED) {
@@ -300,16 +323,19 @@ static esp_err_t control_handler(httpd_req_t *request)
             }
         }
     } else if (json_text_equals(root, "type", "disarm")) {
+        action = "disarm";
         if (web_direct_control_model_disarm(&handle->model, session) == WEB_DIRECT_MODEL_ACCEPTED) {
             accepted = publish_event(handle, MOTION_APPLICATION_EVENT_DISARM, 0.0f, 0.0f, false, detail, sizeof(detail));
             if (accepted) ESP_LOGI(TAG, "WEB_DISARM");
         }
     } else if (json_text_equals(root, "type", "stop")) {
+        action = "stop";
         if (web_direct_control_model_disarm(&handle->model, session) == WEB_DIRECT_MODEL_ACCEPTED) {
             accepted = publish_event(handle, MOTION_APPLICATION_EVENT_STOP, 0.0f, 0.0f, false, detail, sizeof(detail));
             if (accepted) ESP_LOGW(TAG, "WEB_STOP");
         }
     } else if (json_text_equals(root, "type", "command")) {
+        action = "command";
         float forward, turn;
         cJSON *deadman = cJSON_GetObjectItemCaseSensitive(root, "deadman");
         web_direct_control_command_t command;
@@ -328,7 +354,7 @@ static esp_err_t control_handler(httpd_req_t *request)
     unlock(handle);
     cJSON_Delete(root);
     if (!accepted) ESP_LOGW(TAG, "WEB_CONTROL_REJECTED %s", detail);
-    send_result(handle, fd, accepted, detail);
+    send_result(handle, fd, action, accepted, detail);
     return ESP_OK;
 }
 

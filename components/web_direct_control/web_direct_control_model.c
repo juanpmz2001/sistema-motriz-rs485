@@ -55,6 +55,14 @@ static bool owns_session(const web_direct_control_model_t *model, uint64_t sessi
            model->session_id == session_id;
 }
 
+bool web_direct_control_model_release_disarmed_session(web_direct_control_model_t *model,
+                                                        uint64_t session_id)
+{
+    if (!owns_session(model, session_id) || model->armed) return false;
+    web_direct_control_model_release_session(model, session_id);
+    return true;
+}
+
 web_direct_control_model_result_t web_direct_control_model_arm(
     web_direct_control_model_t *model, uint64_t session_id, uint64_t now_ms)
 {

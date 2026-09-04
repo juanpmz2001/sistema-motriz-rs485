@@ -74,9 +74,17 @@ This experiment does not change the existing web joystick contract:
   endpoint.
 
 Closing a WebSocket is observed and logged, but does not invent a second stop
-path. It ceases valid command renewal, so the same bounded 300 ms lease expires
-through the existing application/safety flow. This is software behavior only until
-the elevated iPhone-disconnect test records physical evidence.
+path. A disconnected **unarmed** owner releases its ephemeral session immediately,
+so a reconnect can obtain a new session. A disconnected armed/active owner retains
+only its existing session and last-valid-command time; it cannot renew the lease and
+the existing bounded 300 ms expiry path withdraws motion before the session is
+released. This is software behavior only until the elevated iPhone-disconnect test
+records physical evidence.
+
+The page enables ARM and joystick intent only after the firmware acknowledges the
+WebSocket session. It does not optimistically mark ARM successful. `SESSION_BUSY`
+leaves the current owner untouched, sends no command and makes a bounded reconnect
+attempt; it never takes ownership or rearms automatically.
 
 ## Build, deployment and reversal
 

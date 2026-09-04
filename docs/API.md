@@ -660,6 +660,20 @@ typed messages:
 {"type":"command","forward":[-1,1],"turn":[-1,1],"deadman":true|false}
 ```
 
+The server replies to the session handshake and each typed request with a bounded
+result envelope:
+
+```text
+{"type":"result","action":"session|arm|disarm|stop|command|unknown","accepted":true|false,"detail":"<token>"}
+```
+
+`WEB_SOCKET_CONNECTED` is the accepted session detail. Browser socket-open alone is
+not ownership or ARM. `SESSION_BUSY` leaves the existing session untouched; clients
+must not send intent, take over, or auto-arm while retrying a bounded reconnect.
+A disconnected unarmed owner releases its session immediately. A disconnected armed
+owner cannot renew its existing 300 ms lease; the normal lease-expiry path withdraws
+motion and then releases that session.
+
 `forward` and `turn` are normalized semantic intent. The adapter applies its 0.10
 deadzone, maps them only to the profile body limits, and publishes `WEB_DIRECT`
 events through `motion_application`; differential mixing, limits, signs and SVD48

@@ -286,6 +286,13 @@ authenticated OTA announcement from a temporary AP-connected maintenance laptop 
 outside the control path. See the branch-local
 [SoftAP experiment contract](experiments/RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENT.md).
 
+The direct WebSocket source has one ephemeral owner. Firmware acknowledges session
+ownership separately from TCP/WebSocket open; an unarmed disconnect releases that
+owner immediately, while an armed disconnect preserves only the pre-existing lease
+until its normal 300 ms expiry path withdraws motion. The browser does not enable
+intent or mark ARM complete before those acknowledgements, and a bounded
+`SESSION_BUSY` retry never takes ownership or auto-arms.
+
 ## Communication reliability ownership
 
 The firmware distinguishes one raw wire attempt from an operational conclusion.

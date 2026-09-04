@@ -93,6 +93,62 @@ static bool test_websocket_loss_does_not_extend_ttl(void)
     return true;
 }
 
+static bool test_disarmed_socket_close_releases_session_for_reconnect(void)
+{
+    web_direct_control_model_t model;
+    HOST_TEST_CHECK(init(&model));
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 1U));
+    HOST_TEST_CHECK(web_direct_control_model_release_disarmed_session(&model, 1U));
+    HOST_TEST_CHECK(!model.session_claimed);
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 2U));
+    return true;
+}
+
+static bool test_armed_socket_close_preserves_ttl_before_reconnect(void)
+{
+    web_direct_control_model_t model;
+    web_direct_control_command_t command;
+    HOST_TEST_CHECK(init(&model));
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 1U));
+    HOST_TEST_CHECK(web_direct_control_model_arm(&model, 1U, 0U) ==
+                    WEB_DIRECT_MODEL_ACCEPTED);
+    HOST_TEST_CHECK(web_direct_control_model_command(&model, 1U, 250U, 0.4f, 0.0f,
+                                                      true, &command) ==
+                    WEB_DIRECT_MODEL_ACCEPTED);
+    HOST_TEST_CHECK(!web_direct_control_model_release_disarmed_session(&model, 1U));
+    HOST_TEST_CHECK(!web_direct_control_model_claim_session(&model, 2U));
+    HOST_TEST_CHECK(!web_direct_control_model_expire(&model, 550U));
+    HOST_TEST_CHECK(web_direct_control_model_expire(&model, 551U));
+    web_direct_control_model_release_session(&model, 1U);
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 2U));
+    return true;
+}
+
+static bool test_disarm_then_socket_close_releases_session(void)
+{
+    web_direct_control_model_t model;
+    HOST_TEST_CHECK(init(&model));
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 1U));
+    HOST_TEST_CHECK(web_direct_control_model_arm(&model, 1U, 0U) ==
+                    WEB_DIRECT_MODEL_ACCEPTED);
+    HOST_TEST_CHECK(web_direct_control_model_disarm(&model, 1U) ==
+                    WEB_DIRECT_MODEL_ACCEPTED);
+    HOST_TEST_CHECK(web_direct_control_model_release_disarmed_session(&model, 1U));
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 2U));
+    return true;
+}
+
+static bool test_foreign_socket_close_cannot_release_current_owner(void)
+{
+    web_direct_control_model_t model;
+    HOST_TEST_CHECK(init(&model));
+    HOST_TEST_CHECK(web_direct_control_model_claim_session(&model, 1U));
+    HOST_TEST_CHECK(!web_direct_control_model_release_disarmed_session(&model, 2U));
+    HOST_TEST_CHECK(model.session_claimed && model.session_id == 1U);
+    HOST_TEST_CHECK(!web_direct_control_model_claim_session(&model, 2U));
+    return true;
+}
+
 static bool test_disarm_fault_and_old_session_do_not_revive(void)
 {
     web_direct_control_model_t model;
@@ -125,6 +181,10 @@ int main(void)
         HOST_TEST_CASE(test_second_client_cannot_claim_or_revive_current_session),
         HOST_TEST_CASE(test_deadzone_and_release_are_zero_deadman_false),
         HOST_TEST_CASE(test_websocket_loss_does_not_extend_ttl),
+        HOST_TEST_CASE(test_disarmed_socket_close_releases_session_for_reconnect),
+        HOST_TEST_CASE(test_armed_socket_close_preserves_ttl_before_reconnect),
+        HOST_TEST_CASE(test_disarm_then_socket_close_releases_session),
+        HOST_TEST_CASE(test_foreign_socket_close_cannot_release_current_owner),
         HOST_TEST_CASE(test_disarm_fault_and_old_session_do_not_revive),
     };
     return host_test_exit_code(
