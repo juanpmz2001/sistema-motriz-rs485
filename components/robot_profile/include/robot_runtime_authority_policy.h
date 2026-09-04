@@ -15,6 +15,8 @@ extern "C" {
 typedef struct {
     bool lan_only_diagnostic_active;
     bool web_joystick_experimental_active;
+    bool softap_web_joystick_experimental_active;
+    bool web_direct_control_active;
     bool ppm_motion_active;
     bool control_lan_active;
     bool rc_lan_interlock_active;
@@ -24,7 +26,8 @@ typedef struct {
 robot_runtime_authority_policy_t robot_runtime_authority_policy_for(
     const robot_profile_t *profile,
     bool request_rafa_lan_only_diagnostic,
-    bool request_rafa_web_joystick_experimental);
+    bool request_rafa_web_joystick_experimental,
+    bool request_rafa_softap_web_joystick_experimental);
 
 const char *robot_runtime_authority_profile_name(
     const robot_profile_t *profile,

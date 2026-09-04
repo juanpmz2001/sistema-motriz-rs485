@@ -17,6 +17,8 @@ Physical observations are evidence only for the conditions and artifact they nam
   [physical-test runbooks](testing/README.md), [evidence template](testing/EVIDENCE_TEMPLATE.md)
   and [Safety](SAFETY.md).
 - **Rafa workshop decisions:** [Rafa bench state](robots/RAFA_BENCH_STATE.md).
+- **Temporary Rafa direct-iPhone SoftAP experiment:**
+  [SoftAP web joystick experiment](experiments/RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENT.md).
 
 ## Current contracts
 

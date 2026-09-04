@@ -271,6 +271,21 @@ projection. The existing safety gate, semantic STOP, endpoint health, cached SVD
 polling and 300 ms lease continue to own their respective contracts. The experimental
 web page is not the Engineering Console and is not part of normal Rafa firmware.
 
+The separate branch-only
+`BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL` is a second, mutually exclusive
+projection for direct iPhone testing without an upstream LAN. It reports
+`PROFILE_STATUS NAME:rafa_softap_web_joystick_experimental` and constructs only
+`esp_netif_create_default_wifi_ap()` with `WIFI_MODE_AP`; it never creates a STA
+netif, selects APSTA, reads NVS station credentials, invokes `esp_wifi_connect()`,
+or starts the reconnect supervisor. Its static AP address is `192.168.4.1` with a
+DHCP server, channel 6 and HT20. It serves the same typed `WEB_DIRECT` endpoint at
+`GET /` and `ws://192.168.4.1/control`, while preserving the existing 300 ms lease,
+motion application, safety, endpoint and SVD boundaries. It starts neither PPM
+motion nor UDP Control LAN. Automatic OTA checking is suppressed; an explicit
+authenticated OTA announcement from a temporary AP-connected maintenance laptop is
+outside the control path. See the branch-local
+[SoftAP experiment contract](experiments/RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENT.md).
+
 ## Communication reliability ownership
 
 The firmware distinguishes one raw wire attempt from an operational conclusion.

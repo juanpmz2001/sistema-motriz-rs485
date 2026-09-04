@@ -64,6 +64,30 @@ static bool rafa_web_joystick_experimental_requested(void)
 #endif
 }
 
+static bool rafa_softap_web_joystick_experimental_requested(void)
+{
+#if defined(CONFIG_BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL) && \
+    CONFIG_BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL
+    return true;
+#else
+    return false;
+#endif
+}
+
+static wifi_manager_softap_config_t rafa_softap_web_joystick_config(void)
+{
+    return (wifi_manager_softap_config_t){
+        .ssid = "RAFA-CONTROL",
+#if defined(CONFIG_BOTFARMS_RAFA_SOFTAP_PASSPHRASE)
+        .passphrase = CONFIG_BOTFARMS_RAFA_SOFTAP_PASSPHRASE,
+#else
+        .passphrase = "",
+#endif
+        .channel = WIFI_MANAGER_SOFTAP_DEFAULT_CHANNEL,
+        .max_clients = WIFI_MANAGER_SOFTAP_DEFAULT_MAX_CLIENTS,
+    };
+}
+
 static const char *runtime_profile_name(void)
 {
     return robot_runtime_authority_profile_name(profile,
@@ -277,7 +301,14 @@ static esp_err_t start_control_plane(void)
     } else {
         ESP_LOGW(TAG, "UDP Control LAN disabled by WEB_DIRECT experimental profile");
     }
-    if (runtime_authority_policy.web_joystick_experimental_active) {
+    if (runtime_authority_policy.web_direct_control_active) {
+        if (!wifi_manager ||
+            (runtime_authority_policy.softap_web_joystick_experimental_active &&
+             !wifi_manager_is_softap(wifi_manager))) {
+            ESP_LOGE(TAG, "WEB_DIRECT requires its selected Wi-Fi transport");
+            deinit_control_plane();
+            return ESP_ERR_INVALID_STATE;
+        }
         const web_direct_control_config_t web_config = {
             .motion_application = motion_application,
             .motion_status = motion_application_service_status_port(motion_application),
@@ -286,6 +317,9 @@ static esp_err_t start_control_plane(void)
             .max_wz_radps = max_wz_radps,
             .admission_gate = motion_safety_gate,
             .admission_context = robot_safety,
+            .wifi_manager = runtime_authority_policy.softap_web_joystick_experimental_active
+                                ? wifi_manager
+                                : NULL,
         };
         error = web_direct_control_init(&web_config, &web_direct_control);
         if (error == ESP_OK) error = web_direct_control_start(web_direct_control);
@@ -466,7 +500,19 @@ void app_main(void)
         return;
     }
 
-    err = wifi_manager_init(config_manager, &wifi_manager);
+    profile = robot_profile_selected();
+    runtime_authority_policy = robot_runtime_authority_policy_for(
+        profile, rafa_lan_only_diagnostic_requested(),
+        rafa_web_joystick_experimental_requested(),
+        rafa_softap_web_joystick_experimental_requested());
+
+    if (runtime_authority_policy.softap_web_joystick_experimental_active) {
+        const wifi_manager_softap_config_t softap_config =
+            rafa_softap_web_joystick_config();
+        err = wifi_manager_init_softap(&softap_config, &wifi_manager);
+    } else {
+        err = wifi_manager_init(config_manager, &wifi_manager);
+    }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi manager unavailable, err=0x%x; robot startup continues", err);
         wifi_manager = NULL;
@@ -489,10 +535,6 @@ void app_main(void)
         ESP_LOGW(TAG, "OTA check manager disabled because Wi-Fi manager is unavailable");
     }
 
-    profile = robot_profile_selected();
-    runtime_authority_policy = robot_runtime_authority_policy_for(
-        profile, rafa_lan_only_diagnostic_requested(),
-        rafa_web_joystick_experimental_requested());
     ESP_LOGI(TAG, "Selected robot profile:%s", robot_profile_selected_name());
     if (runtime_authority_policy.lan_only_diagnostic_active) {
         ESP_LOGW(TAG,
@@ -501,6 +543,10 @@ void app_main(void)
     if (runtime_authority_policy.web_joystick_experimental_active) {
         ESP_LOGW(TAG,
                  "RAFA WEB_DIRECT EXPERIMENT active: PPM observed only; UDP Control LAN disabled");
+    }
+    if (runtime_authority_policy.softap_web_joystick_experimental_active) {
+        ESP_LOGW(TAG,
+                 "RAFA SOFTAP WEB_DIRECT EXPERIMENT active: AP-only; PPM observed only; UDP Control LAN disabled");
     }
     const robot_bus_profile_t *rc_bus = robot_profile_find_bus_type(profile, ROBOT_BUS_GPIO);
     err = robot_composition_init(&composition, profile);
@@ -795,20 +841,23 @@ void app_main(void)
         confirm_pending_app_after_self_test();
     }
 
-    if (wifi_manager) {
+    if (wifi_manager && !wifi_manager_is_softap(wifi_manager)) {
         err = wifi_manager_start_auto_connect_task(wifi_manager);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "Wi-Fi reconnect supervisor unavailable, err=0x%x", err);
         }
     }
 
-    if (ota_manager) {
+    if (ota_manager && !wifi_manager_is_softap(wifi_manager)) {
         err = ota_manager_start_auto_check_task(ota_manager);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Automatic OTA_CHECK task unavailable, err=0x%x", err);
         }
     }
 
+    /* A future explicit OTA announcement may be served by a maintenance laptop
+     * joined to the AP. It is not a control transport; only automatic checks
+     * are suppressed in the AP-only experiment. */
     if (ota_announce) {
         err = ota_announce_start(ota_announce);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {

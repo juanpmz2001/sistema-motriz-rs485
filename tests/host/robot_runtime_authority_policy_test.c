@@ -17,9 +17,11 @@ static bool normal_rafa_keeps_ppm_authority(void)
 {
     robot_profile_t profile = rafa_profile();
     const robot_runtime_authority_policy_t policy =
-        robot_runtime_authority_policy_for(&profile, false, false);
+        robot_runtime_authority_policy_for(&profile, false, false, false);
     HOST_TEST_CHECK(!policy.lan_only_diagnostic_active);
     HOST_TEST_CHECK(!policy.web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.web_direct_control_active);
     HOST_TEST_CHECK(policy.ppm_motion_active);
     HOST_TEST_CHECK(policy.control_lan_active);
     HOST_TEST_CHECK(policy.rc_lan_interlock_active);
@@ -33,9 +35,11 @@ static bool lan_only_rafa_observes_ppm_without_authority(void)
 {
     robot_profile_t profile = rafa_profile();
     const robot_runtime_authority_policy_t policy =
-        robot_runtime_authority_policy_for(&profile, true, false);
+        robot_runtime_authority_policy_for(&profile, true, false, false);
     HOST_TEST_CHECK(policy.lan_only_diagnostic_active);
     HOST_TEST_CHECK(!policy.web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.web_direct_control_active);
     HOST_TEST_CHECK(!policy.ppm_motion_active);
     HOST_TEST_CHECK(policy.control_lan_active);
     HOST_TEST_CHECK(!policy.rc_lan_interlock_active);
@@ -50,9 +54,11 @@ static bool request_does_not_mutate_other_profiles(void)
     robot_profile_t profile = {0};
     profile.name = "current_robot";
     const robot_runtime_authority_policy_t policy =
-        robot_runtime_authority_policy_for(&profile, true, false);
+        robot_runtime_authority_policy_for(&profile, true, false, false);
     HOST_TEST_CHECK(!policy.lan_only_diagnostic_active);
     HOST_TEST_CHECK(!policy.web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.web_direct_control_active);
     HOST_TEST_CHECK(!policy.ppm_motion_active);
     HOST_TEST_CHECK(policy.control_lan_active);
     HOST_TEST_CHECK(!policy.rc_lan_interlock_active);
@@ -66,8 +72,10 @@ static bool web_experiment_isolated_from_ppm_and_udp_lan(void)
 {
     robot_profile_t profile = rafa_profile();
     const robot_runtime_authority_policy_t policy =
-        robot_runtime_authority_policy_for(&profile, false, true);
+        robot_runtime_authority_policy_for(&profile, false, true, false);
     HOST_TEST_CHECK(policy.web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(policy.web_direct_control_active);
     HOST_TEST_CHECK(!policy.lan_only_diagnostic_active);
     HOST_TEST_CHECK(!policy.ppm_motion_active);
     HOST_TEST_CHECK(!policy.control_lan_active);
@@ -78,6 +86,36 @@ static bool web_experiment_isolated_from_ppm_and_udp_lan(void)
     return true;
 }
 
+static bool softap_web_experiment_isolated_from_ppm_udp_and_station_authority(void)
+{
+    robot_profile_t profile = rafa_profile();
+    const robot_runtime_authority_policy_t policy =
+        robot_runtime_authority_policy_for(&profile, false, false, true);
+    HOST_TEST_CHECK(!policy.web_joystick_experimental_active);
+    HOST_TEST_CHECK(policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(policy.web_direct_control_active);
+    HOST_TEST_CHECK(!policy.lan_only_diagnostic_active);
+    HOST_TEST_CHECK(!policy.ppm_motion_active);
+    HOST_TEST_CHECK(!policy.control_lan_active);
+    HOST_TEST_CHECK(!policy.rc_lan_interlock_active);
+    HOST_TEST_CHECK(!policy.stop_on_rc_loss);
+    HOST_TEST_CHECK(strcmp(robot_runtime_authority_profile_name(&profile, &policy),
+                           "rafa_softap_web_joystick_experimental") == 0);
+    return true;
+}
+
+static bool softap_request_does_not_mutate_other_profiles(void)
+{
+    robot_profile_t profile = {0};
+    profile.name = "current_robot";
+    const robot_runtime_authority_policy_t policy =
+        robot_runtime_authority_policy_for(&profile, false, false, true);
+    HOST_TEST_CHECK(!policy.softap_web_joystick_experimental_active);
+    HOST_TEST_CHECK(!policy.web_direct_control_active);
+    HOST_TEST_CHECK(policy.control_lan_active);
+    return true;
+}
+
 int main(void)
 {
     const host_test_case_t cases[] = {
@@ -85,6 +123,8 @@ int main(void)
         HOST_TEST_CASE(lan_only_rafa_observes_ppm_without_authority),
         HOST_TEST_CASE(request_does_not_mutate_other_profiles),
         HOST_TEST_CASE(web_experiment_isolated_from_ppm_and_udp_lan),
+        HOST_TEST_CASE(softap_web_experiment_isolated_from_ppm_udp_and_station_authority),
+        HOST_TEST_CASE(softap_request_does_not_mutate_other_profiles),
     };
     return host_test_exit_code(
         host_test_run_cases(cases, HOST_TEST_ARRAY_COUNT(cases), stdout));

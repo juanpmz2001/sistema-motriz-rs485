@@ -121,6 +121,18 @@ The offer's source IP becomes the HTTP host; `--server-port` and `--manifest`
 complete the temporary configuration. The server must remain running until the
 device responds and reboots.
 
+### AP-only experimental exception
+
+The branch-only Rafa SoftAP web-joystick image intentionally does not join a
+station or run automatic OTA checks. Its AP address is `192.168.4.1`. For an
+explicit, operator-authorized update or reversal, a maintenance laptop may join
+that AP temporarily, serve the approved artifact from its DHCP-assigned
+`192.168.4.x` address, and send the existing authenticated OTA announcement to
+`192.168.4.1`. That laptop is an OTA maintenance participant, not a browser-control
+authority. Do not assume the normal upstream-LAN broadcast address works in this
+mode, and do not use this exception to add a router, STA or APSTA path. If the AP
+maintenance path is unavailable, use USB recovery.
+
 ## Post-update verification
 
 The new image initially boots pending verification. Startup initializes critical

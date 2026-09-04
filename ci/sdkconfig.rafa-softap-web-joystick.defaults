@@ -1,0 +1,17 @@
+# Isolated direct browser experiment over an ESP32 SoftAP. This selects Rafa's
+# existing hardware composition but starts neither STA/APSTA nor UDP Control LAN.
+# CONFIG_BOTFARMS_PROFILE_CURRENT_ROBOT is not set
+# CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_SVD48_MOTOR is not set
+# CONFIG_BOTFARMS_PROFILE_BENCH_SINGLE_STEERING_AS5600 is not set
+CONFIG_BOTFARMS_PROFILE_RAFA=y
+CONFIG_BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL=y
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# A deployment-only WPA2 passphrase must be supplied through the ignored local
+# ci/sdkconfig.rafa-softap-web-joystick.local.defaults file. It is deliberately
+# absent from source control.
+
+# Keep native USB Serial/JTAG available for the established diagnostic path.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is not set

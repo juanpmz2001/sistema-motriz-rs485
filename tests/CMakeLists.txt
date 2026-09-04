@@ -73,6 +73,15 @@ botfarms_add_host_test(
 )
 
 botfarms_add_host_test(
+    NAME wifi_manager_softap_profile_test
+    SOURCES
+        host/wifi_manager_softap_profile_test.c
+        ../components/wifi_manager/wifi_manager_softap_profile.c
+    INCLUDE_DIRS
+        ../components/wifi_manager/include
+)
+
+botfarms_add_host_test(
     NAME communication_quality_model_test
     SOURCES
         host/communication_quality_model_test.c
@@ -380,6 +389,16 @@ botfarms_add_host_test(
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+    NAME softap_web_joystick_contract_test
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tools/test_softap_web_joystick_contract.py"
+)
+set_tests_properties(softap_web_joystick_contract_test PROPERTIES
+    LABELS "host;architecture"
+    TIMEOUT "${BOTFARMS_HOST_TEST_TIMEOUT_SECONDS}"
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+)
+
 add_test(
     NAME svd48_protocol_reference_test
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tools/test_svd48_protocol.py"

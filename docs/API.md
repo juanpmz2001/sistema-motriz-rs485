@@ -672,3 +672,21 @@ SVD48 observations, never a browser-triggered poll. Torque is explicitly `N/D`.
 This selected experiment does not start UDP Control LAN or `ppm_motion_source`; it
 therefore cannot accept an old UDP stream or PPM authority. It preserves normal
 endpoint/SVD faults and software STOP semantics, but it is not an E-stop.
+
+### Rafa SoftAP direct web joystick experimental build
+
+`CONFIG_BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL=y` is mutually exclusive
+with the preceding direct-web and LAN-only experiments. It identifies as
+`PROFILE_STATUS NAME:rafa_softap_web_joystick_experimental`, exposes the same
+typed `GET /` and `ws://192.168.4.1/control` interface, and preserves all
+`WEB_DIRECT` message and 300 ms lease semantics above. It does not expose a raw
+HTTP/Modbus/register endpoint.
+
+This build has only `WIFI_MODE_AP`, static AP address `192.168.4.1` and an ESP
+DHCP server. `WIFI_STATUS` and Maintenance-LAN status append mode/client/DHCP
+evidence where available; consumers must parse by key and ignore additions.
+`WIFI_CONNECT`, `WIFI_DISCONNECT` and the reconnect supervisor are unsupported in
+AP mode, so no command can transition the selected runtime to a station or APSTA
+configuration. The WPA2 passphrase is not emitted by any status or browser payload.
+The branch-local [SoftAP experiment contract](experiments/RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENT.md)
+defines build, OTA-revert and physical-test constraints.

@@ -28,9 +28,13 @@ static const char *TAG = "wifi_manager";
 struct wifi_manager_t {
     config_manager_handle_t config_manager;
     esp_netif_t *sta_netif;
+    esp_netif_t *ap_netif;
     SemaphoreHandle_t lock;
     esp_event_handler_instance_t wifi_event_handler;
     esp_event_handler_instance_t ip_event_handler;
+    esp_event_handler_instance_t softap_connect_event_handler;
+    esp_event_handler_instance_t softap_disconnect_event_handler;
+    wifi_manager_mode_t mode;
     wifi_manager_state_t state;
     char ssid[CONFIG_MANAGER_WIFI_SSID_MAX];
     char ip_addr[WIFI_MANAGER_IP_ADDR_MAX];
@@ -46,6 +50,8 @@ struct wifi_manager_t {
     uint32_t supervisor_retry_delay_ms;
     uint32_t connect_generation;
     TaskHandle_t supervisor_task;
+    uint8_t connected_clients;
+    bool dhcp_server_running;
 };
 
 typedef struct {
@@ -83,11 +89,38 @@ const char *wifi_manager_state_to_string(wifi_manager_state_t state)
         return "CONNECTING";
     case WIFI_MANAGER_STATE_CONNECTED:
         return "CONNECTED";
+    case WIFI_MANAGER_STATE_AP_RUNNING:
+        return "AP_RUNNING";
     case WIFI_MANAGER_STATE_FAILED:
         return "FAILED";
     default:
         return "UNKNOWN";
     }
+}
+
+const char *wifi_manager_mode_to_string(wifi_manager_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_MANAGER_MODE_STATION:
+        return "STA";
+    case WIFI_MANAGER_MODE_SOFTAP:
+        return "AP";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+bool wifi_manager_status_network_ready(const wifi_manager_status_t *status)
+{
+    if (!status) {
+        return false;
+    }
+    if (status->mode == WIFI_MANAGER_MODE_STATION) {
+        return status->state == WIFI_MANAGER_STATE_CONNECTED;
+    }
+    return status->mode == WIFI_MANAGER_MODE_SOFTAP &&
+           status->state == WIFI_MANAGER_STATE_AP_RUNNING &&
+           status->dhcp_server_running && status->ip_addr[0] != '\0';
 }
 
 static void set_failed(wifi_manager_handle_t handle, esp_err_t err)
@@ -239,6 +272,45 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base, int32_t eve
     xSemaphoreGive(handle->lock);
 }
 
+static void softap_wifi_event_handler(void *arg,
+                                      esp_event_base_t event_base,
+                                      int32_t event_id,
+                                      void *event_data)
+{
+    (void)event_data;
+    wifi_manager_handle_t handle = (wifi_manager_handle_t)arg;
+    if (!handle || event_base != WIFI_EVENT) {
+        return;
+    }
+
+    uint8_t clients = 0U;
+    bool changed = false;
+    if (take_lock(handle) == ESP_OK) {
+        if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+            if (handle->connected_clients < UINT8_MAX) {
+                handle->connected_clients++;
+            }
+            changed = true;
+        } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+            if (handle->connected_clients > 0U) {
+                handle->connected_clients--;
+            }
+            changed = true;
+        }
+        clients = handle->connected_clients;
+        xSemaphoreGive(handle->lock);
+    }
+
+    if (!changed) {
+        return;
+    }
+    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+        ESP_LOGI(TAG, "SOFTAP_CLIENT_CONNECTED clients=%u", (unsigned)clients);
+    } else {
+        ESP_LOGI(TAG, "SOFTAP_CLIENT_DISCONNECTED clients=%u", (unsigned)clients);
+    }
+}
+
 static esp_err_t create_default_event_loop(void)
 {
     esp_err_t err = esp_event_loop_create_default();
@@ -258,6 +330,7 @@ esp_err_t wifi_manager_init(config_manager_handle_t config_manager, wifi_manager
     }
 
     handle->config_manager = config_manager;
+    handle->mode = WIFI_MANAGER_MODE_STATION;
     handle->state = WIFI_MANAGER_STATE_UNCONFIGURED;
     handle->max_retries = WIFI_MANAGER_MAX_RETRIES;
     handle->last_error = ESP_OK;
@@ -318,6 +391,141 @@ esp_err_t wifi_manager_init(config_manager_handle_t config_manager, wifi_manager
 
     *out_handle = handle;
     ESP_LOGI(TAG, "Wi-Fi station manager ready");
+    return ESP_OK;
+}
+
+static esp_err_t configure_softap_ip(esp_netif_t *ap_netif)
+{
+    if (!ap_netif) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = esp_netif_dhcps_stop(ap_netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        return err;
+    }
+
+    esp_netif_ip_info_t ip_info = {0};
+    err = esp_netif_str_to_ip4(WIFI_MANAGER_SOFTAP_IP_ADDR, &ip_info.ip);
+    if (err == ESP_OK) {
+        err = esp_netif_str_to_ip4(WIFI_MANAGER_SOFTAP_NETMASK, &ip_info.netmask);
+    }
+    if (err == ESP_OK) {
+        err = esp_netif_str_to_ip4(WIFI_MANAGER_SOFTAP_GATEWAY, &ip_info.gw);
+    }
+    if (err == ESP_OK) {
+        err = esp_netif_set_ip_info(ap_netif, &ip_info);
+    }
+    return err;
+}
+
+static esp_err_t start_softap_dhcp_server(esp_netif_t *ap_netif)
+{
+    const esp_err_t err = esp_netif_dhcps_start(ap_netif);
+    return err == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED ? ESP_OK : err;
+}
+
+esp_err_t wifi_manager_init_softap(const wifi_manager_softap_config_t *config,
+                                   wifi_manager_handle_t *out_handle)
+{
+    if (!out_handle || !wifi_manager_softap_config_is_valid(config)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_handle = NULL;
+
+    wifi_manager_handle_t handle = calloc(1, sizeof(struct wifi_manager_t));
+    if (!handle) {
+        return ESP_ERR_NO_MEM;
+    }
+    handle->mode = WIFI_MANAGER_MODE_SOFTAP;
+    handle->state = WIFI_MANAGER_STATE_FAILED;
+    handle->last_error = ESP_OK;
+    handle->lock = xSemaphoreCreateMutex();
+    if (!handle->lock) {
+        free(handle);
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = esp_netif_init();
+    if (err == ESP_OK) {
+        err = create_default_event_loop();
+    }
+    if (err == ESP_OK) {
+        handle->ap_netif = esp_netif_create_default_wifi_ap();
+        if (!handle->ap_netif) {
+            err = ESP_ERR_NO_MEM;
+        }
+    }
+    if (err == ESP_OK) {
+        wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT();
+        err = esp_wifi_init(&wifi_init);
+    }
+    if (err == ESP_OK) {
+        err = esp_event_handler_instance_register(WIFI_EVENT,
+                                                  WIFI_EVENT_AP_STACONNECTED,
+                                                  &softap_wifi_event_handler,
+                                                  handle,
+                                                  &handle->softap_connect_event_handler);
+    }
+    if (err == ESP_OK) {
+        err = esp_event_handler_instance_register(WIFI_EVENT,
+                                                  WIFI_EVENT_AP_STADISCONNECTED,
+                                                  &softap_wifi_event_handler,
+                                                  handle,
+                                                  &handle->softap_disconnect_event_handler);
+    }
+    if (err == ESP_OK) {
+        err = esp_wifi_set_mode(WIFI_MODE_AP);
+    }
+
+    wifi_config_t wifi_config = {0};
+    if (err == ESP_OK) {
+        copy_text((char *)wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid), config->ssid);
+        copy_text((char *)wifi_config.ap.password, sizeof(wifi_config.ap.password), config->passphrase);
+        wifi_config.ap.ssid_len = strlen(config->ssid);
+        wifi_config.ap.channel = config->channel;
+        wifi_config.ap.max_connection = config->max_clients;
+        wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        wifi_config.ap.pmf_cfg.required = true;
+        err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    }
+    if (err == ESP_OK) {
+        err = esp_wifi_start();
+        if (err == ESP_OK) {
+            handle->started = true;
+        }
+    }
+    if (err == ESP_OK) {
+        err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    }
+    if (err == ESP_OK) {
+        err = configure_softap_ip(handle->ap_netif);
+    }
+    if (err == ESP_OK) {
+        err = start_softap_dhcp_server(handle->ap_netif);
+    }
+    memset(&wifi_config, 0, sizeof(wifi_config));
+
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SoftAP initialization failed, err=0x%x", err);
+        wifi_manager_deinit(handle);
+        return err;
+    }
+
+    if (take_lock(handle) == ESP_OK) {
+        handle->state = WIFI_MANAGER_STATE_AP_RUNNING;
+        handle->last_error = ESP_OK;
+        handle->dhcp_server_running = true;
+        copy_text(handle->ssid, sizeof(handle->ssid), config->ssid);
+        copy_text(handle->ip_addr, sizeof(handle->ip_addr), WIFI_MANAGER_SOFTAP_IP_ADDR);
+        xSemaphoreGive(handle->lock);
+    }
+    *out_handle = handle;
+    ESP_LOGW(TAG,
+             "SOFTAP_STARTED ssid=%s ip=%s channel=%u bandwidth=HT20 dhcp=ON",
+             config->ssid,
+             WIFI_MANAGER_SOFTAP_IP_ADDR,
+             (unsigned)config->channel);
     return ESP_OK;
 }
 
@@ -410,12 +618,25 @@ void wifi_manager_deinit(wifi_manager_handle_t handle)
                                                     IP_EVENT_STA_GOT_IP,
                                                     handle->ip_event_handler);
     }
+    if (handle->softap_connect_event_handler) {
+        (void)esp_event_handler_instance_unregister(WIFI_EVENT,
+                                                    WIFI_EVENT_AP_STACONNECTED,
+                                                    handle->softap_connect_event_handler);
+    }
+    if (handle->softap_disconnect_event_handler) {
+        (void)esp_event_handler_instance_unregister(WIFI_EVENT,
+                                                    WIFI_EVENT_AP_STADISCONNECTED,
+                                                    handle->softap_disconnect_event_handler);
+    }
     if (handle->started) {
         (void)esp_wifi_stop();
     }
     (void)esp_wifi_deinit();
     if (handle->sta_netif) {
         esp_netif_destroy_default_wifi(handle->sta_netif);
+    }
+    if (handle->ap_netif) {
+        esp_netif_destroy_default_wifi(handle->ap_netif);
     }
     if (handle->lock) {
         vSemaphoreDelete(handle->lock);
@@ -427,6 +648,9 @@ esp_err_t wifi_manager_connect(wifi_manager_handle_t handle)
 {
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (handle->mode == WIFI_MANAGER_MODE_SOFTAP) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
     char ssid[CONFIG_MANAGER_WIFI_SSID_MAX] = { 0 };
@@ -522,6 +746,9 @@ esp_err_t wifi_manager_disconnect(wifi_manager_handle_t handle)
     if (!handle) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (handle->mode == WIFI_MANAGER_MODE_SOFTAP) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     config_manager_snapshot_t snapshot;
     bool have_snapshot = config_manager_get_snapshot(handle->config_manager, &snapshot) == ESP_OK;
@@ -561,6 +788,10 @@ esp_err_t wifi_manager_start_auto_connect_task(wifi_manager_handle_t handle)
     if (take_lock(handle) != ESP_OK) {
         return ESP_ERR_TIMEOUT;
     }
+    if (handle->mode == WIFI_MANAGER_MODE_SOFTAP) {
+        xSemaphoreGive(handle->lock);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (handle->supervisor_task) {
         xSemaphoreGive(handle->lock);
         return ESP_ERR_INVALID_STATE;
@@ -587,6 +818,10 @@ esp_err_t wifi_manager_set_auto_connect_paused(wifi_manager_handle_t handle, boo
     if (err != ESP_OK) {
         return err;
     }
+    if (handle->mode == WIFI_MANAGER_MODE_SOFTAP) {
+        xSemaphoreGive(handle->lock);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     handle->auto_connect_paused = paused;
     if (!paused) {
         handle->manual_disconnect = false;
@@ -602,14 +837,16 @@ esp_err_t wifi_manager_get_status(wifi_manager_handle_t handle, wifi_manager_sta
     }
 
     config_manager_snapshot_t snapshot;
-    bool have_snapshot = config_manager_get_snapshot(handle->config_manager, &snapshot) == ESP_OK;
+    bool have_snapshot = handle->mode == WIFI_MANAGER_MODE_STATION &&
+                         config_manager_get_snapshot(handle->config_manager, &snapshot) == ESP_OK;
 
     esp_err_t err = take_lock(handle);
     if (err != ESP_OK) {
         return err;
     }
 
-    if (handle->state != WIFI_MANAGER_STATE_CONNECTED &&
+    if (handle->mode == WIFI_MANAGER_MODE_STATION &&
+        handle->state != WIFI_MANAGER_STATE_CONNECTED &&
         handle->state != WIFI_MANAGER_STATE_CONNECTING &&
         have_snapshot) {
         if (snapshot.wifi_ssid[0] == '\0') {
@@ -622,6 +859,7 @@ esp_err_t wifi_manager_get_status(wifi_manager_handle_t handle, wifi_manager_sta
     }
 
     memset(status, 0, sizeof(*status));
+    status->mode = handle->mode;
     status->state = handle->state;
     status->retry_count = handle->retry_count;
     status->max_retries = handle->max_retries;
@@ -630,16 +868,34 @@ esp_err_t wifi_manager_get_status(wifi_manager_handle_t handle, wifi_manager_sta
     status->auto_connect_running = handle->supervisor_running;
     status->auto_connect_paused = handle->auto_connect_paused;
     status->auto_retry_delay_ms = handle->supervisor_retry_delay_ms;
+    status->connected_clients = handle->connected_clients;
+    status->dhcp_server_running = handle->dhcp_server_running;
     copy_text(status->ssid, sizeof(status->ssid), handle->ssid);
     copy_text(status->ip_addr, sizeof(status->ip_addr), handle->ip_addr);
     xSemaphoreGive(handle->lock);
 
-    if (status->state == WIFI_MANAGER_STATE_CONNECTED) {
+    if (status->mode == WIFI_MANAGER_MODE_STATION &&
+        status->state == WIFI_MANAGER_STATE_CONNECTED) {
         wifi_ap_record_t ap_info;
         if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
             status->rssi = ap_info.rssi;
         }
+    } else if (status->mode == WIFI_MANAGER_MODE_SOFTAP && handle->ap_netif) {
+        esp_netif_dhcp_status_t dhcp_status = ESP_NETIF_DHCP_INIT;
+        if (esp_netif_dhcps_get_status(handle->ap_netif, &dhcp_status) == ESP_OK) {
+            status->dhcp_server_running = dhcp_status == ESP_NETIF_DHCP_STARTED;
+        }
     }
 
     return ESP_OK;
+}
+
+bool wifi_manager_is_softap(wifi_manager_handle_t handle)
+{
+    if (!handle || take_lock(handle) != ESP_OK) {
+        return false;
+    }
+    const bool is_softap = handle->mode == WIFI_MANAGER_MODE_SOFTAP;
+    xSemaphoreGive(handle->lock);
+    return is_softap;
 }

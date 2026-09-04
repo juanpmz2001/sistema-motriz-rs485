@@ -211,8 +211,11 @@ static char *response_status(maintenance_lan_handle_t handle, const char *reques
         wifi_manager_status_t wifi_status;
         if (wifi_manager_get_status(handle->config.wifi_manager, &wifi_status) == ESP_OK) {
             cJSON_AddStringToObject(root, "wifi_state", wifi_manager_state_to_string(wifi_status.state));
+            cJSON_AddStringToObject(root, "wifi_mode", wifi_manager_mode_to_string(wifi_status.mode));
             cJSON_AddStringToObject(root, "wifi_ip", wifi_status.ip_addr);
             cJSON_AddStringToObject(root, "wifi_ssid", wifi_status.ssid);
+            cJSON_AddNumberToObject(root, "wifi_connected_clients", wifi_status.connected_clients);
+            cJSON_AddBoolToObject(root, "wifi_dhcp_server_running", wifi_status.dhcp_server_running);
         }
     }
 

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 #include "cJSON.h"
 #include "esp_http_server.h"
@@ -118,6 +119,29 @@ static const char *state_name_locked(web_direct_control_handle_t handle)
     return web_direct_control_model_state_name(handle->model.state);
 }
 
+static void server_global_context_not_owned(void *context)
+{
+    (void)context;
+}
+
+static void server_close_handler(httpd_handle_t server, int fd)
+{
+    web_direct_control_handle_t handle = httpd_get_global_user_ctx(server);
+    bool websocket_closed = false;
+    if (handle) {
+        lock(handle);
+        if (handle->active_fd == fd) {
+            handle->active_fd = -1;
+            websocket_closed = true;
+        }
+        unlock(handle);
+    }
+    if (websocket_closed) {
+        ESP_LOGI(TAG, "WEB_SOCKET_DISCONNECTED");
+    }
+    (void)close(fd);
+}
+
 static void send_status_async(web_direct_control_handle_t handle, int fd)
 {
     int16_t m1_rpm = 0;
@@ -128,7 +152,21 @@ static void send_status_async(web_direct_control_handle_t handle, int fd)
                                                 &m1_rpm, &m1_current);
     const bool m2_valid = telemetry_for_channel(handle, SVD48_WORKSPACE_CHANNEL_M2,
                                                 &m2_rpm, &m2_current);
-    char payload[640];
+    wifi_manager_status_t wifi_status = {0};
+    const bool wifi_valid = handle->config.wifi_manager &&
+                            wifi_manager_get_status(handle->config.wifi_manager,
+                                                    &wifi_status) == ESP_OK;
+    char network[192] = "null";
+    if (wifi_valid && wifi_status.mode == WIFI_MANAGER_MODE_SOFTAP) {
+        snprintf(network, sizeof(network),
+                 "{\"mode\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"clients\":%u,\"dhcp\":%s}",
+                 wifi_manager_mode_to_string(wifi_status.mode),
+                 wifi_status.ssid,
+                 wifi_status.ip_addr,
+                 (unsigned)wifi_status.connected_clients,
+                 wifi_status.dhcp_server_running ? "true" : "false");
+    }
+    char payload[896];
     lock(handle);
     if (m1_valid && fabsf((float)m1_rpm) > handle->peak_rpm_m1)
         handle->peak_rpm_m1 = fabsf((float)m1_rpm);
@@ -140,13 +178,14 @@ static void send_status_async(web_direct_control_handle_t handle, int fd)
         handle->peak_current_m2 = fabsf(m2_current);
     const uint64_t age = handle->model.lease_seen ? now_ms() - handle->model.last_valid_ms : 0U;
     const char *state = state_name_locked(handle);
-    const char *link = handle->model.session_claimed ? "CONNECTED" : "DISCONNECTED";
+    const char *link = handle->active_fd >= 0 ? "CONNECTED" : "DISCONNECTED";
     snprintf(payload, sizeof(payload),
              "{\"type\":\"status\",\"state\":\"%s\",\"link\":\"%s\",\"last_command_ms\":%llu,"
+             "\"network\":%s,"
              "\"m1\":{\"rpm\":%d,\"current_a\":%.1f,\"valid\":%s},"
              "\"m2\":{\"rpm\":%d,\"current_a\":%.1f,\"valid\":%s},"
              "\"peaks\":{\"rpm_m1\":%.0f,\"rpm_m2\":%.0f,\"current_m1\":%.1f,\"current_m2\":%.1f,\"torque\":null}}",
-             state, link, (unsigned long long)age,
+             state, link, (unsigned long long)age, network,
              (int)m1_rpm, m1_current, m1_valid ? "true" : "false",
              (int)m2_rpm, m2_current, m2_valid ? "true" : "false",
              handle->peak_rpm_m1, handle->peak_rpm_m2,
@@ -222,8 +261,8 @@ static esp_err_t control_handler(httpd_req_t *request)
         const bool claimed = web_direct_control_model_claim_session(&handle->model, session);
         if (claimed) handle->active_fd = fd;
         unlock(handle);
-        send_result(handle, fd, claimed, claimed ? "WEB_CLIENT_CONNECTED" : "SESSION_BUSY");
-        if (claimed) ESP_LOGI(TAG, "WEB_CLIENT_CONNECTED");
+        send_result(handle, fd, claimed, claimed ? "WEB_SOCKET_CONNECTED" : "SESSION_BUSY");
+        if (claimed) ESP_LOGI(TAG, "WEB_SOCKET_CONNECTED");
         return ESP_OK;
     }
     httpd_ws_frame_t frame = {0};
@@ -322,6 +361,9 @@ esp_err_t web_direct_control_start(web_direct_control_handle_t handle)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 2U;
     config.stack_size = 6144U;
+    config.global_user_ctx = handle;
+    config.global_user_ctx_free_fn = server_global_context_not_owned;
+    config.close_fn = server_close_handler;
     esp_err_t err = httpd_start(&handle->server, &config);
     if (err != ESP_OK) return err;
     const httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_handler, .user_ctx = handle};

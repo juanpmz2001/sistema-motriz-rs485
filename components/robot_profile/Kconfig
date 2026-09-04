@@ -27,13 +27,39 @@ config BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
         build-selected diagnostic mode, not a runtime command; rebuild Rafa
         without this option after the comparison.
 
-config BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL
-    bool "Temporary Rafa direct ESP web joystick experiment"
+choice BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENT_MODE
+    prompt "Rafa temporary direct web joystick experiment"
     depends on BOTFARMS_PROFILE_RAFA && !BOTFARMS_RAFA_LAN_ONLY_DIAGNOSTIC
-    default n
+    default BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENT_NONE
+
+config BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENT_NONE
+    bool "None"
+
+config BOTFARMS_RAFA_WEB_JOYSTICK_EXPERIMENTAL
+    bool "Station-network direct ESP web joystick"
     help
-        Serve an isolated direct-browser control UI from the ESP32. PPM remains
-        observation-only and UDP Control LAN is not started. Movement enters
-        only as typed WEB_DIRECT semantic intent with the normal application,
-        endpoint, SVD and safety owners. This is a build-selected experiment;
-        rebuild Rafa without this option to restore the normal profile.
+        Serve an isolated direct-browser control UI from the ESP32 over the
+        existing station network. PPM remains observation-only and UDP Control
+        LAN is not started. Movement enters only as typed WEB_DIRECT semantic
+        intent with the normal application, endpoint, SVD and safety owners.
+
+config BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL
+    bool "SoftAP direct ESP web joystick"
+    help
+        Serve the isolated direct-browser joystick only through an ESP32
+        SoftAP. This creates an AP interface only: it does not create a Wi-Fi
+        station, use APSTA, read station credentials, or start reconnect.
+        PPM remains observation-only and UDP Control LAN is not started. This
+        is a build-selected diagnostic experiment; rebuild Rafa without this
+        option to restore the normal profile.
+
+endchoice
+
+config BOTFARMS_RAFA_SOFTAP_PASSPHRASE
+    string "Rafa SoftAP WPA2 passphrase (local build input)"
+    depends on BOTFARMS_RAFA_SOFTAP_WEB_JOYSTICK_EXPERIMENTAL
+    default ""
+    help
+        Required at build time for the experimental SoftAP. Supply a WPA2
+        passphrase of 8 to 63 characters through an ignored local sdkconfig
+        defaults file. Do not commit a real credential or place it in NVS.

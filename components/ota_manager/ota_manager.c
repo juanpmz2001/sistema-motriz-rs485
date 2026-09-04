@@ -996,7 +996,7 @@ static void ota_manager_auto_task(void *arg)
 
         wifi_manager_status_t wifi_status;
         esp_err_t wifi_err = wifi_manager_get_status(handle->wifi_manager, &wifi_status);
-        if (wifi_err != ESP_OK || wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+        if (wifi_err != ESP_OK || !wifi_manager_status_network_ready(&wifi_status)) {
             uint32_t delay_ms = auto_status_failure_delay(handle);
             const char *detail = wifi_err == ESP_OK ? "WIFI_NOT_CONNECTED" : "WIFI_STATUS";
             esp_err_t stored_err = wifi_err == ESP_OK ? ESP_ERR_INVALID_STATE : wifi_err;
@@ -1130,7 +1130,7 @@ esp_err_t ota_manager_force_check(ota_manager_handle_t handle, ota_manager_check
         auto_status_record_failure(handle, err, result->detail, auto_status_failure_delay(handle), 0);
         return err;
     }
-    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+    if (!wifi_manager_status_network_ready(&wifi_status)) {
         set_detail(result, "WIFI_NOT_CONNECTED");
         auto_status_record_failure(handle, ESP_ERR_INVALID_STATE, result->detail, auto_status_failure_delay(handle), 0);
         return ESP_ERR_INVALID_STATE;

@@ -9,6 +9,7 @@
 #include "motion_status_port.h"
 #include "svd48_workspace_port.h"
 #include "web_direct_control_model.h"
+#include "wifi_manager.h"
 
 typedef struct web_direct_control_t *web_direct_control_handle_t;
 
@@ -24,6 +25,7 @@ typedef struct {
     float max_wz_radps;
     web_direct_control_admission_gate_fn_t admission_gate;
     void *admission_context;
+    wifi_manager_handle_t wifi_manager;
 } web_direct_control_config_t;
 
 esp_err_t web_direct_control_init(const web_direct_control_config_t *config,

@@ -131,7 +131,7 @@ static bool wifi_connected(ota_announce_handle_t handle, char *detail, size_t de
         snprintf(detail, detail_size, "WIFI_STATUS_0x%x", err);
         return false;
     }
-    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+    if (!wifi_manager_status_network_ready(&wifi_status)) {
         snprintf(detail,
                  detail_size,
                  "WIFI_%s",

@@ -74,7 +74,7 @@ static bool test_deadzone_and_release_are_zero_deadman_false(void)
     return true;
 }
 
-static bool test_valid_command_renews_then_expires(void)
+static bool test_websocket_loss_does_not_extend_ttl(void)
 {
     web_direct_control_model_t model;
     web_direct_control_command_t command;
@@ -85,6 +85,8 @@ static bool test_valid_command_renews_then_expires(void)
     HOST_TEST_CHECK(web_direct_control_model_command(&model, 1U, 250U, 0.4f, 0.0f,
                                                       true, &command) ==
                     WEB_DIRECT_MODEL_ACCEPTED);
+    /* A socket close sends no further command. The transport close hook must
+     * therefore leave this exact lease deadline intact. */
     HOST_TEST_CHECK(!web_direct_control_model_expire(&model, 550U));
     HOST_TEST_CHECK(web_direct_control_model_expire(&model, 551U));
     HOST_TEST_CHECK(model.state == WEB_DIRECT_MODEL_EXPIRED && !model.armed);
@@ -122,7 +124,7 @@ int main(void)
         HOST_TEST_CASE(test_command_requires_armed_owner),
         HOST_TEST_CASE(test_second_client_cannot_claim_or_revive_current_session),
         HOST_TEST_CASE(test_deadzone_and_release_are_zero_deadman_false),
-        HOST_TEST_CASE(test_valid_command_renews_then_expires),
+        HOST_TEST_CASE(test_websocket_loss_does_not_extend_ttl),
         HOST_TEST_CASE(test_disarm_fault_and_old_session_do_not_revive),
     };
     return host_test_exit_code(

@@ -764,7 +764,8 @@ static esp_err_t get_wifi_status(serial_gateway_handle_t handle, wifi_manager_st
 static void print_wifi_status(serial_gateway_handle_t handle, const wifi_manager_status_t *status)
 {
     print_locked(handle,
-                 "DATA WIFI STATUS:%s SSID:%s IP:%s RSSI:%d RETRIES:%u/%u DISCONNECT_REASON:%u LAST_ERR:0x%x AUTOCONNECT:%s PAUSED:%u RETRY_DELAY_MS:%lu\n",
+                 "DATA WIFI MODE:%s STATUS:%s SSID:%s IP:%s RSSI:%d RETRIES:%u/%u DISCONNECT_REASON:%u LAST_ERR:0x%x AUTOCONNECT:%s PAUSED:%u RETRY_DELAY_MS:%lu AP_CLIENTS:%u DHCP_SERVER:%u\n",
+                 wifi_manager_mode_to_string(status->mode),
                  wifi_manager_state_to_string(status->state),
                  status->ssid[0] ? status->ssid : "<empty>",
                  status->ip_addr[0] ? status->ip_addr : "<none>",
@@ -775,7 +776,9 @@ static void print_wifi_status(serial_gateway_handle_t handle, const wifi_manager
                  status->last_error,
                  status->auto_connect_running ? "RUNNING" : "STOPPED",
                  status->auto_connect_paused ? 1 : 0,
-                 (unsigned long)status->auto_retry_delay_ms);
+                 (unsigned long)status->auto_retry_delay_ms,
+                 (unsigned)status->connected_clients,
+                 status->dhcp_server_running ? 1 : 0);
 }
 
 static void handle_safety_status(serial_gateway_handle_t handle, int argc, char *argv[])
@@ -1118,7 +1121,7 @@ static void handle_wifi_connect(serial_gateway_handle_t handle, int argc, char *
     if (err == ESP_ERR_INVALID_STATE) {
         wifi_manager_status_t status;
         if (get_wifi_status(handle, &status) == ESP_OK) {
-            if (status.state == WIFI_MANAGER_STATE_CONNECTED) {
+            if (wifi_manager_status_network_ready(&status)) {
                 print_locked(handle, "OK WIFI_CONNECT ALREADY_CONNECTED\n");
                 return;
             }
@@ -1355,7 +1358,7 @@ static void handle_ota_download_test(serial_gateway_handle_t handle, int argc, c
         print_locked(handle, "ERR OTA_DOWNLOAD_TEST_BLOCKED WIFI_STATUS_FAILED 0x%x\n", err);
         return;
     }
-    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+    if (!wifi_manager_status_network_ready(&wifi_status)) {
         print_locked(handle,
                      "ERR OTA_DOWNLOAD_TEST_BLOCKED WIFI_NOT_CONNECTED STATUS:%s\n",
                      wifi_manager_state_to_string(wifi_status.state));
@@ -1415,7 +1418,7 @@ static void handle_ota_update(serial_gateway_handle_t handle, int argc, char *ar
         print_locked(handle, "ERR OTA_UPDATE_BLOCKED WIFI_STATUS_FAILED 0x%x\n", err);
         return;
     }
-    if (wifi_status.state != WIFI_MANAGER_STATE_CONNECTED) {
+    if (!wifi_manager_status_network_ready(&wifi_status)) {
         print_locked(handle,
                      "ERR OTA_UPDATE_BLOCKED WIFI_NOT_CONNECTED STATUS:%s\n",
                      wifi_manager_state_to_string(wifi_status.state));
