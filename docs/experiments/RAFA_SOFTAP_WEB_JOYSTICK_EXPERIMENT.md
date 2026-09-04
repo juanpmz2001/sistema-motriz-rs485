@@ -150,6 +150,22 @@ python tools\ota_announce.py --target 192.168.4.1 --action download_test
 python tools\ota_announce.py --target 192.168.4.1 --action update
 ```
 
+For the reviewed B47 candidate, the branch-local
+`tools/install_rafa_softap_b47.ps1` packages this exact sequence for a Windows
+maintenance laptop already joined to `RAFA-CONTROL`. It verifies the B47 SHA-256,
+discovers its assigned `192.168.4.x` address, performs read-only safety/profile
+preflight, hosts the manifest locally, then runs `check` and `download_test`.
+`-Install` still requires the operator to type `INSTALL B47` before it sends the
+rebooting update action. It prompts hidden for missing process-local maintenance and
+OTA tokens and restores/removes them on exit; it never writes either token to disk.
+It is not a general OTA mechanism and does not authorize motion.
+
+From the repository root, after joining the laptop manually to `RAFA-CONTROL`, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install_rafa_softap_b47.ps1 -Install
+```
+
 After reboot, use read-only Maintenance LAN checks at `192.168.4.1` for `VERSION`,
 `PROFILE_STATUS`, `WIFI_STATUS` and `SAFETY_STATUS`. The token comes only from its
 environment variable; none of these commands should print it.
