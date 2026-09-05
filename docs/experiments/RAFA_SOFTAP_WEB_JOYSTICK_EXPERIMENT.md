@@ -158,7 +158,10 @@ preflight, hosts the manifest locally, then runs `check` and `download_test`.
 `-Install` still requires the operator to type `INSTALL B47` before it sends the
 rebooting update action. It prompts hidden for missing process-local maintenance and
 OTA tokens and restores/removes them on exit; it never writes either token to disk.
-It is not a general OTA mechanism and does not authorize motion.
+It waits boundedly for the temporary HTTP server, verifies both loopback and its
+advertised SoftAP address before announcing, and reports a scoped TCP/firewall
+diagnostic if that address cannot be reached. It never changes the firewall. It is
+not a general OTA mechanism and does not authorize motion.
 
 From the repository root, after joining the laptop manually to `RAFA-CONTROL`, run:
 

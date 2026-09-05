@@ -196,22 +196,63 @@ function Start-ReleaseServer {
     }
     $process = Start-Process @startArguments
 
-    Start-Sleep -Seconds 1
-    if ($process.HasExited) {
-        throw "The local HTTP server exited early. See $stderr"
+    # Start-Process returning does not mean that Python has already bound the
+    # socket.  In particular, a fixed one-second sleep caused a false failure on
+    # a maintenance laptop even though its SoftAP link to Rafa was healthy.
+    # Prove both the local server and the advertised Wi-Fi address before any
+    # OTA announcement is sent.  The ESP's later check/download_test remains the
+    # final proof of the Rafa-to-laptop HTTP path.
+    $loopbackUrl = "http://127.0.0.1`:$ServerPort/api/firmware/latest"
+    $softApUrl = "http://$HostIp`:$ServerPort/api/firmware/latest"
+    $deadline = (Get-Date).AddSeconds(10)
+    $loopbackError = 'not attempted'
+    $softApError = 'not attempted'
+    $loopbackReady = $false
+    $softApReady = $false
+
+    while ((Get-Date) -lt $deadline) {
+        if ($process.HasExited) {
+            $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
+            throw "The local HTTP server exited before it was ready (PID $($process.Id)). stderr: $stderrText"
+        }
+
+        $loopbackReady = $false
+        try {
+            $loopbackResponse = Invoke-WebRequest -Uri $loopbackUrl -UseBasicParsing -TimeoutSec 1
+            $loopbackReady = $loopbackResponse.StatusCode -eq 200
+            if (-not $loopbackReady) {
+                $loopbackError = "HTTP $($loopbackResponse.StatusCode)"
+            }
+        }
+        catch {
+            $loopbackError = $_.Exception.Message
+        }
+
+        $softApReady = $false
+        try {
+            $softApResponse = Invoke-WebRequest -Uri $softApUrl -UseBasicParsing -TimeoutSec 1
+            $softApReady = $softApResponse.StatusCode -eq 200
+            if (-not $softApReady) {
+                $softApError = "HTTP $($softApResponse.StatusCode)"
+            }
+        }
+        catch {
+            $softApError = $_.Exception.Message
+        }
+
+        if ($loopbackReady -and $softApReady) {
+            Write-Host "Local OTA manifest ready: $softApUrl"
+            return $process
+        }
+        Start-Sleep -Milliseconds 250
     }
-    try {
-        $response = Invoke-WebRequest -Uri "http://$HostIp`:$ServerPort/api/firmware/latest" -UseBasicParsing -TimeoutSec 5
+
+    $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    if ($loopbackReady -and -not $softApReady) {
+        throw "The OTA server is healthy on loopback but unavailable at $softApUrl after 10 seconds. Check a scoped inbound TCP $ServerPort rule for Python on 192.168.4.0/24; do not disable the firewall broadly. Detail: $softApError"
     }
-    catch {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        throw "The local OTA manifest is not reachable at http://$HostIp`:$ServerPort/api/firmware/latest. $($_.Exception.Message)"
-    }
-    if ($response.StatusCode -ne 200) {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        throw "The local OTA manifest returned HTTP $($response.StatusCode)."
-    }
-    return $process
+    throw "The local OTA server did not become reachable within 10 seconds (PID $($process.Id)). loopback=$loopbackError; softap=$softApError; stderr=$stderrText"
 }
 
 function Invoke-OtaAction {
