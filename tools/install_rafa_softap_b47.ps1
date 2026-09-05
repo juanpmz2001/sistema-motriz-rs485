@@ -270,8 +270,6 @@ function Start-ReleaseServer {
         [Parameter(Mandatory = $true)][string]$HostIp
     )
 
-    $stdout = Join-Path $ReleaseDirectory 'http-server.stdout.log'
-    $stderr = Join-Path $ReleaseDirectory 'http-server.stderr.log'
     $existingListener = Get-ListenerDetail -Port $ServerPort
     if ($existingListener -ne 'no listener') {
         throw "Refusing to start the local OTA server: TCP port $ServerPort is already in use or could not be inspected ($existingListener)."
@@ -281,11 +279,10 @@ function Start-ReleaseServer {
         FilePath = $Python
         ArgumentList = $arguments
         WindowStyle = 'Hidden'
-        RedirectStandardOutput = $stdout
-        RedirectStandardError = $stderr
         PassThru = $true
     }
     $process = Start-Process @startArguments
+    $serverCommand = "$Python $arguments"
 
     # Start-Process returning does not mean that Python has already bound the
     # socket.  Wait for its own listener and a direct raw-HTTP loopback response.
@@ -302,8 +299,7 @@ function Start-ReleaseServer {
 
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
-            $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
-            throw "The local HTTP server exited before it was ready (PID $($process.Id)). stderr: $stderrText"
+            throw "The local HTTP server exited before it was ready (PID $($process.Id), exit code $($process.ExitCode)). command=$serverCommand"
         }
 
         $loopbackReady = $false
@@ -344,10 +340,15 @@ function Start-ReleaseServer {
         Start-Sleep -Milliseconds 250
     }
 
-    $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
     $listenerDetail = Get-ListenerDetail -Port $ServerPort
+    $processDetail = if ($process.HasExited) {
+        "exited with code $($process.ExitCode)"
+    }
+    else {
+        'still running without a ready listener'
+    }
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    throw "The local OTA server did not become ready within 10 seconds (PID $($process.Id)). loopback=$loopbackError; softap diagnostic=$softApError; listener=$listenerDetail; stderr=$stderrText"
+    throw "The local OTA server did not become ready within 10 seconds (PID $($process.Id), $processDetail). loopback=$loopbackError; softap diagnostic=$softApError; listener=$listenerDetail; command=$serverCommand"
 }
 
 function Invoke-OtaAction {
