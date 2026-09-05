@@ -42,7 +42,22 @@ function Get-Python {
     if (-not $command) {
         throw 'Python is required locally. Install/activate it before leaving the network with Internet access.'
     }
-    return $command.Source
+
+    # Resolve the interpreter reported by Python itself instead of relying on
+    # the shell's WindowsApps execution alias in child-process invocations.
+    $output = @(& $command.Source -c 'import sys; print(sys.executable)' 2>&1)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Python resolution failed with exit code $exitCode."
+    }
+    $python = $output |
+        ForEach-Object { "$($_)".Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Last 1
+    if (-not $python -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw 'Python did not report a usable executable path.'
+    }
+    return $python
 }
 
 function Read-SecretValue {
@@ -154,6 +169,78 @@ function Invoke-Maintenance {
     return Invoke-LocalPython -Python $Python -Label $Label -Arguments (@($LanCtl) + $CommandArguments)
 }
 
+function Get-DirectHttpStatusCode {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [int]$TimeoutMs = 1000
+    )
+
+    # PowerShell's Invoke-WebRequest can involve proxy/WinINet behavior that is
+    # unrelated to the direct SoftAP route.  Send a minimal raw HTTP GET over a
+    # bounded TCP connection instead.
+    $endpoint = [System.Uri]$Uri
+    if ($endpoint.Scheme -ne 'http') {
+        throw "Expected an HTTP URI, got $Uri."
+    }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $stream = $null
+    $waitHandle = $null
+    try {
+        $connect = $client.BeginConnect($endpoint.Host, $endpoint.Port, $null, $null)
+        $waitHandle = $connect.AsyncWaitHandle
+        if (-not $waitHandle.WaitOne($TimeoutMs)) {
+            throw "TCP connect timeout after $TimeoutMs ms."
+        }
+        $client.EndConnect($connect)
+
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = $TimeoutMs
+        $stream.WriteTimeout = $TimeoutMs
+        $hostHeader = if ($endpoint.IsDefaultPort) { $endpoint.Host } else { "$($endpoint.Host):$($endpoint.Port)" }
+        $requestText = "GET $($endpoint.PathAndQuery) HTTP/1.1`r`nHost: $hostHeader`r`nConnection: close`r`n`r`n"
+        $requestBytes = [System.Text.Encoding]::ASCII.GetBytes($requestText)
+        $stream.Write($requestBytes, 0, $requestBytes.Length)
+        $stream.Flush()
+
+        $buffer = New-Object byte[] 512
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+        if ($read -le 0) {
+            throw 'HTTP server closed the connection without a response.'
+        }
+        $statusLine = ([System.Text.Encoding]::ASCII.GetString($buffer, 0, $read).Split("`r`n"))[0]
+        if ($statusLine -notmatch '^HTTP/\d\.\d\s+(\d{3})(?:\s|$)') {
+            throw "Malformed HTTP response: $statusLine"
+        }
+        return [int]$Matches[1]
+    }
+    finally {
+        if ($stream) {
+            $stream.Dispose()
+        }
+        if ($waitHandle) {
+            $waitHandle.Close()
+        }
+        if ($client) {
+            $client.Dispose()
+        }
+    }
+}
+
+function Get-ListenerDetail {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    # Get-NetTCPConnection reports an empty result as a CIM error when asked
+    # for a port that has no listener.  That is the normal pre-start state, not
+    # a failure to inspect the machine.
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) {
+        return 'no listener'
+    }
+    return ($listeners |
+        ForEach-Object { "PID $($_.OwningProcess) at $($_.LocalAddress):$($_.LocalPort)" }) -join '; '
+}
+
 function Assert-Preflight {
     param([Parameter(Mandatory = $true)][string]$Python)
 
@@ -185,6 +272,10 @@ function Start-ReleaseServer {
 
     $stdout = Join-Path $ReleaseDirectory 'http-server.stdout.log'
     $stderr = Join-Path $ReleaseDirectory 'http-server.stderr.log'
+    $existingListener = Get-ListenerDetail -Port $ServerPort
+    if ($existingListener -ne 'no listener') {
+        throw "Refusing to start the local OTA server: TCP port $ServerPort is already in use or could not be inspected ($existingListener)."
+    }
     $arguments = '-m http.server {0} --bind 0.0.0.0 --directory "{1}"' -f $ServerPort, $ReleaseDirectory
     $startArguments = @{
         FilePath = $Python
@@ -197,11 +288,10 @@ function Start-ReleaseServer {
     $process = Start-Process @startArguments
 
     # Start-Process returning does not mean that Python has already bound the
-    # socket.  In particular, a fixed one-second sleep caused a false failure on
-    # a maintenance laptop even though its SoftAP link to Rafa was healthy.
-    # Prove both the local server and the advertised Wi-Fi address before any
-    # OTA announcement is sent.  The ESP's later check/download_test remains the
-    # final proof of the Rafa-to-laptop HTTP path.
+    # socket.  Wait for its own listener and a direct raw-HTTP loopback response.
+    # The ESP's later authenticated check/download_test is the final proof of
+    # the Rafa-to-laptop HTTP path; a Windows self-probe of the SoftAP address
+    # is useful diagnostic evidence but must not reject that real test early.
     $loopbackUrl = "http://127.0.0.1`:$ServerPort/api/firmware/latest"
     $softApUrl = "http://$HostIp`:$ServerPort/api/firmware/latest"
     $deadline = (Get-Date).AddSeconds(10)
@@ -218,10 +308,10 @@ function Start-ReleaseServer {
 
         $loopbackReady = $false
         try {
-            $loopbackResponse = Invoke-WebRequest -Uri $loopbackUrl -UseBasicParsing -TimeoutSec 1
-            $loopbackReady = $loopbackResponse.StatusCode -eq 200
+            $loopbackStatus = Get-DirectHttpStatusCode -Uri $loopbackUrl
+            $loopbackReady = $loopbackStatus -eq 200
             if (-not $loopbackReady) {
-                $loopbackError = "HTTP $($loopbackResponse.StatusCode)"
+                $loopbackError = "HTTP $loopbackStatus"
             }
         }
         catch {
@@ -230,29 +320,34 @@ function Start-ReleaseServer {
 
         $softApReady = $false
         try {
-            $softApResponse = Invoke-WebRequest -Uri $softApUrl -UseBasicParsing -TimeoutSec 1
-            $softApReady = $softApResponse.StatusCode -eq 200
+            $softApStatus = Get-DirectHttpStatusCode -Uri $softApUrl
+            $softApReady = $softApStatus -eq 200
             if (-not $softApReady) {
-                $softApError = "HTTP $($softApResponse.StatusCode)"
+                $softApError = "HTTP $softApStatus"
             }
         }
         catch {
             $softApError = $_.Exception.Message
         }
 
-        if ($loopbackReady -and $softApReady) {
-            Write-Host "Local OTA manifest ready: $softApUrl"
+        $listenerDetail = Get-ListenerDetail -Port $ServerPort
+        $serverOwnsListener = $listenerDetail -match "PID $($process.Id) at "
+        if ($loopbackReady -and $serverOwnsListener) {
+            if ($softApReady) {
+                Write-Host "Local OTA manifest ready: $softApUrl"
+            }
+            else {
+                Write-Host "Local OTA server is ready; SoftAP self-probe is diagnostic only and did not respond: $softApError"
+            }
             return $process
         }
         Start-Sleep -Milliseconds 250
     }
 
     $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
+    $listenerDetail = Get-ListenerDetail -Port $ServerPort
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    if ($loopbackReady -and -not $softApReady) {
-        throw "The OTA server is healthy on loopback but unavailable at $softApUrl after 10 seconds. Check a scoped inbound TCP $ServerPort rule for Python on 192.168.4.0/24; do not disable the firewall broadly. Detail: $softApError"
-    }
-    throw "The local OTA server did not become reachable within 10 seconds (PID $($process.Id)). loopback=$loopbackError; softap=$softApError; stderr=$stderrText"
+    throw "The local OTA server did not become ready within 10 seconds (PID $($process.Id)). loopback=$loopbackError; softap diagnostic=$softApError; listener=$listenerDetail; stderr=$stderrText"
 }
 
 function Invoke-OtaAction {
