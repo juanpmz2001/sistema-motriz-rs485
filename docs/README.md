@@ -53,6 +53,14 @@ installed-hardware evidence, unresolved M2 feedback anomaly, and OTA-only workfl
 are in [Rafa bench state](robots/RAFA_BENCH_STATE.md). A successful build, command
 ACK, or controller feedback does not prove physical motion or safety.
 
+## Draft training material
+
+- [Rafa operator manual draft](operations/RAFA_OPERATOR_MANUAL_DRAFT.md) captures
+  the owner-supplied physical layout and intended FlySky PPM workflow. It is a
+  controlled training draft, not field-motion authorization: it must be released
+  against a verified production **rafa** firmware artifact and completed physical
+  acceptance evidence.
+
 ## Archive
 
 [Archive index](archive/README.md) preserves superseded plans, migration records and
