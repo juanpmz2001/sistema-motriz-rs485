@@ -22,6 +22,8 @@
 | Fuentes de control durante operación PPM | Solo la radio autorizada; no debe haber Console/LAN activa ni otro operador de control |
 | Integridad PPM | Prueba sobre el SHA instalado: exactamente 8 canales aceptados y contadores de tramas inválidas, overflow y rechazo revisados |
 | Guarda de correa | Instalada, íntegra e inspeccionada. Sin guarda no hay liberación de bomba ni de aspersión. |
+| Identidad TS-28 y disposición hidráulica | _Pendiente: fotografía de placa, marca y variante; relación real de poleas/RPM, manómetro, retorno/bypass y presión/caudal validados para los dos brazos de 36 boquillas._ |
+| Motor de bomba y protección eléctrica | _Pendiente: foto de placa WEG, tensión/frecuencia entregada por el inversor, puesta a tierra, protección de sobrecarga, capacidad de arranque y ventilación revisadas por técnico/electricista._ |
 | Calibración física CH6 | Izquierda ≈ 50 %, centro ≈ 75 % y derecha ≈ 100 % de la escala de límites; verificar también el efecto en avance y giro |
 | Límites aprobados de terreno, pendiente y velocidad | _Pendiente_ |
 | Líquidos autorizados, EPP y SDS/FDS | _Pendiente por responsable agrícola/químico_ |
@@ -53,7 +55,8 @@ personal técnico autorizado.
 | Tanque | Capacidad nominal de 100 L. La carga modifica la estabilidad y exige reducir velocidad. |
 | Aspersión | Dos brazos con 18 boquillas cada uno: 36 boquillas en total. |
 | Energía de tracción | Batería MUST LiFePO4 de 48 V / 100 Ah, dentro del conjunto técnico. |
-| Bomba | Motobomba TS28 accionada por un motor AC de 3 kVA mediante correa; su mando de arranque/parada es independiente de la tracción, pero no implica aislamiento eléctrico ni elimina los riesgos de la batería compartida. |
+| Bomba | Referencia declarada: motobomba TS-28 por correa y regulador manual de presión. La guía del fabricante DIAMOND/Tanong es una referencia provisional hasta confirmar placa y variante física. Los dos brazos y 36 boquillas de Rafa no son la configuración estándar de esa guía; no usar fichas genéricas para fijar presión o caudal. |
+| Motor de la bomba | Referencia declarada: motor monofásico WEG de 3 HP / 2,2 kW, 110/220 V, IP21. La ficha de compra informa 1.780 rpm; la placa física, tensión/frecuencia y diagrama del motor prevalecen. El operador no cambia cables, capacitor, protecciones ni ajustes del inversor. |
 | Inversor | MUST PV3000 LVHM Series; su interruptor controla el encendido/apagado de la motobomba cuando la batería está encendida. |
 
 **Orientación obligatoria.** Antes de capacitar a un operador, instalar una marca
@@ -99,7 +102,36 @@ No retirar una guarda, no ajustar tensión de correa, no limpiar ni revisar la b
 con el inversor encendido. Reportar vibración anormal, ruido, rozamiento, olor a
 caucho, fuga o correa floja al responsable técnico.
 
-### 3.3 Riego, aspersión y productos
+### 3.3 Bomba TS-28 y motor WEG
+
+Esta sección resume en lenguaje de operación las indicaciones consultadas para una
+TS-28 DIAMOND/Tanong de transmisión por correa y regulador manual, y para la familia
+de motor monofásico WEG de referencia. **Solo aplica después de cotejar las placas
+físicas con Rafa.** No reemplaza los manuales originales ni autoriza mantenimiento
+eléctrico, hidráulico o mecánico.
+
+- La TS-28 consultada requiere una correa y poleas alineadas, sin deslizamiento, y
+  mangueras de succión, retorno y descarga firmemente conectadas, sin entrada de aire.
+  El filtro de succión debe estar limpio y el manómetro debe ser legible.
+- La presión se regula en el conjunto de la bomba después de que su giro sea normal.
+  En Rafa **no hay todavía una presión ni caudal aprobados**: dependen de la placa,
+  relación de poleas, RPM real, retorno/bypass, producto y las 36 boquillas. El
+  operador no usa una cifra tomada de internet ni cierra ambas salidas mientras no
+  exista un procedimiento marcado y validado para el retorno/bypass.
+- El motor IP21 de referencia no es una envolvente para lluvia, lavado, polvo fino ni
+  niebla de aspersión. Mantener secos, ventilados y fuera del chorro el motor, sus
+  terminales, el inversor, batería, cajas y conectores.
+- Si el motor no arranca, se detiene inesperadamente, se calienta en exceso, produce
+  olor anormal, ruido o vibración, poner el inversor en **OFF** cuando sea seguro,
+  mantener distancia de la transmisión y reportar el evento. No retirar ni intervenir
+  la guarda, ni intentar reiniciar, cambiar tensión, reconectar cables o revisar
+  capacitores.
+- Cableado, puesta a tierra, cambio 110/220 V, protecciones, capacidad de salida y
+  arranque del inversor, y cualquier ajuste de correa pertenecen al técnico o
+  electricista autorizado. La placa física del motor prevalece sobre el título de una
+  ficha comercial.
+
+### 3.4 Riego, aspersión y productos
 
 - Usar únicamente líquidos, concentraciones y equipos de protección personal (EPP)
   aprobados para la labor y documentados en la SDS/FDS del producto.
@@ -110,10 +142,10 @@ caucho, fuga o correa floja al responsable técnico.
   deriva no controlada.
 
 La presión, caudal, cebado, compatibilidad química, drenaje y limpieza final deben
-incorporarse desde el manual de la TS28 y el procedimiento agrícola aprobado; no se
-deben inferir de este documento.
+incorporarse desde la placa y manual de la TS-28 realmente instalada, más el
+procedimiento agrícola aprobado; no se deben inferir de este documento.
 
-### 3.4 Movimiento del vehículo
+### 3.5 Movimiento del vehículo
 
 - Nadie debe estar delante, detrás, debajo o entre Rafa y un obstáculo durante la
   operación.
@@ -174,9 +206,16 @@ El operador marca todos los puntos antes de activar la radio o la bomba:
 - [ ] Tanque cerrado, carga asegurada y sin fugas.
 - [ ] Brazos, boquillas, mangueras, filtros y válvulas inspeccionados; no hay piezas
       sueltas ni mangueras que puedan quedar bajo las ruedas.
+- [ ] Mangueras de succión, retorno/bypass y descarga firmemente conectadas; filtro
+      de succión sin obstrucción visible, manómetro legible y sin fuga o entrada de
+      aire visible.
+- [ ] Posición segura y marcada del retorno/bypass confirmada. No se usará una
+      presión objetivo ni se cerrarán ambas salidas sin esa validación.
 - [ ] Ruedas hub y casters giran libremente; no hay daño visible.
 - [ ] Guarda de correa instalada e íntegra; correa y poleas no están accesibles.
 - [ ] Caja técnica cerrada, sin olor anormal, cables sueltos ni humedad visible.
+- [ ] Motor IP21 de referencia, inversor, cajas y conectores secos; ventilación libre
+      y ninguna boquilla o fuga puede dirigir agua hacia ellos.
 - [ ] Pulsador rojo/amarillo de paro de tracción accesible y sin obstrucciones.
 - [ ] Radio FS-i6 cargada; joystick izquierdo centrado; CH5 abajo; CH6 al extremo
       izquierdo.
@@ -240,37 +279,78 @@ sido revisada y el responsable autorice el retorno a servicio.
 
 ## 7. Operación de la motobomba y aspersión
 
+> **Límite de esta instrucción.** La TS-28 consultada usa transmisión por correa y regulador manual. Hasta cotejar la placa, la relación de poleas, el retorno/bypass y el manómetro de Rafa, este procedimiento no autoriza una presión, caudal ni posición de válvula específicos.
+
 ### 7.1 Preparar el sistema
 
 1. Con Rafa detenido y CH5 abajo, verificar nivel del tanque, tapa, mangueras,
    conexiones, brazos, boquillas y válvulas.
-2. Abrir o cerrar manualmente cada brazo de acuerdo con la zona a tratar.
-3. Definir manualmente la regulación de caudal de cada una de las dos salidas de la
-   bomba según la necesidad de riego o aspersión.
-4. Confirmar que la guarda de correa está instalada y que nadie está cerca de la
-   transmisión.
-5. Verificar que la batería esté encendida antes de usar el inversor.
+2. Verificar que las mangueras de succión, retorno/bypass y descarga estén sujetas,
+   que no haya fuga ni entrada de aire, que el filtro de succión esté limpio y que el
+   manómetro sea legible. Si alguno no lo está, no arrancar.
+3. Si el visor de aceite de la bomba está identificado por el técnico, confirmar solo
+   visualmente que el nivel es el marcado para esa bomba. No rellenar ni cambiar
+   aceite; esa tarea pertenece al personal técnico.
+4. Confirmar que la guarda de correa está instalada, que nadie está cerca de la
+   transmisión y que motor, inversor, cajas y conectores están secos y ventilados.
+5. Abrir o cerrar manualmente cada brazo únicamente con Rafa detenido. No cerrar
+   ambas salidas con la bomba en marcha mientras no esté etiquetada y comprobada la
+   posición segura del retorno/bypass.
+6. Verificar que la batería esté encendida antes de usar el inversor y que el líquido,
+   EPP y plan de aplicación sean los aprobados para la tarea.
 
 ### 7.2 Arrancar y detener la bomba
 
-- **Arranque:** usar el switch **ON** del inversor MUST para encender la motobomba.
-- **Detención:** usar el switch **OFF** del inversor MUST para detener la motobomba.
-- La bomba no se inicia ni se detiene con CH5, el joystick ni el pulsador de paro de
-  tracción.
 
-No poner en marcha la bomba sin cumplir el procedimiento de cebado y nivel mínimo
-definido por el fabricante de la TS28. Ese procedimiento debe añadirse antes de la
-liberación final del manual.
+1. Despejar el área y comprobar nuevamente que no hay manos, ropa, cabello ni
+   herramientas cerca de la correa o poleas.
+2. **Arranque:** usar el switch **ON** del inversor MUST para encender la motobomba.
+   Desde una posición segura, observar giro normal, retorno o flujo esperado y lectura
+   estable del manómetro. No regular presión hasta disponer de un valor aprobado y
+   marcado para Rafa.
+3. **Detención:** usar el switch **OFF** del inversor MUST. Esperar la parada total
+   antes de acercarse; liberar presión, drenar o intervenir solo mediante el
+   procedimiento técnico/hidráulico aprobado.
+4. La bomba no se inicia ni se detiene con CH5, el joystick ni el pulsador de paro de
+   tracción.
+
+No poner en marcha la bomba si no se ha confirmado el cebado, nivel mínimo y ruta de
+retorno/bypass de la TS-28 realmente instalada. Ante ausencia de succión, presión
+inestable, lectura anormal o fuga, poner el inversor en **OFF** y reportar; no intentar
+corregirlo con la transmisión energizada.
 
 ### 7.3 Durante la aspersión
 
 - Vigilar las dos salidas, las mangueras, el patrón de boquillas y la deriva.
-- Detener la bomba con el inversor ante fuga, cambio de patrón, ruido anormal o
-  presencia de personas en la zona de riesgo.
+- Detener la bomba con el inversor ante fuga, cambio de patrón, pérdida de succión,
+  pulsación o lectura anormal de presión, ruido, vibración, olor o presencia de
+  personas en la zona de riesgo.
 - Ajustar válvulas y brazos solo con Rafa detenido y sin riesgo de contacto con la
   correa o ruedas.
 - Nunca usar la aspersión para aplicar un producto sin su SDS/FDS, EPP y procedimiento
   agrícola autorizado.
+- No dirigir la aspersión, agua de lavado ni una fuga hacia el motor IP21, sus
+  terminales, el inversor, batería, cajas, conectores ni radio.
+
+### 7.4 Después de la aspersión
+
+- Cuando el producto, la SDS/FDS y el plan agrícola lo permitan, circular agua limpia
+  por el sistema durante aproximadamente cinco minutos, como indica el manual
+  consultado de la TS-28. Recoger y disponer el agua de lavado según el producto;
+  nunca tratarla como agua potable.
+- Con la bomba detenida y la presión tratada por el procedimiento aprobado, limpiar y
+  secar externamente mangueras y revisar fugas. No abrir la bomba ni retirar la guarda.
+- El manual consultado indica regresar el ajuste de presión hacia sentido antihorario
+  después de usarla. En Rafa ese ajuste queda reservado al técnico hasta que su punto
+  seguro y su etiqueta sean validados.
+- Registrar horas de operación, fugas, ruido, vibración, pérdida de rendimiento o
+  disparo del inversor. El mantenimiento de aceite, válvulas, sellos, engrase y correa
+  debe realizarlo el técnico según la placa/manual de la bomba física.
+- Una vez que la placa confirme que corresponde a la TS-28 consultada, el técnico
+  puede usar como referencia de mantenimiento del fabricante: aceite lubricante
+  #30/#40 hasta el nivel indicado por el visor, primer cambio a las 50 horas y luego
+  cada 100 horas, y atención de las tres copas de grasa según ese manual. El operador
+  solo registra horas y anomalías; no abre ni interviene la bomba.
 
 ## 8. Fin de la operación
 
@@ -280,7 +360,8 @@ liberación final del manual.
 3. Poner el inversor en **OFF** si la motobomba está encendida.
 4. Cerrar los brazos/válvulas según el procedimiento de la labor.
 5. Vaciar, limpiar o drenar tanque, bomba, mangueras y boquillas de acuerdo con el
-   líquido utilizado, la TS28 y las obligaciones agrícolas aplicables.
+   líquido utilizado, la TS-28 física y las obligaciones agrícolas aplicables. Una
+   bomba que haya manejado productos agrícolas no se usa para agua de consumo.
 6. Ejecutar el procedimiento aprobado de apagado/aislamiento de batería cuando esté
    disponible. Hasta que se documente, esta acción la realiza el personal autorizado.
 7. Apagar la radio solo después de que Rafa esté en condición segura y desenergizado.
@@ -292,6 +373,8 @@ No operar y notificar al responsable cuando exista cualquiera de estas condicion
 
 - correa o poleas expuestas, guarda faltante o daño mecánico;
 - olor a quemado, humo, chispa, caja húmeda, cable suelto o batería/inversor anormal;
+- motor húmedo, ventilación obstruida, manómetro dañado o ilegible, pérdida de
+  succión, presión/caudal inestable o parada inesperada del motor;
 - fuga de líquido, boquilla o manguera desprendida;
 - respuesta inesperada al joystick, giro incorrecto, movimiento sin orden o paro que
   no detiene la tracción;
@@ -340,18 +423,41 @@ PROHIBIDO
 6. Identificar, fotografiar y etiquetar el corte físico total de batería.
 7. Confirmar ancho exterior, peso total, radio de giro, pendiente, terreno, velocidad
    máxima y distancias de exclusión operativas.
-8. Incorporar placa/manual de TS28: cebado, presión, caudal, mantenimiento, drenaje,
-   compatibilidad química y restricciones de operación.
-9. Definir los líquidos autorizados, SDS/FDS, EPP, limpieza, derrames y responsable
-   agrícola.
-10. Añadir fotografías aprobadas y diagramas con **FRENTE**, controles de radio,
-   pulsador de tracción, inversor, batería, válvulas y zonas prohibidas.
+8. Fotografiar y cotejar la placa, marca y variante de la TS-28 realmente instalada.
+   Confirmar la relación de poleas, RPM de bomba, manómetro, retorno/bypass, cebado,
+   presión/caudal, mantenimiento, drenaje y restricciones de operación para los dos
+   brazos y 36 boquillas.
+9. Fotografiar y cotejar la placa WEG del motor. Un técnico/electricista debe validar
+   tensión/frecuencia reales, puesta a tierra, protección de sobrecarga, capacidad de
+   arranque del inversor, ventilación y resguardo frente al agua/aspersión.
+10. Definir los líquidos autorizados, SDS/FDS, EPP, limpieza, derrames y responsable
+    agrícola.
+11. Añadir fotografías aprobadas y diagramas con **FRENTE**, controles de radio,
+    pulsador de tracción, inversor, batería, válvulas y zonas prohibidas.
 
 ## Base de este borrador
 
 La configuración mecánica, hidráulica y de operación descrita aquí proviene de la
 entrevista y fotografías del propietario en septiembre de 2026. El mapeo PPM se basa
 en el perfil de firmware **rafa** y debe volver a verificarse contra el firmware
-realmente instalado antes de capacitar operadores. Los detalles de la TS28, productos
-aplicados y procedimiento de aislamiento eléctrico total aún no están documentados en
-los repositorios de ingeniería.
+realmente instalado antes de capacitar operadores. Los detalles de la TS-28, productos
+aplicados y procedimiento de aislamiento eléctrico total aún requieren verificación
+física en Rafa.
+
+### Fuentes externas consultadas
+
+- [TS-28, página de producto de Tanong/DIAMOND](https://www.tanong-co.com/tw/product-detail/htp-power-sprayer-ts-28/)
+  y su manual de bomba estacionaria por correa con regulador manual, consultados el
+  17 de septiembre de 2026. Sus datos son referencia para la variante indicada, no
+  evidencia de que la unidad física de Rafa tenga la misma placa, RPM o configuración.
+- [Manual TS-28 de Tanong/DIAMOND (PDF)](https://file.tanong-co.com//TW-manual/HTP%20Power%20Sprayer%20%28Stationary%20Belt-Drive%29/HTP%20Power%20Sprayer%20%28With%20Manual%20Pressure%20Regulator%29/SR-03-100-05%20TS-28%20Power%20Sprayer%20Manual-TW.pdf)
+  es el original en chino consultado para esta síntesis; en caso de duda, prevalece
+  la placa de Rafa y una revisión técnica antes de operar.
+- [Referencia comercial del motor monofásico WEG 3 HP/IP21](https://fabriles.com.co/producto/motor-monofasico-weg-3-hp-1750-rpm-ip21-110-220v/),
+  consultada el 17 de septiembre de 2026. La placa física y el manual WEG aplicable
+  prevalecen sobre esta ficha comercial.
+- [Familia WEG de motor monofásico IP21 de 3 cv](https://www.weg.net/catalog/weg/BR/en/Electric-Motors/Single-Phase/General-Purpose/Open-Steel-Motor-%28IP21%29/Motor-3-cv-4P-G56H-1Ph-110-127-220-254-V-60-Hz-IC01---ODP---Foot-mounted/p/14421152),
+  usada solo como referencia de familia; requiere cotejo contra la placa física.
+- [Guía WEG de especificación y grados IP](https://static.weg.net/medias/downloadcenter/ha0/h5f/WEG-motors-specification-of-electric-motors-50039409-brochure-english-web.pdf),
+  usada para interpretar de forma conservadora el alcance de IP21. No sustituye el
+  manual ni el diagrama de conexión del motor físico de Rafa.
