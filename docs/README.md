@@ -60,6 +60,10 @@ ACK, or controller feedback does not prove physical motion or safety.
   controlled training draft, not field-motion authorization: it must be released
   against a verified production **rafa** firmware artifact and completed physical
   acceptance evidence.
+- [Illustrated PDF training draft](operations/RAFA_OPERATOR_MANUAL_DRAFT_ILUSTRADO.pdf)
+  is the printable companion with the visual-control, rear-component and operating
+  diagrams. It has the same controlled-draft status; its source visuals are in
+  [operations/assets](operations/assets/README.md).
 
 ## Archive
 
