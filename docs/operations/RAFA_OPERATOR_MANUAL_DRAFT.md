@@ -49,22 +49,35 @@ personal técnico autorizado.
 
 | Elemento | Descripción de operación |
 | --- | --- |
-| Envolvente exterior informada | 1.00 m de alto × 0.90 m de largo × 1.60 m de ancho. Verificar y señalizar esta envolvente antes de fijar distancias de seguridad. |
+| Dimensiones de paso informadas | 1,00 m de alto × 0,90 m de largo × **1,60 m de ancho interno** × **1,80 m de ancho exterior**. El ancho exterior se usa para entrar a la zona general de aspersión; el ancho interno, para entrar a los surcos de aspersión. Verificar ambos antes de fijar distancias de seguridad. |
 | Tracción | Dos ruedas hub motrices de 16 pulgadas. |
 | Apoyo | Dos ruedas locas traseras de 20 cm de diámetro. |
 | Tanque | Capacidad nominal de 100 L. La carga modifica la estabilidad y exige reducir velocidad. |
 | Aspersión | Dos brazos con 18 boquillas cada uno: 36 boquillas en total. |
-| Energía de tracción | Batería MUST LiFePO4 de 48 V / 100 Ah, dentro del conjunto técnico. |
+| Energía de tracción | Batería MUST LiFePO4 de 48 V / 100 Ah, según la información del propietario. El anexo LP1600 es referencia de familia: la placa física, su protección ambiental y el diagrama instalado prevalecen. |
 | Bomba | Referencia declarada: motobomba TS-28 por correa y regulador manual de presión. La guía del fabricante DIAMOND/Tanong es una referencia provisional hasta confirmar placa y variante física. Los dos brazos y 36 boquillas de Rafa no son la configuración estándar de esa guía; no usar fichas genéricas para fijar presión o caudal. |
 | Motor de la bomba | Referencia declarada: motor monofásico WEG de 3 HP / 2,2 kW, 110/220 V, IP21. La ficha de compra informa 1.780 rpm; la placa física, tensión/frecuencia y diagrama del motor prevalecen. El operador no cambia cables, capacitor, protecciones ni ajustes del inversor. |
-| Inversor | MUST PV3000 LVHM Series; su interruptor controla el encendido/apagado de la motobomba cuando la batería está encendida. |
+| Inversor | MUST PV3000 LVHM Series; su interruptor controla el encendido/apagado de la motobomba cuando la batería está encendida. El anexo PV3000 LVHM es referencia de serie y no identifica por sí solo el modelo, la potencia ni las configuraciones instaladas. |
 
 **Orientación obligatoria.** Antes de capacitar a un operador, instalar una marca
 visible **FRENTE** en Rafa. Para este manual, la parte trasera es la que tiene las dos
 ruedas locas; la referencia derecha/izquierda debe leerse estando detrás de Rafa y
 mirando hacia su frente.
 
-### 2.2 Caja técnica
+### 2.2 Dimensiones de paso y planificación de ruta
+
+Rafa tiene dos referencias de ancho que el operador debe usar antes de entrar al área:
+
+| Decisión de operación | Dimensión que debe usarse | Regla |
+| --- | --- | --- |
+| Ingreso a la zona general de aspersión, portones, corredores, áreas de giro y márgenes | **Ancho exterior: 1,80 m** | Usar el ancho exterior completo de Rafa y dejar el margen de seguridad aprobado. No intentar pasar si el ancho útil no está confirmado. |
+| Ingreso y recorrido entre surcos de aspersión | **Ancho interno: 1,60 m** | Usar el ancho interno como referencia para el surco, pero verificar también obstáculos, boquillas, mangueras, cultivo, inclinación y espacio de maniobra. |
+
+El tanque cargado, los brazos abiertos, una manguera suelta o un terreno irregular pueden
+aumentar el espacio de maniobra necesario. Estas medidas no sustituyen la aceptación
+física de anchura, radio de giro y pendientes de la zona de trabajo.
+
+### 2.3 Caja técnica
 
 La caja verde contiene equipos eléctricos y de control. Para el operador es una zona
 de **inspección exterior solamente**:
@@ -73,8 +86,10 @@ de **inspección exterior solamente**:
 - no abrirla, no puentear fusibles y no reconectar cables;
 - no rociarla, lavarla ni dirigir agua hacia la caja, batería, inversor, conectores o
   radio mientras no exista una clasificación de protección documentada;
+- no tocar bornes, breakers, puertos CAN/RS485/RS232, RST, DIP, tierra ni ajustes de
+  la batería o del inversor; esas acciones son exclusivas de personal técnico;
 - retirar a Rafa de servicio si hay olor a quemado, humo, cables sueltos, fusible
-  abierto visible o daño de la caja;
+  abierto visible, alarma, LED rojo de batería, agua cercana o daño de la caja;
 - solicitar al técnico designado antes de intentar cualquier corrección.
 
 ## 3. Riesgos críticos
@@ -153,6 +168,10 @@ procedimiento agrícola aprobado; no se deben inferir de este documento.
   de una pendiente, muro, cultivo denso o vehículo.
 - No operar con una rueda floja, un caster trabado, una manguera arrastrando, una
   fuga, cable expuesto o carga sin asegurar.
+- Antes de ingresar a la zona general de aspersión, confirmar que el acceso admite el
+  **ancho exterior de 1,80 m** más el margen aprobado. Para entrar a los surcos,
+  usar el **ancho interno de 1,60 m** y confirmar además que brazos, boquillas,
+  mangueras y cultivo no reducen el paso seguro.
 - Los límites de pendiente, terreno, velocidad máxima y distancia de exclusión deben
   estar aprobados en la tabla de liberación antes de uso de campo.
 
@@ -202,6 +221,9 @@ El operador marca todos los puntos antes de activar la radio o la bomba:
 
 - [ ] Área despejada; no hay personas, animales ni obstáculos en la trayectoria o
       zona de aspersión.
+- [ ] El acceso a la zona general admite el ancho exterior de 1,80 m más el margen
+      aprobado; los surcos previstos admiten el ancho interno de 1,60 m y no tienen
+      obstáculos que reduzcan el paso seguro.
 - [ ] Terreno, pendiente y carga dentro de los límites aprobados.
 - [ ] Tanque cerrado, carga asegurada y sin fugas.
 - [ ] Brazos, boquillas, mangueras, filtros y válvulas inspeccionados; no hay piezas
@@ -216,6 +238,9 @@ El operador marca todos los puntos antes de activar la radio o la bomba:
 - [ ] Caja técnica cerrada, sin olor anormal, cables sueltos ni humedad visible.
 - [ ] Motor IP21 de referencia, inversor, cajas y conectores secos; ventilación libre
       y ninguna boquilla o fuga puede dirigir agua hacia ellos.
+- [ ] No hay alarma visible, LED rojo de batería, olor, humo, calentamiento anormal
+      ni parada inesperada previa de bomba o inversor. No se tocarán RST, breakers,
+      bornes, puertos ni configuraciones.
 - [ ] Pulsador rojo/amarillo de paro de tracción accesible y sin obstrucciones.
 - [ ] Radio FS-i6 cargada; joystick izquierdo centrado; CH5 abajo; CH6 al extremo
       izquierdo.
@@ -352,6 +377,33 @@ corregirlo con la transmisión energizada.
   cada 100 horas, y atención de las tres copas de grasa según ese manual. El operador
   solo registra horas y anomalías; no abre ni interviene la bomba.
 
+### 7.5 Batería e inversor MUST: operación exterior
+
+Los manuales MUST incluidos al final son **referencias de familia o serie**, no una
+identificación completa de las unidades instaladas en Rafa. La placa física, el
+diagrama de instalación y la revisión de un electricista prevalecen.
+
+- Para encender o detener la motobomba, el operador usa únicamente el switch
+  **ON/OFF** del inversor ya identificado para Rafa. No usa bornes BAT+/BAT−, tierra,
+  entradas/salidas AC, conexiones solares, breakers, puertos CAN/USB/remoto, RST,
+  DIP ni menús de configuración.
+- Mantener batería, inversor, motor, caja y conectores secos, limpios y con la
+  ventilación libre. La referencia de batería contiene discrepancias de IP20/IP21 y
+  la ficha del inversor no declara una protección para lluvia o aspersión; por tanto,
+  ninguno se considera apto para chorro de agua, lavado o lluvia.
+- Ante LED rojo de alarma, fallo, parada inesperada de la bomba, humo, olor, chispa,
+  calentamiento, agua cercana, fuga o daño: detener la bomba con el inversor desde
+  una posición segura cuando sea posible, esperar la parada completa de correa y
+  bomba, retirar a Rafa de servicio y reportar. No reintentar repetidamente, resetear
+  breakers ni manipular una batería dañada.
+- Algunas variantes WEG con protección térmica pueden reiniciarse al enfriarse. Ante
+  una parada inesperada, mantener distancia de la transmisión y dejar el inversor en
+  **OFF** hasta la revisión técnica; no asumir que el motor seguirá detenido.
+- Limpieza exterior: solo con el equipo frío y sin energía, mediante paño suave y
+  seco. La carga, almacenamiento, mantenimiento de batería y cualquier aislamiento
+  eléctrico total pertenecen al procedimiento técnico aprobado; no son tareas de
+  operación diaria.
+
 ## 8. Fin de la operación
 
 1. Llevar Rafa a un lugar seguro y nivelado.
@@ -366,6 +418,10 @@ corregirlo con la transmisión energizada.
    disponible. Hasta que se documente, esta acción la realiza el personal autorizado.
 7. Apagar la radio solo después de que Rafa esté en condición segura y desenergizado.
 8. Registrar fugas, daños, consumo inusual, alarmas o incidentes en la bitácora.
+9. Si Rafa quedará almacenado, registrar el estado para el responsable técnico. La
+   referencia LP1600 indica mantenimiento de carga al menos cada seis meses y carga
+   posterior a una descarga profunda dentro de 12 horas, pero esas acciones solo se
+   realizan con el sistema compatible y el procedimiento eléctrico aprobado.
 
 ## 9. Cuándo no operar y a quién llamar
 
@@ -421,7 +477,8 @@ PROHIBIDO
 5. Instalar e inspeccionar una guarda fija íntegra de correa antes de liberar la
    motobomba o la aspersión.
 6. Identificar, fotografiar y etiquetar el corte físico total de batería.
-7. Confirmar ancho exterior, peso total, radio de giro, pendiente, terreno, velocidad
+7. Confirmar físicamente los anchos de paso de **1,60 m interno** y **1,80 m
+   exterior**, además de peso total, radio de giro, pendiente, terreno, velocidad
    máxima y distancias de exclusión operativas.
 8. Fotografiar y cotejar la placa, marca y variante de la TS-28 realmente instalada.
    Confirmar la relación de poleas, RPM de bomba, manómetro, retorno/bypass, cebado,
@@ -435,7 +492,30 @@ PROHIBIDO
 11. Añadir fotografías aprobadas y diagramas con **FRENTE**, controles de radio,
     pulsador de tracción, inversor, batería, válvulas y zonas prohibidas.
 
-## Base de este borrador
+## 12. Anexos de manuales de referencia
+
+> **Nota de referencia.** Los anexos siguientes corresponden a documentos de los
+> componentes identificados para Rafa. Pueden existir variaciones de modelo, potencia,
+> tensión, protección IP, año, accesorios, configuración hidráulica o eléctrica. La
+> placa física del componente instalado, su manual específico y la revisión de personal
+> técnico autorizado prevalecen sobre cualquier anexo de este manual.
+
+Los documentos originales se incorporan al final de la edición PDF, sin alterar su
+contenido, en este orden:
+
+| Anexo | Documento incorporado | Uso en este manual |
+| --- | --- | --- |
+| A | MUST LP1600 Manual | Referencia de la familia de batería; alarmas observables, mantenimiento y límites de agua. |
+| B | MUST PV3000 LVHM 2024 | Ficha de referencia del inversor; switch ON/OFF, ventilación y respuesta conservadora ante alarma. |
+| C | WEG WMO Safe Area 50031071 (español) | Referencia principal de seguridad, ventilación, transmisión y trabajos eléctricos del motor. |
+| D | WEG Electric Motors Installman | Referencia histórica complementaria del motor WEG. |
+| E | TS-28 Power Sprayer Manual | Referencia de bomba, correa, succión, manómetro, retorno y mantenimiento técnico. |
+
+Los anexos no autorizan ajustes de presión, caudal, cableado, batería, inversor,
+correa ni parámetros de control. Cuando exista diferencia entre un anexo y la unidad
+real, se suspende la operación y se consulta al responsable técnico.
+
+## 13. Base de este borrador
 
 La configuración mecánica, hidráulica y de operación descrita aquí proviene de la
 entrevista y fotografías del propietario en septiembre de 2026. El mapeo PPM se basa
@@ -443,6 +523,14 @@ en el perfil de firmware **rafa** y debe volver a verificarse contra el firmware
 realmente instalado antes de capacitar operadores. Los detalles de la TS-28, productos
 aplicados y procedimiento de aislamiento eléctrico total aún requieren verificación
 física en Rafa.
+
+### Fuentes locales incorporadas
+
+- `5410-090026-0100-LP1600-Manual-MUST-1.pdf` (MUST LP1600 Manual), 20 páginas.
+- `120V-PV3000-LVHM-2024 (6) (1).pdf` (MUST PV3000 LVHM 2024), 1 página.
+- `WEG-WMO-safe-area-50031071-manual-en-es.pdf`, 2 páginas.
+- `weg-electric-motors-installman.pdf`, 2 páginas.
+- `SR-03-100-22【AA2-LIST-002】TS-28 Power Sprayer Manual.pdf`, 2 páginas.
 
 ### Fuentes externas consultadas
 
