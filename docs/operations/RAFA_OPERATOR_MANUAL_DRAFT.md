@@ -177,6 +177,12 @@ procedimiento agrícola aprobado; no se deben inferir de este documento.
 
 ## 4. Radio FlySky FS-i6
 
+> **Manual de referencia de la radio.** El Anexo F incorpora sin alterar el manual
+> suministrado de la FlySky **FS-i6X**. Es una referencia de familia para cuidado y
+> consulta del transmisor; no sustituye el mapeo de Rafa, no autoriza cambiar modelos,
+> mezclas, endpoints, switches, firmware ni ajustes de la radio. La fotografía y las
+> reglas siguientes corresponden a los controles autorizados para Rafa.
+
 ### 4.1 Controles autorizados
 
 | Control físico | Función para Rafa | Regla de uso |
@@ -510,6 +516,7 @@ contenido, en este orden:
 | C | WEG WMO Safe Area 50031071 (español) | Referencia principal de seguridad, ventilación, transmisión y trabajos eléctricos del motor. |
 | D | WEG Electric Motors Installman | Referencia histórica complementaria del motor WEG. |
 | E | TS-28 Power Sprayer Manual | Referencia de bomba, correa, succión, manómetro, retorno y mantenimiento técnico. |
+| F | Referencia del fabricante — FlySky FS-i6X User Manual | Referencia de familia de la radio; no sustituye los controles ni el mapeo autorizados para Rafa. |
 
 Los anexos no autorizan ajustes de presión, caudal, cableado, batería, inversor,
 correa ni parámetros de control. Cuando exista diferencia entre un anexo y la unidad
@@ -531,6 +538,8 @@ física en Rafa.
 - `WEG-WMO-safe-area-50031071-manual-en-es.pdf`, 2 páginas.
 - `weg-electric-motors-installman.pdf`, 2 páginas.
 - `SR-03-100-22【AA2-LIST-002】TS-28 Power Sprayer Manual.pdf`, 2 páginas.
+- `FS-i6X User manual.pdf`, 35 páginas; referencia del fabricante para el transmisor
+  FlySky FS-i6X, no un procedimiento de configuración de Rafa.
 
 ### Fuentes externas consultadas
 
